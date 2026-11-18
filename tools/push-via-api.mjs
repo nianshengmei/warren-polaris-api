@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 
-const REPO = 'nianshengmei/-warren-polaris-api';
+const REPO = 'nianshengmei/warren-polaris-api';
 const BRANCH = 'main';
 const TOKEN = process.env.GITHUB_TOKEN;
 if (!TOKEN) { console.error('missing GITHUB_TOKEN env'); process.exit(1); }
