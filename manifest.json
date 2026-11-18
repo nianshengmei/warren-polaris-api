@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "com.warren.polaris.api",
   "name": "warren-polaris-api",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "warren",
   "description": "API 请求客户端（sidecar 版）：支持直接打开本地 IDEA .http / .rest 文件（### 分隔、@变量、{{插值}}、http-client.env.json、跨请求引用），请求结果自动保存到本机并可在历史面板重新打开；另有多 tab、环境变量、cURL 导入导出与响应多视图。请求经 Rust sidecar（reqwest）发送，无 CORS/混合内容/禁发头限制，等效 cURL。",
   "icon": "assets/plugin.svg",

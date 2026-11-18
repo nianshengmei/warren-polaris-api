@@ -87,6 +87,7 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 
 ## 版本历史
 
+- v0.3.1 — 修复 DBX 沙箱内「新建分组 / 重命名 / 删除确认」等全部失效的问题：iframe 无 `allow-modals`，原生 `prompt/confirm` 被禁用，替换为自定义 DOM 模态框（`ui/dialogs.js`，`PD.ask` / `PD.confirm`）
 - v0.3.0 — 支持本地 `.http` / `.rest` 文件、环境变量文件、跨请求引用、运行全部；请求结果自动落盘并可在历史面板打开；更名为 `warren-polaris-api`（fork 自 misxzaiz/polaris-api）
 - v0.2.0 — 重构为 Rust sidecar 架构，解决 v0.1.x 跨域不可用问题
 - v0.1.x — universal 前端插件（API 资产库方向，已被取代）

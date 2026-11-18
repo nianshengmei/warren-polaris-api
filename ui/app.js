@@ -191,7 +191,7 @@ function openEnvManager(){
       const f3=el('div','field'); f3.innerHTML='<label>变量</label>'; const host=el('div','env-vars'); if(!env.vars)env.vars=[blankRow()]; host.appendChild(kvEditor(env.vars,{kPlace:'变量名',vPlace:'值',onChange:()=>{}})); f3.appendChild(host); m.appendChild(f3);
     }else m.appendChild(el('div','field','还没有环境，点「＋ 新建环境」。'));
     const acts=el('div','acts');
-    if(env){ const del=el('button','btn ghost danger','删除'); del.onclick=()=>{ if(confirm('删除环境「'+env.name+'」？')){ state.envs=state.envs.filter(e=>e.id!==env.id); if(state.activeEnv===env.id)state.activeEnv=state.envs[0]?state.envs[0].id:null; selId=state.envs[0]&&state.envs[0].id; render(); } }; acts.appendChild(del); }
+    if(env){ const del=el('button','btn ghost danger','删除'); del.onclick=()=>{ PD.confirm('确定删除环境「'+env.name+'」？',ok=>{ if(!ok)return; state.envs=state.envs.filter(e=>e.id!==env.id); if(state.activeEnv===env.id)state.activeEnv=state.envs[0]?state.envs[0].id:null; selId=state.envs[0]&&state.envs[0].id; render(); }); }; acts.appendChild(del); }
     const sp=el('div'); sp.style.flex='1'; acts.appendChild(sp);
     if(env){ const use=el('button','btn',env.id===state.activeEnv?'✓ 当前环境':'设为当前'); use.onclick=()=>{ state.activeEnv=selId; persist(); renderEnv(); renderRequestBar(); render(); }; acts.appendChild(use); }
     const done=el('button','btn primary','完成'); done.onclick=close; acts.appendChild(done);
@@ -261,7 +261,7 @@ function renderTabs(){
     const x=el('button','tx','×'); x.title='关闭'; x.onclick=e=>{e.stopPropagation();closeTab(t);}; tab.appendChild(x);
     tab.onclick=()=>{ state.activeTab=t.id; renderAll(); persist(); };
     tab.oncontextmenu=e=>{ e.preventDefault(); e.stopPropagation(); showTabCtxMenu(e,t); };
-    tab.querySelector('.tn').ondblclick=e=>{ e.stopPropagation(); const n=prompt('重命名 tab：',t.name); if(n!=null){ t.name=n.trim()||t.name; renderTabs(); persist(); } };
+    tab.querySelector('.tn').ondblclick=e=>{ e.stopPropagation(); PD.ask('重命名 tab',{value:t.name},n=>{ if(n!=null){ t.name=n.trim()||t.name; renderTabs(); persist(); } }); };
     bar.appendChild(tab);
   });
   // 新 tab 回到左缘，确保可见（加号 stick 后滚动起点即在窗口最左）；
@@ -602,10 +602,10 @@ function saveCurrent(){
     {label:'名称',id:'mName',type:'text',value:(t.url? t.method+' '+shortUrl(t.url):'未命名请求')},
     {label:'分组',id:'mGroup',type:'select',html:groupOpts+'<option value="__new">＋ 新建分组…</option>'},
   ],vals=>{
+    const doSave=g=>{ const r=Object.assign({id:uid(),name:vals.mName||'未命名请求'},snapshot(t)); g.requests.push(r); t.savedId=r.id; t.name=r.name; t.dirty=false; persist(); renderTabs(); renderSidebar(); setStatus('已保存到「'+g.name+'」','ok'); };
     let gid=vals.mGroup;
-    if(gid==='__new'||!state.collections.length){ const gn=prompt('新分组名称：','新分组'); if(!gn) return false; const g={id:uid(),name:gn,collapsed:false,requests:[]}; state.collections.push(g); gid=g.id; }
-    const g=state.collections.find(x=>x.id===gid); const r=Object.assign({id:uid(),name:vals.mName||'未命名请求'},snapshot(t)); g.requests.push(r);
-    t.savedId=r.id; t.name=r.name; t.dirty=false; persist(); renderTabs(); renderSidebar(); setStatus('已保存到「'+g.name+'」','ok');
+    if(gid==='__new'||!state.collections.length){ PD.ask('新分组名称',{value:'新分组'},gn=>{ if(!gn) return; const g={id:uid(),name:gn.trim()||'新分组',collapsed:false,requests:[]}; state.collections.push(g); doSave(g); }); return; }
+    doSave(state.collections.find(x=>x.id===gid));
   });
 }
 function openSaved(r){
@@ -614,17 +614,18 @@ function openSaved(r){
   if(!t.params.length)t.params=[blankRow()]; if(!t.headers.length)t.headers=[blankRow()]; if(!t.formBody.length)t.formBody=[blankRow()];
   state.tabs.unshift(t); state.activeTab=t.id; renderAll(); persist(); setStatus('已载入「'+r.name+'」');
 }
-function deleteSaved(g,r){ if(!confirm('删除已保存的请求「'+r.name+'」？'))return; g.requests=g.requests.filter(x=>x.id!==r.id); state.tabs.forEach(t=>{ if(t.savedId===r.id){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }
-function renameGroup(g){ const n=prompt('分组名称：',g.name); if(n==null)return; g.name=n.trim()||g.name; persist(); renderSidebar(); }
-function deleteGroup(g){ if(!confirm('删除分组「'+g.name+'」及其中 '+g.requests.length+' 个请求？'))return; const ids=g.requests.map(r=>r.id); state.collections=state.collections.filter(x=>x.id!==g.id); state.tabs.forEach(t=>{ if(ids.includes(t.savedId)){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }
+function deleteSaved(g,r){ PD.confirm('删除已保存的请求「'+r.name+'」？',ok=>{ if(!ok)return; g.requests=g.requests.filter(x=>x.id!==r.id); state.tabs.forEach(t=>{ if(t.savedId===r.id){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }); }
+function renameGroup(g){ PD.ask('分组名称',{value:g.name},n=>{ if(n==null)return; g.name=n.trim()||g.name; persist(); renderSidebar(); }); }
+function deleteGroup(g){ PD.confirm('删除分组「'+g.name+'」及其中 '+g.requests.length+' 个请求？',ok=>{ if(!ok)return; const ids=g.requests.map(r=>r.id); state.collections=state.collections.filter(x=>x.id!==g.id); state.tabs.forEach(t=>{ if(ids.includes(t.savedId)){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }); }
 
 /* ===================== tab 操作 ===================== */
 function closeTab(t){
-  if(t.dirty&&(t.url||t.savedId)){ if(!confirm('该 tab 有未保存修改，仍要关闭？'))return; }
-  const i=state.tabs.indexOf(t); state.tabs.splice(i,1);
-  if(!state.tabs.length){ const nt=newTab(); state.tabs.unshift(nt); state.activeTab=nt.id; }
-  else if(state.activeTab===t.id) state.activeTab=state.tabs[Math.max(0,i-1)].id;
-  renderAll(); persist();
+  const doClose=()=>{ const i=state.tabs.indexOf(t); state.tabs.splice(i,1);
+    if(!state.tabs.length){ const nt=newTab(); state.tabs.unshift(nt); state.activeTab=nt.id; }
+    else if(state.activeTab===t.id) state.activeTab=state.tabs[Math.max(0,i-1)].id;
+    renderAll(); persist(); };
+  if(t.dirty&&(t.url||t.savedId)){ PD.confirm('该 tab 有未保存修改，仍要关闭？',ok=>{ if(ok) doClose(); }); return; }
+  doClose();
 }
 /* ---- 右键菜单（tab 上右键调出） ---- */
 function closeOthers(t){ state.tabs=state.tabs.filter(x=>x===t); state.activeTab=t.id; renderAll(); persist(); }
@@ -650,7 +651,7 @@ function showTabCtxMenu(e,t){
     {label:'关闭右侧',action:()=>{closeRight(t);closeMenu();}},
     {label:'关闭左侧',action:()=>{closeLeft(t);closeMenu();}},
     {sep:true},
-    {label:'✎ 重命名',action:()=>{const n=prompt('重命名 tab：',t.name);if(n!=null){t.name=n.trim()||t.name;renderTabs();persist();}closeMenu();}},
+    {label:'✎ 重命名',action:()=>{closeMenu();PD.ask('重命名 tab',{value:t.name},n=>{if(n!=null){t.name=n.trim()||t.name;renderTabs();persist();}});}},
     {label:'📋 复制 URL',action:()=>{copy(t.url||'','URL 已复制');closeMenu();}},
     {label:'cURL 复制',action:()=>{copy(toCurl(t, resolveVars),'cURL 已复制');closeMenu();}},
   ];
@@ -726,7 +727,7 @@ function bindEvents(){
   $$('#reqSubtabs .subtab').forEach(b=>b.onclick=()=>{ activeTab().reqTab=b.dataset.rt; renderReqEditor(); persist(); });
   $$('#resSubtabs .subtab').forEach(b=>b.onclick=()=>{ if(b.classList.contains('disabled'))return; activeTab().respView=b.dataset.rv; renderRespBody(); persist(); });
   const srch=$('#search'); if(srch) srch.addEventListener('input',renderSidebar);
-  const ng=$('#newGroup'); if(ng) ng.onclick=()=>{ const n=prompt('新分组名称：','新分组'); if(!n)return; state.collections.push({id:uid(),name:n.trim(),collapsed:false,requests:[]}); persist(); renderSidebar(); };
+  const ng=$('#newGroup'); if(ng) ng.onclick=()=>{ PD.ask('新分组名称',{value:'新分组'},n=>{ if(!n)return; state.collections.push({id:uid(),name:n.trim(),collapsed:false,requests:[]}); persist(); renderSidebar(); }); };
   const ts=$('#toggleSide'); if(ts) ts.onclick=()=>{ ui.sideCollapsed=!ui.sideCollapsed; $('#main').classList.toggle('collapsed',ui.sideCollapsed); persist(); };
   const tb=$('#tabbar'); if(tb) tb.addEventListener('scroll',updateTabFade);
   const lb=$('#layoutBtn'); if(lb) lb.onclick=()=>{ ui.layout = ui.layout==='h'?'v':'h'; applyLayout(); persist(); };

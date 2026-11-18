@@ -13,7 +13,7 @@ function assert(c, m) { if (!c) throw new Error(m); }
 ok('manifest.json 是合法 JSON 且版本为 0.3.0', () => {
   const m = JSON.parse(read('manifest.json'));
   assert(m.manifest_version === 1, 'manifest_version');
-  assert(m.version === '0.3.0', 'version');
+  assert(m.version === '0.3.1', 'version');
   assert(m.id === 'com.warren.polaris.api', 'id');
   assert(m.name === 'warren-polaris-api', 'name');
   assert(m.publisher === 'warren', 'publisher');
@@ -23,7 +23,7 @@ ok('manifest.json 是合法 JSON 且版本为 0.3.0', () => {
   assert(Array.isArray(m.permissions) && m.permissions.includes('host.storage'), 'permissions');
 });
 
-ok('Cargo.toml 版本与插件一致', () => assert(/version\s*=\s*"0\.3\.0"/.test(read('backend/Cargo.toml')), 'Cargo version'));
+ok('Cargo.toml 版本与插件一致', () => assert(/version\s*=\s*"0.3.1"/.test(read('backend/Cargo.toml')), 'Cargo version'));
 
 ok('index.html 引用的脚本都存在', () => {
   const html = read('ui/index.html');
