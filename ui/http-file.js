@@ -61,7 +61,12 @@
       }
       var testHits = cur.postScript.match(/client\.test\s*\(/g);
       if (testHits) cur.tests += testHits.length;
-      if (!cur.name) cur.name = pendingName || (cur.method + ' ' + (cur.url || '未命名请求')).slice(0, 48);
+      if (!cur.name) {
+        cur.name = (cur.method + ' ' + (cur.url || '未命名请求')).slice(0, 48);
+        cur.nameAuto = true;      /* 没有标题：侧栏/接口一览改用 URL 末两段显示 */
+      } else {
+        cur.nameAuto = false;
+      }
       if (!cur.bodyType) {
         var ct = (cur.headers || []).find(function (h) { return /^content-type$/i.test(h.k); });
         if (cur.bodyFromFile || (ct && /json/i.test(ct.v))) cur.bodyType = 'json';
@@ -107,11 +112,15 @@
       var trimmed = line.trim();
       var lineNo = i + 1;
 
-      /* --- 请求分隔 ### --- */
-      if (/^###/.test(trimmed)) {
+      /* --- 请求分隔：连续 3 个及以上 # ---
+       * 标题判定 = 「3 个以上的 #」+「空格」+「后面的内容」；
+       * ###/####/#####…乃至 N 个 # 都算，4 个不是「3 个的子集」而是同样合法。
+       * 只有 #（后面没空格没内容）→ 只是分隔线，不产生标题。 */
+      if (/^#{3,}/.test(trimmed)) {
         finish();
         bodyBuf = []; scriptBuf = []; scriptKind = null;
-        var nm = trimmed.replace(/^###+\s*/, '').trim();
+        var tm = /^#{3,}[ \t]+(.+)$/.exec(trimmed);
+        var nm = tm ? tm[1].trim() : '';
         if (nm) pendingName = nm;
         phase = 'idle';
         continue;

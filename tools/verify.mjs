@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -149,6 +149,30 @@ ok('v0.4.0：打开（系统对话框）/ 拖入 / 可反复保存 就位', () =
   /* Ctrl+S 不得在 .http 模式下再触发请求 tab 保存 */
   const app = read('ui/app.js');
   assert(/inEditor[\s\S]{0,80}saveCurrent/.test(app), 'app.js 的 Ctrl+S 需为编辑器让路');
+});
+
+ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
+  const ed = read('ui/http-editor.js');
+  /* 一览 */
+  ['paFeOList', 'renderOutline', 'gotoLine', 'urlTail', 'reqName', 'nameAuto', 'paFeOCount']
+    .forEach(k => assert(ed.includes(k), '缺少 ' + k));
+  assert(/function urlTail\([\s\S]{0,600}slice\(-2\)/.test(ed), 'urlTail 需保留末两段');
+  /* 着色 */
+  ['.t-sepname', '.t-m-get', '.t-jkey', '.t-jstr', '.t-jnum', '.t-jbool', '.t-jnull', '.t-var']
+    .forEach(k => assert(ed.includes(k), '缺少样式 ' + k));
+  assert(ed.includes('paFeHl') && ed.includes('hl-on'), '缺少高亮代码层');
+  assert(/font-variant-ligatures:none/.test(ed), '高亮层需禁用连字，否则与 textarea 错位');
+  /* 折叠：文档权威 + 折叠时保存必须写全文 */
+  assert(ed.includes('function docText()'), '缺少 docText()');
+  assert(/doSave[\s\S]{0,300}docText\(\)/.test(ed), 'doSave 必须用 docText()（折叠时不能写投影）');
+  ['paFeGinner', 'toggleFold', 'buildView', 'expandFoldsForEdit']
+    .forEach(k => assert(ed.includes(k), '缺少 ' + k));
+  assert(!/var content = ta\.value/.test(ed), '落盘内容不能直接取 ta.value');
+
+  /* 解析器：连续 3 个以上 # + 空格/Tab 才是标题 */
+  const hf = read('ui/http-file.js');
+  assert(/\/\^#\{3,\}\[ \\t\]\+\(\.\+\)\$\/\.exec/.test(hf), '标题正则应为 ^#{3,}[ \\t]+(.+)$');
+  assert(hf.includes('nameAuto'), '缺少 nameAuto 标记');
 });
 
 console.log('\n' + pass + ' checks passed');
