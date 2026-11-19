@@ -47,6 +47,7 @@
     m.querySelector('[data-act="cancel"]').onclick = function () { close(); if (onCancel) onCancel(); };
     bg.onclick = function (e) { if (e.target === bg) { close(); if (onCancel) onCancel(); } };
     m.addEventListener('keydown', function (e) {
+      if (e.isComposing || e.keyCode === 229) return;   // 输入法选词中的 Enter 不算确认
       if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') ok();
       if (e.key === 'Escape') { close(); if (onCancel) onCancel(); }
     });

@@ -28,6 +28,13 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 
 > 打开的文件会记在 `host.storage`，下次点「打开 .http」自动恢复上次编辑的文件。所有磁盘读写经 sidecar（`http/readFile` / `http/writeFile`），因为沙箱 iframe 拿不到 `<input type=file>` 的真实路径，无法直接回写。
 
+### 侧边栏：重命名与拖拽整理（非 `.http` 的已保存请求）
+
+- **重命名**：悬停请求条目点右侧 **✎**，或直接**双击名称**；改完已打开的 tab 标题会同步更新。
+- **移动到别的分组**：按住请求条目拖到目标分组，落在分组头上或空白处 = 追加到该组末尾（折叠的分组会自动展开）。
+- **调整顺序**：拖到某条目的**上半区** = 插到它前面，**下半区** = 插到它后面，落点有高亮提示。
+- **保存弹窗**：选「＋ 新建分组…」时，同弹窗内会展开「新分组名称」输入框（不再弹第二层，避免弹窗互相清空）；名称会 `trim` 后保存。
+
 ### 结果保存与历史
 
 - **结果目录**：默认 `%LOCALAPPDATA%\DBX\plugins\com.warren.polaris.api\results`（Linux/macOS 为 `~/.local/share/dbx/plugins/com.warren.polaris.api/results`），可手动改。每次运行都会自动写入一个 JSON 文件，包含完整请求快照与响应体。
@@ -102,6 +109,7 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 
 ## 版本历史
 
+- **v0.3.3** — 侧边栏管理能力补齐：非 `.http` 的已保存请求支持**重命名**（悬停 ✎ 或双击名称，并同步已打开的 tab 标题）与**拖拽移动/排序**（拖到其他分组即移动，拖到条目上/下边缘可插入到该位置，拖到分组头或空白区追加到末尾）；修复保存弹窗两个 bug——「＋ 新建分组…」改为**内联输入框**（原先嵌套 `PD.ask` 会被外层 `close()` 连同弹窗一起清空，点了没反应），名称输入在**中文输入法选词时按 Enter** 不再被误当成提交（`isComposing` / `keyCode 229` 保护）
 - **v0.3.2** — `.http` 改为「源码编辑器」形态：直接以文件格式打开、可编辑、自动保存 / 手动保存回原文件；每个请求首行左侧 ▶ 一点即发，结果显示在**原响应框**（`POLARIS_API.runRaw` → `showResponse`）；sidecar 新增 `http/writeFile`
 - v0.3.1 — 修复 DBX 沙箱内「新建分组 / 重命名 / 删除确认」等全部失效的问题：iframe 无 `allow-modals`，原生 `prompt/confirm` 被禁用，替换为自定义 DOM 模态框（`ui/dialogs.js`，`PD.ask` / `PD.confirm`）
 - v0.3.0 — 支持本地 `.http` / `.rest` 文件、环境变量文件、跨请求引用、运行全部；请求结果自动落盘并可在历史面板打开；更名为 `warren-polaris-api`（fork 自 misxzaiz/polaris-api）

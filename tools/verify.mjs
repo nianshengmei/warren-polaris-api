@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -97,6 +97,39 @@ ok('dbx-plugin.toml 的 include 覆盖新文件所在目录', () => {
   const s = read('dbx-plugin.toml');
   assert(/include\s*=\s*\[[^\]]*"ui"/.test(s), 'include ui');
   assert(/language\s*=\s*"rust"/.test(s), 'rust backend');
+});
+
+ok('侧边栏：请求可重命名、可拖拽跨分组移动', () => {
+  const s = read('ui/app.js');
+  ['renameSaved', 'moveSaved', 'nextSavedId', 'dragRid'].forEach(k => assert(s.includes(k), '缺少 ' + k));
+  assert(s.includes("'rx rr'"), '缺少请求重命名按钮 .rr');
+  assert(/item\.draggable\s*=\s*true/.test(s), '请求项必须 draggable');
+  assert(s.includes("'drop-before'") && s.includes("'drop-after'"), '缺少插入位置高亮');
+  assert(s.includes("'dragging'"), '缺少拖动中样式');
+  assert(s.includes('moveSaved(rid,g.id,null)'), '分组头/空白区需支持追加投放');
+});
+
+ok('保存弹窗：内联新建分组（不再嵌套模态）+ 名称 trim', () => {
+  const s = read('ui/app.js');
+  const body = s.slice(s.indexOf('function saveCurrent'), s.indexOf('function openSaved'));
+  assert(body.length > 100, '未找到 saveCurrent');
+  assert(body.includes('mNewGroup'), '缺少内联新分组输入框 mNewGroup');
+  assert(!body.includes('PD.ask('), 'saveCurrent 内不得再嵌套 PD.ask（会清空外层弹窗导致失效）');
+  assert(/return false/.test(body), '校验失败需 return false 保持弹窗');
+  assert(/\(vals\.mName\|\|''\)\.trim\(\)/.test(body), '名称需 trim 后再用');
+});
+
+ok('输入法保护：合成中的 Enter 不当作确认', () => {
+  ['ui/app.js', 'ui/dialogs.js'].forEach((f) => {
+    const s = read(f);
+    assert(/isComposing\s*\|\|/.test(s) || /e\.isComposing/.test(s), f + ' 缺少 isComposing 判断');
+  });
+});
+
+ok('侧边栏样式：重命名按钮与拖拽态', () => {
+  const css = read('ui/app.css');
+  ['.req-item .rr', '.req-item.dragging', '.req-item.drop-before', '.req-item.drop-after', '.drop-on']
+    .forEach((k) => assert(css.includes(k), '缺少样式 ' + k));
 });
 
 ok('README 记录了编辑器能力与限制', () => {

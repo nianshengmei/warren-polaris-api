@@ -18,6 +18,7 @@ const DBX = window.DBXBridge;
 /* ===================== 状态 + 持久化 ===================== */
 const ST_KEY='warren-polaris-api.state.v2';   // 单键存全部状态（storage 256KiB/值上限足够）
 let state={ tabs:[], activeTab:null, collections:[], envs:[], activeEnv:null };
+let dragRid=null;   // 侧边栏正在拖拽的已保存请求 id
 let ui={ sideCollapsed:false, layout:'v', reqH:240, reqW:520, timeoutMs:120000 };
 
 /* 响应字节数估算（sidecar 已返回 size，此为降级估算） */
@@ -141,13 +142,39 @@ function renderSidebar(){
     const del=el('button','x','🗑'); del.title='删除分组'; del.onclick=e=>{e.stopPropagation();deleteGroup(g);};
     act.append(ren,del); head.appendChild(act);
     head.onclick=()=>{ g.collapsed=!g.collapsed; persist(); renderSidebar(); };
+    /* 分组头作为投放目标：拖到这里 = 追加到该分组末尾（折叠状态下松手会自动展开） */
+    head.addEventListener('dragover',e=>{ if(!dragRid) return; e.preventDefault(); e.dataTransfer.dropEffect='move'; head.classList.add('drop-on'); });
+    head.addEventListener('dragleave',e=>{ if(!head.contains(e.relatedTarget)) head.classList.remove('drop-on'); });
+    head.addEventListener('drop',e=>{ if(!dragRid) return; e.preventDefault(); e.stopPropagation(); head.classList.remove('drop-on'); const rid=dragRid; dragRid=null; moveSaved(rid,g.id,null); });
     gEl.appendChild(head);
     const reqs=el('div','reqs');
+    /* 分组空白区 / 空分组：追加到末尾 */
+    reqs.addEventListener('dragover',e=>{ if(!dragRid) return; e.preventDefault(); e.dataTransfer.dropEffect='move'; reqs.classList.add('drop-on'); });
+    reqs.addEventListener('dragleave',e=>{ if(!reqs.contains(e.relatedTarget)) reqs.classList.remove('drop-on'); });
+    reqs.addEventListener('drop',e=>{ if(!dragRid) return; e.preventDefault(); e.stopPropagation(); reqs.classList.remove('drop-on'); const rid=dragRid; dragRid=null; moveSaved(rid,g.id,null); });
     list.forEach(r=>{
       const item=el('div','req-item'+(activeTab()&&activeTab().savedId===r.id?' active':''));
       item.innerHTML=`<span class="mb ${methodColor(r.method)}">${r.method}</span><span class="rn">${esc(r.name)}</span>`;
+      const rn=el('button','rx rr','✎'); rn.title='重命名'; rn.onclick=e=>{e.stopPropagation();renameSaved(g,r);};
       const x=el('button','rx','✕'); x.title='删除'; x.onclick=e=>{e.stopPropagation();deleteSaved(g,r);};
-      item.appendChild(x); item.onclick=()=>openSaved(r); reqs.appendChild(item);
+      item.append(rn,x); item.onclick=()=>openSaved(r);
+      const nameEl=item.querySelector('.rn');
+      if(nameEl) nameEl.ondblclick=e=>{ e.stopPropagation(); renameSaved(g,r); };
+      /* 拖拽：可在分组间移动 / 组内排序 */
+      item.draggable=true; item.title='双击重命名 · 拖拽可移动到其他分组';
+      item.addEventListener('dragstart',e=>{ dragRid=r.id; item.classList.add('dragging'); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',r.id); }catch(_){} });
+      item.addEventListener('dragend',()=>{ dragRid=null; item.classList.remove('dragging'); $$('#tree .drop-before,#tree .drop-after,#tree .drop-on').forEach(n=>{ n.classList.remove('drop-before','drop-after','drop-on'); }); });
+      item.addEventListener('dragover',e=>{ if(!dragRid||dragRid===r.id) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect='move'; const rt=item.getBoundingClientRect(); const after=(e.clientY-rt.top)>rt.height/2; item.classList.toggle('drop-after',after); item.classList.toggle('drop-before',!after); });
+      item.addEventListener('dragleave',()=>{ item.classList.remove('drop-before','drop-after'); });
+      item.addEventListener('drop',e=>{
+        if(!dragRid) return; e.preventDefault(); e.stopPropagation();
+        const after=item.classList.contains('drop-after');
+        item.classList.remove('drop-before','drop-after');
+        const rid=dragRid; dragRid=null;
+        if(after){ const next=nextSavedId(g,r.id); if(next) moveSaved(rid,g.id,next); else moveSaved(rid,g.id,null); }
+        else moveSaved(rid,g.id,r.id);
+      });
+      reqs.appendChild(item);
     });
     gEl.appendChild(reqs); tree.appendChild(gEl);
   });
@@ -597,16 +624,31 @@ function snapshot(t){ return { method:t.method,url:t.url,params:JSON.parse(JSON.
 function saveCurrent(){
   const t=activeTab();
   if(t.savedId){ const f=findSaved(t.savedId); if(f){ Object.assign(f.r,snapshot(t)); f.r.name=t.name; t.dirty=false; persist(); renderTabs(); renderSidebar(); setStatus('已更新「'+t.name+'」','ok'); return; } }
+  const defName=t.url? t.method+' '+shortUrl(t.url):'未命名请求';
   const groupOpts=state.collections.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
-  openModal('保存请求','把当前请求存入一个分组',[
-    {label:'名称',id:'mName',type:'text',value:(t.url? t.method+' '+shortUrl(t.url):'未命名请求')},
+  const m=openModal('保存请求','把当前请求存入一个分组',[
+    {label:'名称',id:'mName',type:'text',value:defName},
     {label:'分组',id:'mGroup',type:'select',html:groupOpts+'<option value="__new">＋ 新建分组…</option>'},
+    {label:'新分组名称',id:'mNewGroup',type:'text',value:'新分组'},
   ],vals=>{
-    const doSave=g=>{ const r=Object.assign({id:uid(),name:vals.mName||'未命名请求'},snapshot(t)); g.requests.push(r); t.savedId=r.id; t.name=r.name; t.dirty=false; persist(); renderTabs(); renderSidebar(); setStatus('已保存到「'+g.name+'」','ok'); };
-    let gid=vals.mGroup;
-    if(gid==='__new'||!state.collections.length){ PD.ask('新分组名称',{value:'新分组'},gn=>{ if(!gn) return; const g={id:uid(),name:gn.trim()||'新分组',collapsed:false,requests:[]}; state.collections.push(g); doSave(g); }); return; }
-    doSave(state.collections.find(x=>x.id===gid));
+    const name=(vals.mName||'').trim()||defName;
+    const doSave=g=>{ const r=Object.assign({id:uid(),name:name},snapshot(t)); g.requests.push(r); t.savedId=r.id; t.name=r.name; t.dirty=false; persist(); renderTabs(); renderSidebar(); setStatus('已保存到「'+g.name+'」','ok'); };
+    if(vals.mGroup==='__new'||!state.collections.length){
+      const gn=(vals.mNewGroup||'').trim();
+      if(!gn){ setStatus('请填写新分组名称','err'); return false; }   // 返回 false 保持弹窗
+      const g={id:uid(),name:gn,collapsed:false,requests:[]};
+      state.collections.push(g); doSave(g); return;
+    }
+    const g=state.collections.find(x=>x.id===vals.mGroup);
+    if(!g){ setStatus('分组已不存在，请重新选择','err'); return false; }
+    doSave(g);
   });
+  // 新分组输入框：仅当选中「＋ 新建分组…」或无任何分组时显示
+  if(m){
+    const sel=m.querySelector('#mGroup'), nf=m.querySelector('#mNewGroup'), nfField=nf&&nf.closest('.field');
+    const sync=()=>{ if(nfField) nfField.style.display=(!state.collections.length||(sel&&sel.value==='__new'))?'':'none'; };
+    if(sel){ sel.addEventListener('change',sync); sync(); if(sel.value==='__new'&&nf) setTimeout(()=>{nf.focus();nf.select&&nf.select();},0); }
+  }
 }
 function openSaved(r){
   const exist=state.tabs.find(t=>t.savedId===r.id); if(exist){ state.activeTab=exist.id; renderAll(); return; }
@@ -616,6 +658,33 @@ function openSaved(r){
 }
 function deleteSaved(g,r){ PD.confirm('删除已保存的请求「'+r.name+'」？',ok=>{ if(!ok)return; g.requests=g.requests.filter(x=>x.id!==r.id); state.tabs.forEach(t=>{ if(t.savedId===r.id){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }); }
 function renameGroup(g){ PD.ask('分组名称',{value:g.name},n=>{ if(n==null)return; g.name=n.trim()||g.name; persist(); renderSidebar(); }); }
+function renameSaved(g,r){
+  PD.ask('重命名请求',{value:r.name},n=>{
+    if(n==null) return;
+    const name=(n||'').trim(); if(!name||name===r.name) return;
+    r.name=name;
+    state.tabs.forEach(t=>{ if(t.savedId===r.id) t.name=name; });   // 同步已打开的 tab 标题
+    persist(); renderSidebar(); renderTabs();
+    setStatus('已重命名为「'+name+'」','ok');
+  });
+}
+/* 拖拽移动：把请求 rid 移到分组 toGid；beforeRid 指定插入到哪个请求之前，null = 追加到末尾 */
+function moveSaved(rid,toGid,beforeRid){
+  if(!rid||beforeRid===rid) return;
+  const src=findSaved(rid); if(!src) return;
+  const dst=state.collections.find(g=>g.id===toGid); if(!dst) return;
+  const idx=src.g.requests.findIndex(x=>x.id===rid);
+  if(idx<0) return;
+  const item=src.g.requests.splice(idx,1)[0];
+  let at=dst.requests.length;
+  if(beforeRid){ const bi=dst.requests.findIndex(x=>x.id===beforeRid); if(bi>=0) at=bi; }
+  dst.requests.splice(at,0,item);
+  dst.collapsed=false;
+  persist(); renderSidebar();
+  setStatus(src.g.id===dst.id?'已调整请求顺序':('已移动到「'+dst.name+'」'),'ok');
+}
+/* 同一分组内 r 的下一个请求 id（拖到底部时用），没有则 null */
+function nextSavedId(g,rid){ const i=g.requests.findIndex(x=>x.id===rid); if(i<0) return null; const n=g.requests[i+1]; return n?n.id:null; }
 function deleteGroup(g){ PD.confirm('删除分组「'+g.name+'」及其中 '+g.requests.length+' 个请求？',ok=>{ if(!ok)return; const ids=g.requests.map(r=>r.id); state.collections=state.collections.filter(x=>x.id!==g.id); state.tabs.forEach(t=>{ if(ids.includes(t.savedId)){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }); }
 
 /* ===================== tab 操作 ===================== */
@@ -688,9 +757,10 @@ function openModal(title,sub,fields,onOk){
   acts.append(sp,cancel,ok); m.appendChild(acts);
   bg.innerHTML=''; bg.appendChild(m); bg.classList.add('open');
   const first=m.querySelector('input,select'); if(first){first.focus(); if(first.select)first.select();}
-  m.addEventListener('keydown',e=>{ if(e.key==='Enter'&&e.target.tagName!=='SELECT')ok.click(); if(e.key==='Escape')close(); });
+  m.addEventListener('keydown',e=>{ if(e.isComposing||e.keyCode===229) return; if(e.key==='Enter'&&e.target.tagName!=='SELECT')ok.click(); if(e.key==='Escape')close(); });
   bg.onclick=e=>{ if(e.target===bg)close(); };
   function close(){ bg.classList.remove('open'); bg.innerHTML=''; }
+  return m;
 }
 
 /* ===================== 导入 / 导出集合（延迟到 initApi 绑定） ===================== */

@@ -120,6 +120,14 @@
 .pa-root .req-item .rx{display:none;width:18px;height:18px;border-radius:4px;align-items:center;justify-content:center;color:var(--dimmer);font-size:12px}
 .pa-root .req-item:hover .rx{display:inline-flex}
 .pa-root .req-item .rx:hover{color:var(--err);background:var(--surface-2)}
+.pa-root .req-item .rr{display:none;width:18px;height:18px;border-radius:4px;align-items:center;justify-content:center;color:var(--dimmer);font-size:11px}
+.pa-root .req-item:hover .rr{display:inline-flex}
+.pa-root .req-item .rr:hover{color:var(--brand);background:var(--surface-2)}
+/* 拖拽：拖动中 / 投放到某条之前之后 / 投放到分组 */
+.pa-root .req-item.dragging{opacity:.35}
+.pa-root .req-item.drop-before{box-shadow:inset 0 2px 0 var(--brand)}
+.pa-root .req-item.drop-after{box-shadow:inset 0 -2px 0 var(--brand)}
+.pa-root .reqs.drop-on,.pa-root .group-head.drop-on{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--brand);border-radius:var(--r-sm)}
 .pa-root .tree-empty{padding:24px 14px;text-align:center;color:var(--dimmer);font-size:11.5px;line-height:1.8}
 .pa-root .m-GET{color:var(--m-get)} .m-POST{color:var(--m-post)} .m-PUT{color:var(--m-put)}
 .pa-root .m-PATCH{color:var(--m-patch)} .m-DELETE{color:var(--m-del)} .m-HEAD,.m-OPTIONS{color:var(--m-other)}
