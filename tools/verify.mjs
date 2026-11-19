@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -223,6 +223,26 @@ ok('v0.6.0：.http 浮层 + 右缘悬浮箭头', () => {
   assert(/byId\('tabbar'\)[\s\S]{0,200}collapse\(true\)/.test(ed), '点请求 tab 应自动收起浮层');
   assert(/isOpen: function \(\) \{ return S\.open && !S\.collapsed; \}/.test(ed), 'isOpen 只代表浮层当前可见');
   assert(!/pane\.hidden = /.test(ed), '浮层不应再用 hidden 属性（会吃掉动画）');
+});
+
+ok('v0.6.1：打开 .http 只弹对话框；启动只挂箭头', () => {
+  const ed = read('ui/http-editor.js');
+
+  /* pickAndOpen 不能先 enterMode */
+  const pick = ed.slice(ed.indexOf('async function pickAndOpen'),
+                        ed.indexOf('async function pickAndOpen') + 1200);
+  assert(!/enterMode\(\)/.test(pick.split('catch')[0].split('pickNative')[0] || ''), 'pickAndOpen 弹框前不能展开浮层');
+  assert(!/^\s*enterMode\(\);\s*$/m.test(pick.split('pickNative')[0]), 'pickAndOpen 弹框前不能 enterMode');
+  assert(/pick\.cancelled\) return/.test(pick), '取消时应直接返回、不动界面');
+
+  /* openPath 支持恢复模式：不展开、不扫描 */
+  assert(/async function openPath\(p, opts\)/.test(ed), 'openPath 需要 opts');
+  assert(/opts\.restore[\s\S]{0,300}armEdge\(\)/.test(ed), '恢复模式应只挂箭头');
+  assert(/function armEdge\(/.test(ed), '缺少 armEdge');
+  assert(/\{ restore: true \}/.test(ed), '启动恢复需要传 restore 标记');
+
+  /* 展开时才补扫目录 */
+  assert(/function expand\(\)[\s\S]{0,600}scan\(\)/.test(ed), '展开时应按需扫描目录');
 });
 
 console.log('\n' + pass + ' checks passed');

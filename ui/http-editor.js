@@ -457,7 +457,7 @@
       '  <span class="sp"></span>',
       '  <select class="pa-fe-env" id="paFeEnv" title="http-client.env.json 环境"></select>',
       '  <span class="pa-fe-save" id="paFeSaveState">—</span>',
-      '  <button class="pa-fe-btn primary" id="paFeOpen" title="弹出系统文件对话框（资源管理器）选择 .http 文件">📂 打开</button>',
+      '  <button class="pa-fe-btn primary" id="paFeOpen" title="只弹系统文件对话框（资源管理器），选中确认后才打开浮层">📂 打开</button>',
       '  <button class="pa-fe-btn" id="paFeSave" title="立即写入磁盘（Ctrl+S）；可反复点击，每次都真正落盘">保存</button>',
       '  <button class="pa-fe-btn" id="paFeSaveAs" title="另存为新的 .http 文件（系统保存对话框）">另存为</button>',
       '  <button class="pa-fe-btn" id="paFeRunAll" title="按顺序运行本文件全部请求">▶▶ 全部运行</button>',
@@ -557,6 +557,31 @@
     pane.style.setProperty('--fe-slide', Math.round(wr.width) + 'px');
   }
 
+  /* 浮层滑到工作区外面以后，浏览器有时会把 .work 的横向 scrollLeft 顶偏
+   * （收起动画/焦点滚动引起），箭头用的是 right:0，一偏就离右缘差一截。
+   * 收起后归零，保证箭头真的贴边。 */
+  function resetWorkScroll() {
+    var w = document.querySelector('.work');
+    if (w && w.scrollLeft) w.scrollLeft = 0;
+  }
+
+  /* 只把箭头挂上、浮层保持藏起来（v0.6.1）。
+   * 用在「启动时恢复了上次的文件」：知道文件在哪，就给一个入口，
+   * 但不主动把界面顶出来 —— 用户点箭头才展开。 */
+  function armEdge() {
+    if (!pane) return;
+    layoutLayer();
+    S.open = true;
+    S.collapsed = true;
+    if (pane) pane.classList.add('off');
+    if (edge) {
+      edge.style.top = (S.edgeTop || 20) + '%';
+      edge.title = '展开 ' + (S.name || '.http') + '（可上下拖动；右键彻底关闭）';
+      edge.classList.add('on');
+    }
+    resetWorkScroll();
+  }
+
   /* 收起：向右滑出 → 右缘浮出灰色半透明箭头 */
   function collapse(silent) {
     if (!S.open || S.collapsed) return;
@@ -568,6 +593,9 @@
       edge.title = '展开 ' + (S.name || '.http') + '（可上下拖动；右键彻底关闭）';
       edge.classList.add('on');
     }
+    resetWorkScroll();
+    setTimeout(resetWorkScroll, 60);
+    setTimeout(resetWorkScroll, 420);
     /* 收起前把没落盘的改动写掉，避免“看不见了就不敢改”的心结 */
     if (S.dirty && saveTimer) { clearTimeout(saveTimer); doSave(false); }
     if (!silent) toast('已收起到右侧箭头 · 点箭头回到 .http');
@@ -580,6 +608,8 @@
     S.collapsed = false;
     if (pane) pane.classList.remove('off');
     if (edge) edge.classList.remove('on');
+    /* 恢复态启动时故意没扫目录：真正展开时补一次，左栏立刻有文件可点 */
+    if (!S.files.length && S.dir) scan();
     setTimeout(function () { if (ta) ta.focus(); }, 140);
     setTimeout(syncGutter, 400);
   }
@@ -1483,7 +1513,9 @@
   }
 
   /* ===================== 打开 / 文件列表 ===================== */
-  async function openPath(p) {
+  /* opts.restore：启动时恢复上次文件 —— 只备好内容并挂出右缘箭头，不展开浮层、不扫目录 */
+  async function openPath(p, opts) {
+    opts = opts || {};
     if (!p) return;
     try {
       var r = await invoke('http/readFile', { path: p });
@@ -1506,6 +1538,13 @@
       reparse();
       setSaveState('ok');
       savePrefs();
+      if (opts.restore) {
+        /* 恢复：只留入口。目录不扫（用户下次展开时才扫），也不聚焦。 */
+        renderFiles(true);
+        armEdge();
+        return;
+      }
+      enterMode();
       renderFiles(true);
       /* 目录列表可能落后（刚拖入的副本、外部新建的文件）：当前文件不在列表里就重扫一次，
        * 这样「再次拖入同名文件」才能按同名+同大小认领回原文件，而不是又造一份副本。 */
@@ -1513,6 +1552,7 @@
       if (!S.files.length || !known) scan();
       if (ta) ta.focus();
     } catch (e) {
+      if (opts.restore) { S.open = false; S.collapsed = false; if (edge) edge.classList.remove('on'); return; }
       toast('打开失败：' + esc(e.message || e));
     }
   }
@@ -1797,9 +1837,9 @@
     });
   }
 
-  /* 主入口：弹系统文件对话框选一个文件并打开（顶栏按钮 / 面板「📂 打开」都走这里） */
+  /* 主入口：只弹系统文件对话框选一个文件（顶栏按钮 / 面板「📂 打开」都走这里）。
+   * v0.6.1：**不先展开浮层** —— 取消就什么都不发生，选中确认后才由 openPath 展开。 */
   async function pickAndOpen() {
-    enterMode();
     var pick;
     try {
       pick = await pickNative('open');
@@ -2213,7 +2253,7 @@
       e && e.stopPropagation && e.stopPropagation();
       pickAndOpen();
     };
-    btn.title = '从资源管理器选择 .http 文件并编辑（自动保存 · 每个请求 ▶ 一点即发）';
+    btn.title = '只弹系统文件对话框（资源管理器）；选中确认后才展开 .http 浮层，取消则不出现';
   }
 
   /* ===================== 启动 ===================== */
@@ -2235,10 +2275,13 @@
     updateFoot();
     if (edge) edge.style.top = S.edgeTop + '%';
 
-    /* 恢复上次打开的文件（存在才恢复） */
+    /* 恢复上次打开的文件（v0.6.1：只挂右缘箭头，不展开浮层；文件读不到就什么都不显示） */
     if (prefs && prefs.lastPath) {
-      try { await openPath(prefs.lastPath); } catch (e) { }
+      try { await openPath(prefs.lastPath, { restore: true }); } catch (e) { }
     }
+    /* 启动早期 .work 的尺寸可能还没算好：箭头挂上后再贴一次边 */
+    setTimeout(function () { if (S.open && S.collapsed) layoutLayer(); }, 300);
+    setTimeout(function () { if (S.open && S.collapsed) layoutLayer(); }, 900);
 
     /* 暴露给调试 / 其他模块 / 自动化验证 */
     window.POLARIS_EDITOR = {
