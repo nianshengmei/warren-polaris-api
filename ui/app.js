@@ -899,6 +899,7 @@ window.POLARIS_API = {
     var url=String(p.url||'').trim();
     var headers=Object.assign({},p.headers||{});
     var body=p.body||'';
+    var bodyBase64=p.bodyBase64||'';
     var bodyType=p.bodyType||'text';
     var tmo=p.timeoutMs||120000;
     var t0=performance.now();
@@ -911,7 +912,7 @@ window.POLARIS_API = {
     setStatus(method+' '+url+' …');
     var resp;
     try{
-      var r=await DBX.invoke('http/request',{method:method,url:url,headers:headers,body:body,bodyType:bodyType,timeoutMs:tmo});
+      var r=await DBX.invoke('http/request',{method:method,url:url,headers:headers,body:body,bodyBase64:bodyBase64,bodyType:bodyType,timeoutMs:tmo});
       var ct=r.contentType||'';
       var isBin=BINARY.test(ct)||!!r.isBase64;
       var text=r.body||'';

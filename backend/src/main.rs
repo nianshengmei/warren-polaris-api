@@ -196,16 +196,37 @@ fn collect_http_files(dir: &Path, recursive: bool, depth: u32, out: &mut Vec<Val
     }
 }
 
+/// 读取文件。默认按 UTF-8 文本返回；binary=true 时返回 base64（供 multipart 里的二进制附件用）。
 fn handle_read_file(params: Value) -> Result<Value, PluginError> {
     let p = param_str(&params, "path").ok_or_else(|| PluginError::new(-32602, "缺少 path"))?;
     let path = PathBuf::from(p);
-    let content = fs::read_to_string(&path).map_err(|e| io_err("读取文件失败", e))?;
+    if !path.is_file() {
+        return Err(PluginError::new(-32000, format!("文件不存在：{}", path.to_string_lossy())));
+    }
     let dir = path.parent().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
     let name = path.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+
+    let binary = params.get("binary").and_then(Value::as_bool).unwrap_or(false);
+    if binary {
+        let bytes = fs::read(&path).map_err(|e| io_err("读取文件失败", e))?;
+        let size = bytes.len();
+        return Ok(json!({
+            "path": path.to_string_lossy().to_string(),
+            "dir": dir,
+            "name": name,
+            "binary": true,
+            "base64": BASE64_STANDARD.encode(&bytes),
+            "size": size,
+            "content": "",
+        }));
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| io_err("读取文件失败", e))?;
     Ok(json!({
         "path": path.to_string_lossy().to_string(),
         "dir": dir,
         "name": name,
+        "binary": false,
         "content": content,
     }))
 }
@@ -636,8 +657,20 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         .and_then(Value::as_str)
         .ok_or_else(|| PluginError::new(-32602, "缺少 url"))?;
     let body = params.get("body").and_then(Value::as_str).unwrap_or("");
+    let body_b64 = params.get("bodyBase64").and_then(Value::as_str).unwrap_or("");
     let body_type = params.get("bodyType").and_then(Value::as_str).unwrap_or("text");
     let timeout_ms = params.get("timeoutMs").and_then(Value::as_u64).unwrap_or(120_000);
+
+    /* 原始字节 body：multipart / 二进制文件上传都走这里，避免文本化把附件写坏 */
+    let raw_body: Option<Vec<u8>> = if body_b64.is_empty() {
+        None
+    } else {
+        Some(
+            BASE64_STANDARD
+                .decode(body_b64.as_bytes())
+                .map_err(|e| PluginError::new(-32602, format!("bodyBase64 解码失败：{e}")))?,
+        )
+    };
 
     // headers: { "Name": "value", ... }
     let mut headers: HashMap<String, String> = HashMap::new();
@@ -662,15 +695,21 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         req = req.header(k.as_str(), v.as_str());
     }
     // body
-    if !["GET", "HEAD"].contains(&method.as_str()) && !body.is_empty() {
-        req = req.body(body.to_string());
-        // 若未声明 Content-Type 且为 json/form，自动补
+    if !["GET", "HEAD"].contains(&method.as_str()) {
         let has_ct = headers.keys().any(|k| k.eq_ignore_ascii_case("content-type"));
-        if !has_ct {
-            match body_type {
-                "json" => req = req.header("Content-Type", "application/json"),
-                "form" => req = req.header("Content-Type", "application/x-www-form-urlencoded"),
-                _ => {}
+        if let Some(bytes) = raw_body {
+            if !bytes.is_empty() {
+                req = req.body(bytes);
+            }
+        } else if !body.is_empty() {
+            req = req.body(body.to_string());
+            // 若未声明 Content-Type 且为 json/form，自动补
+            if !has_ct {
+                match body_type {
+                    "json" => req = req.header("Content-Type", "application/json"),
+                    "form" => req = req.header("Content-Type", "application/x-www-form-urlencoded"),
+                    _ => {}
+                }
             }
         }
     }

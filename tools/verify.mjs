@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -173,6 +173,32 @@ ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
   const hf = read('ui/http-file.js');
   assert(/\/\^#\{3,\}\[ \\t\]\+\(\.\+\)\$\/\.exec/.test(hf), '标题正则应为 ^#{3,}[ \\t]+(.+)$');
   assert(hf.includes('nameAuto'), '缺少 nameAuto 标记');
+});
+
+ok('v0.5.1：multipart 按字节拼装 + 附件二进制读取', () => {
+  const hf = read('ui/http-file.js');
+  const ed = read('ui/http-editor.js');
+  const rs = read('backend/src/main.rs');
+  const app = read('ui/app.js');
+
+  /* 解析器 */
+  ['parseMultipart', "cur.bodyType = 'multipart'", 'filePath', 'multipart/form-data; boundary=']
+    .forEach(k => assert(hf.includes(k), '解析器缺少 ' + k));
+  assert(/!bodyBuf\.length/.test(hf), '< 文件 只在 body 为空时才算整包引用（段内必须保留）');
+
+  /* UI 组装 */
+  ['buildMultipart', 'b64ToBytes', 'bytesToB64', 'TextEncoder', 'mimeOf']
+    .forEach(k => assert(ed.includes(k), '编辑器缺少 ' + k));
+  assert(/\\r\\n\\r\\n/.test(ed), 'multipart 必须用 CRLF 分隔头与内容');
+  assert(/headers\['Content-Type'\] = mp\.contentType/.test(ed), 'Content-Type 必须与实际 boundary 对齐');
+  assert(/binary: true/.test(ed), '附件必须以 binary 读取');
+  assert(app.includes('bodyBase64'), 'runRaw 需透传 bodyBase64');
+
+  /* sidecar */
+  assert(/bodyBase64/.test(rs) && /BASE64_STANDARD\s*\.decode/.test(rs), 'sidecar 需支持 base64 原始 body');
+  assert(/params\.get\("binary"\)/.test(rs), 'readFile 需支持 binary 参数');
+  assert(/fn handle_read_file[\s\S]{0,1200}BASE64_STANDARD\.encode/.test(rs), 'readFile 的 binary 分支需返回 base64');
+  assert(/raw_body[\s\S]{0,600}req\.body\(bytes\)/.test(rs), '原始字节 body 必须按 bytes 发送');
 });
 
 console.log('\n' + pass + ' checks passed');

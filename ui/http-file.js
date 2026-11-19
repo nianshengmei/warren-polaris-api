@@ -8,12 +8,13 @@
  *   @name = value 文件级变量、{{name}} 插值
  *   http-client.env.json / http-client.private.env.json 环境变量（由 sidecar 读取后传入）
  *   请求行 METHOD URL [HTTP/1.1]、Header: Value、空行后 Body
- *   < ./body.json 外部文件引用、> ./out.json 响应另存
+ *   < ./body.json 整包 body 来自文件、> ./out.json 响应另存
+ *   multipart/form-data：直接写 --boundary 分段，段内 `< 附件路径` 表示该段为二进制文件
  *   > {% ... %} 响应脚本、{% ... %} 预请求脚本、client.test 断言（解析并保留，暂不执行）
  *   跨请求引用 {{login.response.body.$.token}} / {{login.response.headers.x-token}}
  *   内置动态变量 {{$guid}} {{$timestamp}} {{$randomInt}} {{$datetimeIso}}
  *
- * 明确不支持（v0.3.0）：脚本实际执行、client.global、multipart(<>)、GraphQL 专用块、
+ * 明确不支持：脚本实际执行、client.global、multipart 的 `<>` 简写、GraphQL 专用块、
  * WebSocket / gRPC 请求、>< 比较断言。解析时给出 warnings，不静默丢弃。
  */
 (function () {
@@ -27,6 +28,92 @@
   function safeName(s, fallback) {
     var t = String(s || '').trim().replace(/[^0-9A-Za-z_\-\u4e00-\u9fa5.]+/g, '_').slice(0, 60);
     return t || fallback;
+  }
+
+  /* ---- multipart/form-data 体解析 ----
+   * 形如：
+   *   --WebAppBoundary
+   *   Content-Disposition: form-data; name="audio"; filename="a.wav"
+   *   Content-Type: audio/wav
+   *
+   *   < D:\path\a.wav
+   *   --WebAppBoundary--
+   * 分段内容可以是文本，也可以是 `< 文件路径`（二进制附件，由 UI 读成字节拼装）。
+   * 兼容「分段头与内容之间没有空行」的写法（IDEA 允许，很多人也这么写）。 */
+  function parseMultipart(text, boundary) {
+    var src = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    var lines = src.split('\n');
+    var B = String(boundary || '').trim();
+    if (!B) {
+      for (var i0 = 0; i0 < lines.length; i0++) {
+        var t0 = lines[i0].trim();
+        if (!t0) continue;
+        if (/^--\S+$/.test(t0)) B = t0.replace(/^--/, '').replace(/--$/, '');
+        break;
+      }
+    }
+    var open = '--' + B;
+    var parts = [];
+    var inPart = false;
+    var buf = [];
+
+    function flush() {
+      if (!inPart) return;
+      var hs = [], idx = 0, k;
+      /* 头部行必须是合法的 HTTP 头名（去掉 `< path` 这种内容行） */
+      var TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+      for (; idx < buf.length; idx++) {
+        var L = buf[idx];
+        if (L.trim() === '') { idx++; break; }
+        var ci = L.indexOf(':');
+        var name = ci > 0 ? L.slice(0, ci) : '';
+        if (ci > 0 && TOKEN.test(name)) {
+          hs.push({ k: name.trim(), v: L.slice(ci + 1).trim() });
+          continue;
+        }
+        break;
+      }
+      var contentLines = buf.slice(idx);
+      while (contentLines.length && contentLines[0].trim() === '') contentLines.shift();
+      while (contentLines.length && contentLines[contentLines.length - 1].trim() === '') contentLines.pop();
+
+      var filePath = null;
+      var content = contentLines.join('\n');
+      if (contentLines.length === 1) {
+        var fm = /^<\s+(.+)$/.exec(contentLines[0].trim());
+        if (fm) { filePath = fm[1].trim(); content = ''; }
+      }
+      var cd = '';
+      for (k = 0; k < hs.length; k++) if (/^content-disposition$/i.test(hs[k].k)) cd = hs[k].v;
+      var nm = /name\s*=\s*(?:"([^"]*)"|([^;]+))/i.exec(cd);
+      var fn = /filename\s*=\s*(?:"([^"]*)"|([^;]+))/i.exec(cd);
+      var pct = '';
+      for (k = 0; k < hs.length; k++) if (/^content-type$/i.test(hs[k].k)) pct = hs[k].v;
+      parts.push({
+        headers: hs,
+        name: nm ? (nm[1] != null ? nm[1] : nm[2] || '').trim() : '',
+        filename: fn ? (fn[1] != null ? fn[1] : fn[2] || '').trim() : '',
+        contentType: pct,
+        content: content,
+        filePath: filePath
+      });
+      inPart = false;
+      buf = [];
+    }
+
+    for (var j = 0; j < lines.length; j++) {
+      var t = lines[j].trim();
+      if (t === open) { flush(); inPart = true; buf = []; continue; }
+      if (t === open + '--') { flush(); break; }
+      if (inPart) buf.push(lines[j]);
+    }
+    flush();
+
+    return {
+      boundary: B,
+      parts: parts,
+      contentType: 'multipart/form-data; boundary=' + B
+    };
   }
 
   /* 解析一个 .http 文件。
@@ -68,9 +155,27 @@
         cur.nameAuto = false;
       }
       if (!cur.bodyType) {
-        var ct = (cur.headers || []).find(function (h) { return /^content-type$/i.test(h.k); });
-        if (cur.bodyFromFile || (ct && /json/i.test(ct.v))) cur.bodyType = 'json';
-        else if (ct && /x-www-form-urlencoded/i.test(ct.v)) cur.bodyType = 'form';
+        var ctH = (cur.headers || []).find(function (h) { return /^content-type$/i.test(h.k); });
+        var ctV = ctH ? String(ctH.v || '') : '';
+        var bnd = (/(?:^|;)\s*boundary\s*=\s*"?([^";]+)"?/i.exec(ctV) || [])[1] || '';
+        /* multipart：Content-Type 声明了 multipart，或 body 首行就是 --boundary */
+        if (/multipart\//i.test(ctV) || /^\s*--[^\s-]/.test(cur.body || '')) {
+          cur.bodyType = 'multipart';
+          cur.multipart = parseMultipart(cur.body, bnd);
+          if (!cur.multipart.parts.length) {
+            warnings.push('请求「' + cur.name + '」声明为 multipart 但没解析出任何分段，检查 --boundary 是否与 Content-Type 一致');
+          }
+          var lackCt = !ctH;
+          if (lackCt) {
+            cur.headers.push({ k: 'Content-Type', v: cur.multipart.contentType });
+            warnings.push('请求「' + cur.name + '」缺少 Content-Type，已按 body 里的 boundary 自动补上');
+          } else if (bnd && bnd !== cur.multipart.boundary) {
+            warnings.push('请求「' + cur.name + '」body 里的 boundary 与 Content-Type 不一致，发送时以 body 为准');
+          }
+        } else if (cur.bodyFromFile) {
+          cur.bodyType = /\.json$/i.test(cur.bodyFromFile) ? 'json' : 'file';
+        } else if (ctV && /json/i.test(ctV)) cur.bodyType = 'json';
+        else if (ctV && /x-www-form-urlencoded/i.test(ctV)) cur.bodyType = 'form';
         else if (cur.body) cur.bodyType = 'text';
         else cur.bodyType = 'none';
       }
@@ -216,11 +321,13 @@
 
       cur.rawLines.push(raw);
 
-      /* --- 外部文件引用 < ./body.json --- */
-      if (/^<\s+/.test(trimmed)) {
+      /* --- 外部文件引用 < ./body.json ---
+       * 只有「body 还空着」时才算「整包 body 来自文件」；
+       * multipart 分段里的 `< 附件路径` 必须原样留在 body 里，交给 parseMultipart 处理。 */
+      if (/^<\s+/.test(trimmed) && !bodyBuf.length && !cur.bodyFromFile) {
         var bf = trimmed.replace(/^<\s+/, '').trim();
         if (/^<>/.test(bf)) {
-          warnings.push('请求「' + (cur.name || cur.id) + '」使用 multipart(<>)，v0.3.0 暂不支持');
+          warnings.push('请求「' + (cur.name || cur.id) + '」使用 multipart(<>)，请改用 < 文件 或直接写 --boundary 形式的 body');
         } else {
           cur.bodyFromFile = bf;
         }
@@ -371,6 +478,7 @@
   var api = {
     METHODS: METHODS,
     parseHttpFile: parseHttpFile,
+    parseMultipart: parseMultipart,
     resolveVars: resolveVars,
     toTab: toTab,
     mergeEnvFiles: mergeEnvFiles,

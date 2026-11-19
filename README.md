@@ -68,7 +68,27 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 | `> {% ... %}` 响应脚本、`{% ... %}` 预请求脚本、`client.test(...)` | 解析并保留、给出提示，**不执行** |
 | 跨请求引用 `{{login.response.body.$.token}}`、`{{x.response.headers.X-Token}}` | ✅（全部运行时） |
 | 内置 `{{$guid}}` `{{$timestamp}}` `{{$randomInt}}` `{{$datetimeIso}}` | ✅ |
-| multipart `<>`、WebSocket / gRPC / GraphQL 专用块、`client.global` | ❌ 暂不支持 |
+| **`multipart/form-data`**：手写 `--boundary` 分段，段内 `< 附件路径` 表示二进制文件 | ✅ 按字节拼装，附件原样上传 |
+| multipart 的 `<>` 简写、WebSocket / gRPC / GraphQL 专用块、`client.global` | ❌ 暂不支持 |
+
+### multipart / 文件上传
+
+直接按 IDEA 的写法写分段即可，**分段头与内容之间有没有空行都认**：
+
+```http
+### 创建音频
+POST https://host/AiLinkService/voiceprint/uploadAudio?userId=1&familyId=2
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+--WebAppBoundary
+Content-Disposition: form-data; name="audio"; filename="x.wav"
+< D:\音频\x.wav
+--WebAppBoundary--
+```
+
+- 每个分段的 `< 路径`（绝对路径，或相对 `.http` 文件目录）由 sidecar 以**二进制**读入，按 RFC 7578 拼成 CRLF 实体后整体以原始字节发出——文件不会被当成文本转码。
+- 分段没写 `Content-Type` 时按扩展名自动补（`.wav → audio/wav`、`.png → image/png`、`.json → application/json` 等）。
+- 请求头里的 `Content-Type` 会与实际 body 的 `boundary` 强制对齐，避免「多头/边界不一致」导致服务端不认。
+- 既没写 `Content-Type` 也没关系：body 首行是 `--xxx` 就自动识别为 multipart 并补头。
 
 脚本不执行的原因：DBX 工作台是 `sandbox="allow-scripts"` 的 iframe，CSP 下 `eval` 不可用；擅自执行第三方脚本也不安全。解析出的脚本文本保存在请求对象里，后续可单独做受限求值器。
 
@@ -123,6 +143,12 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 
 ## 版本历史
 
+- **v0.5.1** — **multipart/form-data 真正能用了**（原来只是把 body 当文本发出去，附件根本没带上，服务端自然不认 `Content-Type`）：
+  - 解析器识别 `--boundary` 分段（分段头与内容之间有没有空行都认），段内 `< 附件路径` 记为二进制附件；`< 文件` 只有在 body 为空时才算「整包 body 来自文件」，不再抢走段内的行
+  - UI 按 RFC 7578 用 CRLF 逐字节拼装实体，附件经 sidecar 以 base64 原样传入；sidecar `http/request` 新增 `bodyBase64`，用 `req.body(bytes)` 发原始字节
+  - 请求头 `Content-Type` 强制与 body 实际 `boundary` 对齐；分段缺 `Content-Type` 时按扩展名补（`audio/wav` / `image/png` …）
+  - 顺带修掉「非 JSON 的文件 body 被误判成 json」和 `<` 行被误当成整包引用的老问题
+  - 真机验证：784,420 字节 wav 经真实 HTTP POST 到本地服务器，服务端解出的文件 SHA-256 与原文件完全一致
 - **v0.5.0** — `.http` 编辑器补上「看得清」的两件事：
   - **接口一览**：左侧下半区列出当前文件里所有接口（方法标 + 名称），有标题用标题、没标题用 URL 末两段；点一条跳到源码对应位置（自动展开折叠 + 整行闪烁），支持过滤，光标移动时自动选中当前请求。
   - **语法着色**：`###` 标题、方法、URL（协议/主机/路径/query 键值）、Header 名值、`{{变量}}`、`<`/`>` 指令、`{% %}` 脚本分色；Body JSON 的 key / 字符串 / 数字 / 布尔 / null / 标点各自配色。实现方式是 textarea 文字透明 + 底层 `<pre>` 逐行同步绘制（字体度量、行高、宽度完全一致，光标零偏移）。

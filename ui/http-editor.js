@@ -106,6 +106,90 @@
     var s = String(p);
     return s.indexOf(d) === 0 ? s.slice(d.length).replace(/^[\\/]/, '') : s;
   }
+
+  /* ===================== 字节工具（multipart / 二进制上传用） ===================== */
+  var MIME = {
+    wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg',
+    amr: 'audio/amr', flac: 'audio/flac', webm: 'audio/webm',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    bmp: 'image/bmp', svg: 'image/svg+xml', ico: 'image/x-icon',
+    pdf: 'application/pdf', zip: 'application/zip', gz: 'application/gzip', tar: 'application/x-tar',
+    json: 'application/json', xml: 'application/xml', txt: 'text/plain', csv: 'text/csv', html: 'text/html',
+    mp4: 'video/mp4', mov: 'video/quicktime', avi: 'video/x-msvideo',
+    doc: 'application/msword', xls: 'application/vnd.ms-excel', ppt: 'application/vnd.ms-powerpoint',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  };
+  function mimeOf(name) {
+    var m = /\.([A-Za-z0-9]+)\s*$/.exec(String(name || ''));
+    return (m && MIME[m[1].toLowerCase()]) || 'application/octet-stream';
+  }
+  function b64ToBytes(b64) {
+    var bin = atob(String(b64 || ''));
+    var n = bin.length, u8 = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
+  function bytesToB64(u8) {
+    var CH = 0x8000, out = [];
+    for (var i = 0; i < u8.length; i += CH) {
+      out.push(String.fromCharCode.apply(null, u8.subarray(i, i + CH)));
+    }
+    return btoa(out.join(''));
+  }
+  function utf8(s) { return new TextEncoder().encode(String(s == null ? '' : s)); }
+
+  /* 按 RFC 7578 组装 multipart/form-data 实体（字节级拼装，附件原样不动）。
+   * 返回 { base64, contentType, parts } —— base64 交给 sidecar 当原始 body 发出去。 */
+  async function buildMultipart(req, rv) {
+    var mp = req.multipart || { boundary: 'WebAppBoundary', parts: [] };
+    var B = String(mp.boundary || 'WebAppBoundary').trim() || 'WebAppBoundary';
+    var base = S.dir || dirOf(S.path) || '';
+    var chunks = [], total = 0;
+    function push(u8) { if (u8 && u8.length) { chunks.push(u8); total += u8.length; } }
+    function pushText(s) { if (s) push(utf8(s)); }
+
+    var parts = mp.parts || [];
+    if (!parts.length) throw new Error('multipart 里没有分段');
+
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i] || {};
+      var hs = (p.headers || []).slice();
+      var hasCd = false, hasCt = false;
+      for (var k = 0; k < hs.length; k++) {
+        if (/^content-disposition$/i.test(hs[k].k)) hasCd = true;
+        if (/^content-type$/i.test(hs[k].k)) hasCt = true;
+      }
+      var cd = 'form-data; name="' + String(p.name || ('field' + (i + 1))) + '"';
+      if (p.filename) cd += '; filename="' + String(p.filename).replace(/"/g, "'") + '"';
+
+      var lines = ['--' + B];
+      if (!hasCd) lines.push('Content-Disposition: ' + cd);
+      for (var h = 0; h < hs.length; h++) lines.push(hs[h].k + ': ' + rv(hs[h].v));
+      if (!hasCt) {
+        var guess = p.contentType || (p.filePath || p.filename ? mimeOf(p.filename || p.filePath) : '');
+        if (guess) lines.push('Content-Type: ' + guess);
+      }
+      pushText(lines.join('\r\n') + '\r\n\r\n');
+
+      if (p.filePath) {
+        var fp = pathJoin(base, p.filePath);
+        var f = await invoke('http/readFile', { path: fp, binary: true });
+        if (!f || !f.base64) throw new Error('读取附件失败：' + fp);
+        push(b64ToBytes(f.base64));
+      } else if (p.content) {
+        pushText(rv(p.content));
+      }
+      pushText('\r\n');
+    }
+    pushText('--' + B + '--\r\n');
+
+    var all = new Uint8Array(total), off = 0;
+    for (var c = 0; c < chunks.length; c++) { all.set(chunks[c], off); off += chunks[c].length; }
+    return { base64: bytesToB64(all), contentType: 'multipart/form-data; boundary=' + B, parts: parts.length };
+  }
+
   function hhmmss() {
     var t = new Date();
     var p = function (n) { return String(n).padStart(2, '0'); };
@@ -280,6 +364,7 @@
       '.pa-fe .t-colon,.pa-fe .t-ver{color:var(--dimmer,#6e7282)}',
       '.pa-fe .t-dir{color:var(--brand,#ff7a59);font-weight:700}',
       '.pa-fe .t-file{color:var(--j-str,#a5d6a4)}',
+      '.pa-fe .t-bnd{color:var(--brand,#ff7a59);font-weight:700;letter-spacing:.02em}',
       '.pa-fe .t-script{color:var(--m-patch,#a371f7)}',
       '.pa-fe .t-scriptd{color:var(--dimmer,#6e7282);font-weight:700}',
       '.pa-fe .t-jkey{color:var(--j-key,#79c0ff)}',
@@ -927,9 +1012,18 @@
 
     if (!ctx.body) {
       if (!T) return '';
-      if (ctx.ctJson || /^[\[{]/.test(T)) ctx.body = 'json';
+      if (/^--\S+/.test(T)) ctx.body = 'multipart';
+      else if (ctx.ctJson || /^[\[{]/.test(T)) ctx.body = 'json';
       else if (/^[^\s=&]+=/.test(T) && T.indexOf('{') < 0) ctx.body = 'form';
       else ctx.body = 'text';
+    }
+    if (ctx.body === 'multipart') {
+      var leadH = lead ? esc(lead) : '';
+      var bm = /^(--\S+?)(--)?\s*$/.exec(T);
+      if (bm) return leadH + sp('t-bnd', bm[1]) + sp('t-meta', bm[2] || '');
+      var hm = /^([^:\s][^:]*)(:[ \t]*)(.*)$/.exec(T);
+      if (hm) return leadH + sp('t-hk', hm[1]) + sp('t-colon', hm[2]) + sp('t-hv', hm[3]);
+      return esc(L);
     }
     if (ctx.body === 'json') return hiJson(L, ctx);
     if (ctx.body === 'form') return (lead ? esc(lead) : '') + hiForm(L.slice(lead.length));
@@ -1529,23 +1623,50 @@
     });
 
     var noBody = ['GET', 'HEAD'].indexOf(String(req.method).toUpperCase()) >= 0;
-    var body = '', bodyType = req.bodyType || 'text';
+    var body = '', bodyType = req.bodyType || 'text', bodyBase64 = '';
     if (!noBody) {
-      if (req.bodyFromFile) {
+      if (bodyType === 'multipart' || (req.multipart && (req.multipart.parts || []).length)) {
+        /* multipart：按字节拼装，附件以二进制读入。Content-Type 一定跟随实际 body 的 boundary，
+         * 这样服务端不会再出现「content-type 没生效」的情况。 */
+        try {
+          var mp = await buildMultipart(req, rv);
+          bodyBase64 = mp.base64;
+          bodyType = 'multipart';
+          headers['Content-Type'] = mp.contentType;
+          /* 同名不同大小写只保留一个 */
+          Object.keys(headers).forEach(function (k) {
+            if (k !== 'Content-Type' && /^content-type$/i.test(k)) delete headers[k];
+          });
+        } catch (e) {
+          toast('multipart 组装失败：' + esc(e.message || e));
+          S.lastRun[req.line] = 'err'; renderGutter(); renderOutline();
+          return;
+        }
+      } else if (req.bodyFromFile) {
         try {
           var fp = pathJoin(S.dir || dirOf(S.path), req.bodyFromFile);
-          var f = await invoke('http/readFile', { path: fp });
-          body = rv(f.content || '');
-          bodyType = (/^\s*[\[{]/.test(body) || /json/i.test(f.name || '')) ? 'json' : 'text';
+          if (bodyType === 'file') {
+            var fb = await invoke('http/readFile', { path: fp, binary: true });
+            if (!fb || !fb.base64) throw new Error('没有读到字节');
+            bodyBase64 = fb.base64;
+            if (!hasHeader(lower, 'content-type')) headers['Content-Type'] = mimeOf(fb.name || req.bodyFromFile);
+          } else {
+            var f = await invoke('http/readFile', { path: fp });
+            body = rv(f.content || '');
+            bodyType = (/^\s*[\[{]/.test(body) || /\.json$/i.test(f.name || req.bodyFromFile)) ? 'json' : 'text';
+          }
         } catch (e) {
           body = rv(req.body || '');
+          bodyBase64 = '';
           toast('外部 body 读取失败，改用内联 body：' + esc(e.message || e));
         }
       } else {
         body = rv(req.body || '');
       }
-      if (bodyType === 'json' && !hasHeader(lower, 'content-type')) headers['Content-Type'] = 'application/json';
-      if (bodyType === 'form' && !hasHeader(lower, 'content-type')) headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      if (!bodyBase64) {
+        if (bodyType === 'json' && !hasHeader(lower, 'content-type')) headers['Content-Type'] = 'application/json';
+        if (bodyType === 'form' && !hasHeader(lower, 'content-type')) headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      }
     }
 
     S.lastRun[req.line] = 'busy';
@@ -1554,7 +1675,8 @@
     try {
       resp = await window.POLARIS_API.runRaw({
         method: String(req.method || 'GET').toUpperCase(),
-        url: url, headers: headers, body: body, bodyType: bodyType, timeoutMs: 120000
+        url: url, headers: headers, body: body, bodyType: bodyType,
+        bodyBase64: bodyBase64 || '', timeoutMs: 120000
       });
       if (req.name) S.responses[req.name] = resp;
       S.lastRun[req.line] = (resp && resp.error) ? 'err' : (resp.status >= 400 ? 'warn' : 'ok');
