@@ -666,6 +666,12 @@
     if (hit) { await openPath(hit); toast('已对应到工作目录里的同名文件，原地编辑'); return; }
 
     var dir = S.dir || (E.dir && E.dir.value || '').trim();
+    /* 列表可能还没扫过或是旧的：先刷一次再认领，能命中就别造副本 */
+    if (dir && !hit) {
+      await refreshFiles(dir);
+      hit = matchScanned(name, opts.size);
+      if (hit) { await openPath(hit); toast('已对应到工作目录里的同名文件，原地编辑'); return; }
+    }
     if (dir) {
       try {
         var p = await writeCopy(dir, String(name || 'imported.http'), text);
@@ -698,6 +704,23 @@
     if (ta) ta.focus();
   }
 
+  /* 拉一次目录列表（不做 UI 提示，给拖入时的「认领原文件」用） */
+  async function refreshFiles(dir) {
+    var d = String(dir || '').trim();
+    if (!d) return false;
+    try {
+      var r = await invoke('http/listFiles', { dir: d, recursive: true });
+      S.dir = r.dir || d;
+      S.files = r.files || [];
+      if (E.dir) E.dir.value = S.dir;
+      renderFiles(true);
+      savePrefs();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function scan() {
     var dir = (E.dir && E.dir.value || '').trim();
     if (!dir) { toast('请先填写工作目录'); if (E.dir) E.dir.focus(); return; }
@@ -709,7 +732,7 @@
       if (E.dir) E.dir.value = S.dir;
       renderFiles();
       savePrefs();
-      if (!S.files.length && E.list) E.list.innerHTML = '<div class="pa-fe-empty">该目录下没有 .http / .rest 文件。<br>点 ＋ 新建，或点 ⇣ 导入。</div>';
+      if (!S.files.length && E.list) E.list.innerHTML = '<div class="pa-fe-empty">该目录下没有 .http / .rest 文件。<br>点 ＋ 新建，或点 📂 打开。</div>';
     } catch (e) {
       S.files = [];
       if (E.list) E.list.innerHTML = '<div class="pa-fe-empty">扫描失败：' + esc(e.message || e) + '</div>';
