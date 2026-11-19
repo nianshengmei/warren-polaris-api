@@ -12,6 +12,8 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 
 **v0.4.0：打开与保存都变成「系统对话框 + 可反复点」** —— 点「打开 .http」直接拉起资源管理器选文件；文件支持从应用外拖入；「保存」任意多次点击都真正落盘，并显示第几次。
 
+**v0.6.3：打开就从第一行看起** —— 之前载入文件后 textarea 的光标落在末尾，`focus()` 把视图滚到最后一行；现在载入后光标与滚动都归零，示例打开即是文件头。
+
 **v0.6.2：自带一份能直接跑的示例** —— 第一次打开时把 `examples.http` 放进默认目录 `~/warren-polaris-api`（8 个请求：GET / POST JSON / 表单 / multipart 上传 / SSE / 跨请求引用 / 动态变量），启动仍然只挂右缘箭头；SSE 支持流式读取（最多 10 秒，收多少显示多少）。
 
 **v0.6.1：`打开 .http` 只弹文件对话框** —— 取消就什么都不发生，选中确认后才展开浮层；启动时若还记得上次的文件，只在右缘留一颗**灰色半透明箭头**作为入口，不主动把界面顶出来。
@@ -359,6 +361,7 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 
 ## 版本历史
 
+- **v0.6.3** — **打开文件停在第一行**：`setDoc()` 赋值后光标落在末尾，随后的 `focus()` 把视图滚到文件末行（示例打开直接看到「踩过的坑」那一节）。现在赋值后 `setSelectionRange(0,0)` 并把 `scrollTop/scrollLeft` 归零。
 - **v0.6.2** — **带上能直接跑通的示例，SSE 也能真的看流**：
   - 首次打开自动在默认目录 `~/warren-polaris-api` 写 `examples.http` + `sample-upload.txt`（`noClobber`，不覆盖），并作为默认恢复目标（仍然只挂箭头，不展开浮层）；上次文件失效时回落到示例
   - 示例覆盖 GET / POST JSON / 表单 / multipart 上传 / SSE / 跨请求引用 / 动态变量，共 8 节，默认打 `httpbin.org`，只改两行即可指向自己的服务；不含任何真实凭据

@@ -743,7 +743,14 @@
     S.hitLine = -1;
     S.hlKey = null;
     S.activeReq = -1;
-    if (ta) { ta.value = S.text; ta.scrollTop = 0; ta.scrollLeft = 0; }
+    /* 赋值后 textarea 的光标会落到末尾，随后的 focus() 会把视图滚到文件最后一行。
+     * 打开一个文件应该从第 1 行看起，所以这里把光标和滚动都归零。 */
+    if (ta) {
+      ta.value = S.text;
+      try { ta.setSelectionRange(0, 0); } catch (e) { }
+      ta.scrollTop = 0;
+      ta.scrollLeft = 0;
+    }
     ensure();
     buildView();
     paint();

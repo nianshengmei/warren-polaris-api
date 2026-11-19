@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.6.2';
+const VERSION = '0.6.3';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -296,6 +296,13 @@ ok('README 带 .http 操作方式与完整示例', () => {
   assert(/<!-- SAMPLE:END -->/.test(rd), '示例代码块缺结束标记');
   assert(/data: \[DONE\]/.test(rd), 'README 示例要含 SSE 的 [DONE]');
   assert(/sync-readme-sample\.mjs/.test(rd), 'README 要说明示例由脚本同步');
+});
+
+ok('v0.6.3：打开文件停在第一行', () => {
+  const ed = read('ui/http-editor.js');
+  const doc = ed.slice(ed.indexOf('function setDoc'), ed.indexOf('function syncScroll'));
+  assert(/setSelectionRange\(0, 0\)/.test(doc), 'setDoc 要把光标归零');
+  assert(/ta\.scrollTop = 0/.test(doc), 'setDoc 要把滚动归零');
 });
 
 console.log('\n' + pass + ' checks passed');
