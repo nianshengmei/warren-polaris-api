@@ -768,7 +768,7 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         }
         (buf, ended)
     } else {
-        (resp.bytes().map_err(|e| PluginError::new(-32000, format!("read body: {e}")))?, true)
+        (resp.bytes().map_err(|e| PluginError::new(-32000, format!("read body: {e}")))?.to_vec(), true)
     };
     let time_ms = start.elapsed().as_millis() as u64;
 
