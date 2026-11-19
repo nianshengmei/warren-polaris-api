@@ -175,7 +175,8 @@
       pushText(lines.join('\r\n') + '\r\n\r\n');
 
       if (p.filePath) {
-        var fp = pathJoin(base, p.filePath);
+        /* 附件路径允许用变量（示例里 @audioPath 就是这么传的）；绝对路径 pathJoin 会原样返回 */
+        var fp = pathJoin(base, rv(p.filePath));
         var f = await invoke('http/readFile', { path: fp, binary: true });
         if (!f || !f.base64) throw new Error('读取附件失败：' + fp);
         push(b64ToBytes(f.base64));
@@ -1190,6 +1191,10 @@
 
   /* 名称：有标题（### 空格后 / # @name）用标题，没有就用 URL 末两段 */
   function reqName(r) {
+    /* 展示名优先 ### 标题；只有 # @name 时用它；都没有就取 URL 末两段。
+     * @name 仍是跨请求引用的键，两者互不干扰。 */
+    var ti = String((r && r.title) || '').trim();
+    if (ti) return ti;
     var nm = String((r && r.name) || '').trim();
     if (nm && !r.nameAuto) return nm;
     return urlTail(r && r.url);
@@ -1516,7 +1521,7 @@
   /* opts.restore：启动时恢复上次文件 —— 只备好内容并挂出右缘箭头，不展开浮层、不扫目录 */
   async function openPath(p, opts) {
     opts = opts || {};
-    if (!p) return;
+    if (!p) return false;
     try {
       var r = await invoke('http/readFile', { path: p });
       S.path = r.path || p;
@@ -1542,7 +1547,7 @@
         /* 恢复：只留入口。目录不扫（用户下次展开时才扫），也不聚焦。 */
         renderFiles(true);
         armEdge();
-        return;
+        return true;
       }
       enterMode();
       renderFiles(true);
@@ -1551,9 +1556,36 @@
       var known = (S.files || []).some(function (f) { return f.path === S.path; });
       if (!S.files.length || !known) scan();
       if (ta) ta.focus();
+      return true;
     } catch (e) {
-      if (opts.restore) { S.open = false; S.collapsed = false; if (edge) edge.classList.remove('on'); return; }
+      if (opts.restore) { S.open = false; S.collapsed = false; if (edge) edge.classList.remove('on'); return false; }
       toast('打开失败：' + esc(e.message || e));
+      return false;
+    }
+  }
+
+  /* 首次使用：在默认工作目录（~/warren-polaris-api）放一份示例 .http。
+   * 已存在就原样用，绝不覆盖用户改过的内容；附件用 noClobber 同理。 */
+  async function ensureDefaultSample() {
+    var S0 = window.POLARIS_SAMPLE;
+    if (!S0 || !hostOk()) return '';
+    var dd = null;
+    try { dd = await invoke('http/defaultDirs'); } catch (e) { }
+    var dir = String((dd && dd.workDir) || (dd && dd.homeDir) || '').trim();
+    if (!dir) return '';
+    var target = pathJoin(dir, 'examples.http');
+    try {
+      var r = await invoke('http/readFile', { path: target });
+      if (r && typeof r.content === 'string') return target;   /* 已存在：直接用 */
+    } catch (e) { /* 不存在才写 */ }
+    try {
+      var attachPath = pathJoin(dir, S0.attachName || 'sample-upload.txt');
+      await invoke('http/writeFile', { path: attachPath, content: S0.attach || '', noClobber: true });
+      var text = String(S0.http || '').replace(/__AUDIO_PATH__/g, attachPath);
+      await invoke('http/writeFile', { path: target, content: text, noClobber: true });
+      return target;
+    } catch (e) {
+      return '';
     }
   }
 
@@ -2275,9 +2307,17 @@
     updateFoot();
     if (edge) edge.style.top = S.edgeTop + '%';
 
-    /* 恢复上次打开的文件（v0.6.1：只挂右缘箭头，不展开浮层；文件读不到就什么都不显示） */
-    if (prefs && prefs.lastPath) {
-      try { await openPath(prefs.lastPath, { restore: true }); } catch (e) { }
+    /* 恢复上次打开的文件（只挂右缘箭头，不展开浮层）。
+     * 示例每次都确保存在（noClobber，改过/删前的都不动）——
+     * 这样老用户即使还记着别的文件，默认目录里也有一份能直接跑的例子。
+     * 入口优先给上次那个文件；它读不到才退回示例。 */
+    var sample = await ensureDefaultSample();
+    var restored = false;
+    if (prefs && prefs.lastPath && prefs.lastPath !== sample) {
+      try { restored = (await openPath(prefs.lastPath, { restore: true })) === true; } catch (e) { }
+    }
+    if (!restored && sample) {
+      try { await openPath(sample, { restore: true }); } catch (e) { }
     }
     /* 启动早期 .work 的尺寸可能还没算好：箭头挂上后再贴一次边 */
     setTimeout(function () { if (S.open && S.collapsed) layoutLayer(); }, 300);
@@ -2310,7 +2350,8 @@
       isLayerOpen: function () { return S.open; },
       isCollapsed: function () { return !!S.collapsed; },
       collapse: collapse,
-      expand: expand
+      expand: expand,
+      ensureSample: ensureDefaultSample
     };
 
     /* 二次接管：确保晚于 http-workspace.js 的异步 boot 完成绑定 */

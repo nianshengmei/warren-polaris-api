@@ -21,6 +21,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -682,9 +683,23 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         }
     }
 
+    /* SSE（text/event-stream）是长连接：照普通请求读会一直挂到整体超时。
+     * 这里认出「Accept 含 text/event-stream」，用单独的 client + 较短的 sseMs，
+     * 到点主动收尾，把已经推过来的 data 行原样返回，并标记 sseTruncated。 */
+    let wants_sse = headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("accept") && v.to_ascii_lowercase().contains("text/event-stream")
+    });
+    let sse_ms = params.get("sseMs").and_then(Value::as_u64).unwrap_or(10_000).max(1000);
+
     // 构建 reqwest 请求
     let client = reqwest::blocking::Client::builder()
-        .timeout(if timeout_ms > 0 { Duration::from_millis(timeout_ms) } else { Duration::from_secs(900) })
+        .timeout(if wants_sse {
+            Duration::from_millis(sse_ms)
+        } else if timeout_ms > 0 {
+            Duration::from_millis(timeout_ms)
+        } else {
+            Duration::from_secs(900)
+        })
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| PluginError::new(-32000, format!("client build: {e}")))?;
@@ -715,7 +730,7 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
     }
 
     let start = Instant::now();
-    let resp = req.send().map_err(|e| PluginError::new(-32000, format!("send: {e}")))?;
+    let mut resp = req.send().map_err(|e| PluginError::new(-32000, format!("send: {e}")))?;
     let status = resp.status().as_u16();
     let status_text = resp.status().canonical_reason().unwrap_or("").to_string();
     let ok = resp.status().is_success();
@@ -734,7 +749,27 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
     }
     // 判断二进制：image/audio/video/font/octet-stream/pdf/zip 等
     let is_binary = is_binary_content_type(&content_type);
-    let bytes = resp.bytes().map_err(|e| PluginError::new(-32000, format!("read body: {e}")))?;
+    let is_sse = wants_sse || content_type.to_ascii_lowercase().contains("text/event-stream");
+    /* SSE：边收边攒，最多 512 KiB；到 client 超时（sseMs）或服务端断开就收尾。
+     * 其它请求照旧一次性读完整个 body。 */
+    let (bytes, sse_ended) = if is_sse {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut tmp = [0u8; 8192];
+        let mut ended = false;
+        loop {
+            match resp.read(&mut tmp) {
+                Ok(0) => { ended = true; break; }
+                Ok(n) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.len() >= 512 * 1024 { break; }
+                }
+                Err(_) => break,   // 超时 / 连接被对端关闭：把已收到的留下
+            }
+        }
+        (buf, ended)
+    } else {
+        (resp.bytes().map_err(|e| PluginError::new(-32000, format!("read body: {e}")))?, true)
+    };
     let time_ms = start.elapsed().as_millis() as u64;
 
     let (body_out, is_base64) = if is_binary {
@@ -754,6 +789,8 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         "isBase64": is_base64,
         "size": bytes.len(),
         "timeMs": time_ms,
+        "sse": is_sse,
+        "sseTruncated": is_sse && !sse_ended,
     }))
 }
 

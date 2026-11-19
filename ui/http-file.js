@@ -137,6 +137,7 @@
     var scriptBuf = [];
     var scriptKind = null;
     var pendingName = null;
+    var pendingTitle = null;   /* ### 后的标题：@name 只用来做引用键，展示仍用标题 */
     var seq = 0;
 
     function finish() {
@@ -193,6 +194,7 @@
       cur = {
         id: 'http-' + seq,
         name: pendingName || '',
+        title: pendingTitle || '',
         method: line.method,
         url: trimRight(line.url),
         headers: [],
@@ -208,6 +210,7 @@
       };
       cur.rawLines = [];
       pendingName = null;
+      pendingTitle = null;
       phase = 'headers';
     }
 
@@ -226,7 +229,7 @@
         bodyBuf = []; scriptBuf = []; scriptKind = null;
         var tm = /^#{3,}[ \t]+(.+)$/.exec(trimmed);
         var nm = tm ? tm[1].trim() : '';
-        if (nm) pendingName = nm;
+        if (nm) { pendingName = nm; pendingTitle = nm; }
         phase = 'idle';
         continue;
       }

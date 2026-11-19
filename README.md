@@ -12,6 +12,8 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 
 **v0.4.0：打开与保存都变成「系统对话框 + 可反复点」** —— 点「打开 .http」直接拉起资源管理器选文件；文件支持从应用外拖入；「保存」任意多次点击都真正落盘，并显示第几次。
 
+**v0.6.2：自带一份能直接跑的示例** —— 第一次打开时把 `examples.http` 放进默认目录 `~/warren-polaris-api`（8 个请求：GET / POST JSON / 表单 / multipart 上传 / SSE / 跨请求引用 / 动态变量），启动仍然只挂右缘箭头；SSE 支持流式读取（最多 10 秒，收多少显示多少）。
+
 **v0.6.1：`打开 .http` 只弹文件对话框** —— 取消就什么都不发生，选中确认后才展开浮层；启动时若还记得上次的文件，只在右缘留一颗**灰色半透明箭头**作为入口，不主动把界面顶出来。
 
 **v0.6.0：`.http` 变成一个真正的浮层** —— 盖在请求编辑区上、上方 tab 与下方响应框都不动；点「⇥ 收起」或点上方的请求 tab，浮层向右滑走，右缘留一颗灰色半透明悬浮箭头，点它就原样回来（可上下拖动放置位置）。
@@ -26,6 +28,19 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 - 点「⇥ 收起」或**点上方的请求 tab / 左侧集合条目**，浮层向右滑出屏幕，右缘浮出一颗灰色半透明箭头（24×96，磨砂，可上下拖动，位置记在 `host.storage`）；
 - 点箭头 → 浮层原样滑回：文件、光标、折叠、未保存内容一个不丢（收起前会把没落盘的改动写掉）；
 - 右键箭头 = 彻底关闭浮层；`POLARIS_EDITOR.collapse() / expand() / close()` 也可程序化控制。
+
+### 怎么用（从打开到跑起来）
+
+1. **打开** —— 顶栏「▤ 打开 .http」只弹系统文件对话框，选一个 `.http` / `.rest` 文件确认后浮层才滑出；也可以把文件从资源管理器**直接拖进窗口**。取消对话框则界面毫无变化。之后每次打开插件，右缘那颗灰色箭头就是「上次那个文件」的入口，点一下原样回来。
+2. **找接口** —— 左侧下半区是当前文件的**接口一览**（方法标 + 标题）；带过滤框，输入即筛，`Enter` 跳第一条；点一条就跳到源码对应行，行会闪一下。光标在源码里移动，列表也会跟着选中当前请求。
+3. **跑一条** —— 请求首行左侧的绿色 ▶，点一下就用**你此刻编辑器里的文本**（不是磁盘上的旧版本）重新解析并发送；结果显示在下方原来的响应框，表格 / 对象树 / 原始 / 预览 / Headers 一套都在。
+4. **跑全部** —— 工具条「▶▶ 全部运行」按文件顺序执行，前一个的响应能喂给后一个（`{{login.response.body.$.token}}` 这种引用只有在这个模式下才有值）。
+5. **改** —— 直接在右侧源码里编辑，`Tab` 缩进两个空格；停手 900 ms 自动保存，也可以 `Ctrl/⌘ + S` 或点「保存」立刻写盘（**点几次写几次**，状态显示「✓ 已保存 15:04:21 ×3」）。想另存一份用「另存为」。
+6. **收起与找回** —— 「⇥ 收起」、点上方的请求 tab、点左侧集合条目，浮层都会向右滑走；右缘灰色箭头可**上下拖动**放到顺手的位置（会记住），单击展开，右键彻底关闭。收起不会丢任何东西：光标、折叠、没保存的改动都在（收起前会顺手落盘）。
+7. **变量与环境** —— 文件顶部 `@name = value` 定义文件级变量，正文用 `{{name}}` 插值；同目录放 `http-client.env.json` / `http-client.private.env.json`，右上角下拉切环境。
+8. **新建** —— 工具条 `＋` 在当前工作目录新建一个 `.http`。
+
+> 打开的文件记在 `host.storage`，下次打开插件自动恢复；恢复只挂箭头，不主动把界面顶出来。
 
 | 能力 | 说明 |
 | --- | --- |
@@ -46,8 +61,6 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 | **环境** | 自动读取同目录 `http-client.env.json` / `http-client.private.env.json`，工具条下拉切换 |
 | **新建** | `＋` 在当前工作目录新建 `.http` |
 
-> 打开的文件会记在 `host.storage`，下次打开插件自动恢复上次编辑的文件。
->
 > 为什么自己弹对话框：DBX 宿主的 `fileTransfer.pick` 只回**句柄**不回路径（沙箱设计），拿不到路径就无法把编辑结果写回原文件。sidecar 以本机用户身份运行，自己调系统对话框（Windows PowerShell/WinForms、macOS osascript、Linux zenity/kdialog，零额外 crate）即可拿到绝对路径，之后 `http/readFile` / `http/writeFile` 直接可用；这条通道不可用时自动降级到宿主 `fileTransfer.pick` → `<input type=file>`。
 >
 > 非 `.http` 的请求保存同样可反复点：已保存过的请求再点「保存」= 直接更新，弹「已更新」提示，不再重复弹窗。
@@ -65,12 +78,198 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 - **历史结果**：顶栏「◷ 历史结果」列出本机已保存的结果，点「打开」即用原有响应视图重新渲染；也可「删除」或「打开目录」。
 - 结果写入本地文件而不是 `host.storage`，因为后者单值 256 KiB、插件总量 1 MiB，装不下真实响应体。sidecar 以当前用户权限运行，本地文件读写无需额外 manifest 权限。
 
+### 首次打开：默认目录里带一份示例
+
+第一次用（还没有可恢复的上次文件）时，插件会在默认工作目录 `~/warren-polaris-api` 里放两个文件，并把 `examples.http` 当作默认打开的文件——启动**只挂右缘箭头**，点箭头就能看到：
+
+| # | 请求 | 演示什么 |
+| --- | --- | --- |
+| 1 | `GET {{baseUrl}}/get?familyId=…` | 查询串 + `Authorization` 头 |
+| 2 | `POST {{baseUrl}}/post`（JSON） | OpenAI 兼容对话体、`inputs.userData` 这种「序列化过的 JSON 字符串」 |
+| 3 | `POST {{baseUrl}}/post`（表单） | `application/x-www-form-urlencoded` 登录 |
+| 4 | `POST {{baseUrl}}/post`（multipart） | 三段式上传：文件 + 文本 + JSON 段；响应里回显 `files.audio`，用来确认附件真的带上了 |
+| 5 | `POST {{apiBase}}/v1/chat/completions` | SSE 模板：`stream: true` + `Accept: text/event-stream`，`data:` 逐块、`data: [DONE]` 收尾 |
+| 6 | `GET {{sseDemo}}/sse?count=3` | 真 SSE 自测（`httpbingo.org`，每 2.5 s 一条、推 3 条收尾），用来确认流通道通不通 |
+| 7 | `GET …?fromLogin={{login.response.body.$.form.username}}` | 跨请求引用（body 字段 / 响应头） |
+| 8 | `GET …?guid={{$guid}}&ts={{$timestamp}}` | 内置动态变量 |
+
+- `examples.http` 默认指向 `https://httpbin.org`（6 号 SSE 自测单独用 `https://httpbingo.org`）：**能直接点 ▶ 跑通并回显请求**；要打自己的服务，只改文件顶部 `@baseUrl` / `@apiBase` 两行。
+- `sample-upload.txt` 是 4 号请求的示例附件；把 `@audioPath` 换成你自己的 `.wav` 就是真实音频上传。
+- 两个文件都用 `noClobber` 写入：**已存在就不动**（你改过的内容不会被覆盖），删掉才会重新生成。
+- 示例里没有任何真实凭据：域名、token、familyId 全是虚构占位值。
+
+### 完整示例：`examples.http`
+
+下面就是启动时写进 `~/warren-polaris-api/examples.http` 的原文（`@audioPath` 那行在真实文件里是本机 `sample-upload.txt` 的绝对路径，这里给个示意值）。想更快上手：整段复制存成 `demo.http`，用「▤ 打开 .http」打开它，从第 1 条开始点 ▶。
+
+<!-- SAMPLE:BEGIN -->
+```http
+# ============================================================================
+#  warren-polaris-api · .http 示例集
+#  这个文件是插件第一次打开时自动放到默认目录的样例，可以随便改、随便删。
+#
+#  怎么玩：
+#    1) 顶栏「▤ 打开 .http」选文件；收起后点右缘灰色箭头能回到上次的文件
+#    2) 每个请求左侧的 ▶ 一点即发，结果显示在下方的响应框里
+#    3) Ctrl+S 保存；默认也会自动保存
+#
+#  语法速查：
+#    ###  标题              分隔请求；标题会出现在左侧「接口一览」，点一条跳到源码
+#    # @name xxx            给请求命名，之后可用 {{xxx.response.body.$.field}} 取上次的结果
+#    @name = value          文件级变量（下面这几条），优先级高于 http-client.env.json
+#    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」
+#    {{$guid}} {{$timestamp}} {{$randomInt}} {{$datetimeIso}}   内置动态变量
+#
+#  想指向自己的服务：只改下面 @baseUrl / @apiBase 两行（@sseDemo 只给 6 号自测用）
+# ============================================================================
+
+@baseUrl = https://httpbin.org
+@apiBase = https://api.example.com
+@token = 换成你自己的 Bearer Token
+@audioPath = D:\音频\sample-upload.txt
+@sseDemo = https://httpbingo.org
+
+### 1. GET · 查询串 + 鉴权头
+# @name listTasks
+# 最普通的只读接口：查询参数直接跟在 URL 后面，改个值再点 ▶ 就能复跑。
+# 有的网关只认裸 token（不加 "Bearer "），按你的服务改这一行即可。
+GET {{baseUrl}}/get?familyId=1900000000000001&page=1&size=20&verbose=true
+Accept: application/json
+Authorization: Bearer {{token}}
+
+### 2. POST · JSON 体 · 对话补全（OpenAI 兼容那一套）
+# @name chatOnce
+# 换成自己的服务：把 URL 改成 {{apiBase}}/v1/chat/completions。
+# 注意 inputs.userData 这种字段是「被序列化过的 JSON 字符串」，里面的引号要转义。
+POST {{baseUrl}}/post
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{token}}
+
+{
+  "model": "gpt-turbo",
+  "stream": false,
+  "messages": [
+    { "role": "system", "content": "你是家里的语音助手，回答不超过两句" },
+    { "role": "user", "content": "客厅的热水器今天用了多少水？" }
+  ],
+  "inputs": {
+    "instanceId": "{{$guid}}",
+    "channelId": "1",
+    "sentenceId": "1",
+    "userData": "{\"familyId\":\"1900000000000001\",\"userId\":\"1700000000000001\",\"source\":\"3\",\"language\":\"1\"}"
+  }
+}
+
+### 3. POST · 表单 application/x-www-form-urlencoded
+# @name login
+# 登录 / 换 token 最常见的形态：key=value&key=value，不是 JSON。
+# 值里有中文或 & 时要先 URL 编码，否则会被切成两个字段。
+POST {{baseUrl}}/post
+Content-Type: application/x-www-form-urlencoded
+Accept: application/json
+X-Client: warren-polaris-api
+
+grant_type=password&username=warren&password=123456&remember=true&nonce={{$randomInt}}
+
+### 4. POST · multipart/form-data · 上传音频做声纹
+# @name uploadVoice
+# 这一节故意打 httpbin：响应里的 files.audio 会回显收到的字节，
+# 用来确认「附件到底有没有真的带上」。
+# 换成自己的上传接口：URL 改成 {{apiBase}}/voiceprint/uploadAudio?userId=1700000000000001
+# 三个必须对齐的点：
+#   · boundary 与 Content-Type 里写的一模一样
+#   · 分段之间空一行，最后以 --boundary-- 收尾
+#   · 附件路径写绝对路径（或本文件里的变量），< 后面留一个空格
+POST {{baseUrl}}/post
+Content-Type: multipart/form-data; boundary=WarrenBoundary
+Accept: application/json
+
+--WarrenBoundary
+Content-Disposition: form-data; name="audio"; filename="sample.wav"
+Content-Type: audio/wav
+
+< {{audioPath}}
+--WarrenBoundary
+Content-Disposition: form-data; name="scene"
+
+voiceprint
+--WarrenBoundary
+Content-Disposition: form-data; name="meta"
+Content-Type: application/json
+
+{"familyId":"1900000000000001","sampleRate":16000}
+--WarrenBoundary--
+
+### 5. SSE · OpenAI 风格流式对话（data: 逐块 + data: [DONE]）
+# @name chatStream
+# 这是模板：URL 换成你的 /v1/chat/completions、token 填好就能跑。
+# 服务端一行一条 data:，正文是增量 delta，最后一行 data: [DONE]：
+#   data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"delta":{"content":"客"}}]}
+#   data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"delta":{"content":"厅"}}]}
+#   data: [DONE]
+# 插件最多读 10 秒或读到对端断开，把已收到的行原样贴进响应框；
+# 没正常收尾时响应区会标「SSE 已截断」，说明流是通的、只是还没说完。
+POST {{apiBase}}/v1/chat/completions
+Content-Type: application/json
+Accept: text/event-stream
+Cache-Control: no-cache
+Authorization: Bearer {{token}}
+
+{
+  "model": "gpt-turbo",
+  "stream": true,
+  "messages": [
+    { "role": "user", "content": "讲个三十字的小故事" }
+  ],
+  "inputs": { "instanceId": "{{$guid}}", "channelId": "1", "sentenceId": "1" }
+}
+
+### 6. SSE · 不花钱的流式自测（真正的 text/event-stream）
+# 想看流是不是真的通，先点这个：httpbingo（httpbin 的 Go 版）每 2.5 秒推一条，
+# 推 3 条就正常收尾，不会撞上插件那 10 秒上限，也不会被标成「已截断」。
+# 注意：sidecar 是收完（对端断开或到上限）才把整段正文交回界面，
+# 所以不是「逐字蹦出来」，而是结束后一次性出现。
+GET {{sseDemo}}/sse?count=3
+Accept: text/event-stream
+
+### 7. 跨请求引用 · 把上一个请求的结果当变量
+# @name reuseLogin
+# 语法：{{请求名.response.body.$.字段路径}} · {{请求名.response.headers.头名}}
+# 先跑 3 号「表单登录」，再点这里的 ▶，fromLogin 就会变成刚才表单里的用户名。
+GET {{baseUrl}}/get?fromLogin={{login.response.body.$.form.username}}&trace={{listTasks.response.headers.X-Amzn-Trace-Id}}
+Accept: application/json
+
+### 8. 动态变量 · 每次发都是新的
+# 用来造请求 id、幂等键、时间戳，省得手改。
+GET {{baseUrl}}/get?guid={{$guid}}&ts={{$timestamp}}&at={{$datetimeIso}}&r={{$randomInt}}
+Accept: application/json
+
+# ----------------------------------------------------------------------------
+#  几个踩过的坑
+#   · multipart 的 boundary 必须和 Content-Type 写的一致，分段之间空一行
+#   · 附件写绝对路径；相对路径是按插件进程的工作目录解析的，容易踩空
+#   · GET / HEAD 不能带 body，写了也不会发出去
+#   · 变量没命中会原样发出去（URL 里还留着 {{ }}），点发送前先扫一眼
+#   · 想按环境切地址：同目录放 http-client.env.json，右上角下拉能选
+# ----------------------------------------------------------------------------
+```
+<!-- SAMPLE:END -->
+
+### SSE（`text/event-stream`）
+
+- 请求头写了 `Accept: text/event-stream`，或响应 `Content-Type` 是 `text/event-stream` 时按流式处理：边收边攒，**最多读 10 秒 / 512 KiB**，到点或对端断开就收尾；
+- 收到的 `data:` 行原样贴进响应框（raw 视图），响应区标「SSE 已结束 / SSE 已截断」；
+- 流式只在 sidecar 侧生效，不影响普通请求；SSE 请求固定 10 秒上限，避免长连接把界面一直挂住；
+- **界面不是逐字蹦出来的**：sidecar 收完（对端断开或到 10 秒上限）才把整段正文交回，所以看到的是一次性贴好的一段 `data:`；
+- 想验证「流是通的」：示例 6 号（`httpbingo.org/sse?count=3`）推 3 条就结束，正常情况下响应区标「SSE 已结束」；标「已截断」说明对端还在推、只是被 10 秒上限收尾了——流本身没问题。
+
 ### 支持的 IDEA `.http` 语法
 
 | 语法 | 支持 |
 | --- | --- |
 | `###` 分隔请求、`### 名称`、`# @name 名称` | ✅ |
-| 标题规则：**连续 3 个及以上 `#` + 空格/Tab + 名称**（`###` / `####` / `#####…` 都行，空格可以有多个） | ✅ |
+| 标题规则：**连续 3 个及以上 `#` + 空格/Tab + 名称**（`###` / `####` / `#####…` 都行，空格可以有多个）；同时写 `# @name` 时，接口一览显示标题，`@name` 留作跨请求引用的键 | ✅ |
 | `@var = value` 与 `{{var}}` 插值 | ✅ |
 | `http-client.env.json` / `http-client.private.env.json` 环境变量 | ✅ |
 | `METHOD URL [HTTP/1.1]`、`Header: Value`、空行后 Body | ✅ |
@@ -79,7 +278,7 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 | `> {% ... %}` 响应脚本、`{% ... %}` 预请求脚本、`client.test(...)` | 解析并保留、给出提示，**不执行** |
 | 跨请求引用 `{{login.response.body.$.token}}`、`{{x.response.headers.X-Token}}` | ✅（全部运行时） |
 | 内置 `{{$guid}}` `{{$timestamp}}` `{{$randomInt}}` `{{$datetimeIso}}` | ✅ |
-| **`multipart/form-data`**：手写 `--boundary` 分段，段内 `< 附件路径` 表示二进制文件 | ✅ 按字节拼装，附件原样上传 |
+| **`multipart/form-data`**：手写 `--boundary` 分段，段内 `< 附件路径` 表示二进制文件（路径可用 `{{变量}}`） | ✅ 按字节拼装，附件原样上传 |
 | multipart 的 `<>` 简写、WebSocket / gRPC / GraphQL 专用块、`client.global` | ❌ 暂不支持 |
 
 ### multipart / 文件上传
@@ -139,6 +338,12 @@ sidecar 新增方法：`http/defaultDirs`、`http/listFiles`、`http/readFile`�
 # 解析器自测（不需要 DBX / Rust）
 node tools/http-file.test.mjs
 
+# 示例 .http 自测：8 节全解析、multipart 分段、README 里贴的那份是否同步
+node tools/sample.test.mjs
+
+# 改过 ui/sample-http.js 后，把示例原文同步进 README（--check 只校验不写）
+node tools/sync-readme-sample.mjs
+
 # 浏览器开发模式（不需 DBX 宿主；可解析 .http 与载入 tab，sidecar 能力不可用）
 dbx-plugin dev --path . --port 5190
 
@@ -154,6 +359,12 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 
 ## 版本历史
 
+- **v0.6.2** — **带上能直接跑通的示例，SSE 也能真的看流**：
+  - 首次打开自动在默认目录 `~/warren-polaris-api` 写 `examples.http` + `sample-upload.txt`（`noClobber`，不覆盖），并作为默认恢复目标（仍然只挂箭头，不展开浮层）；上次文件失效时回落到示例
+  - 示例覆盖 GET / POST JSON / 表单 / multipart 上传 / SSE / 跨请求引用 / 动态变量，共 8 节，默认打 `httpbin.org`，只改两行即可指向自己的服务；不含任何真实凭据
+  - **SSE**：`Accept: text/event-stream` 或响应是 `text/event-stream` 时走流式读取，最多 10 秒 / 512 KiB，收多少显示多少；响应区标「SSE 已结束 / 已截断」，OpenAI 风格 `data: … / data: [DONE]` 可直接看
+  - multipart 分段里的附件路径支持 `{{变量}}`（`@audioPath` 那样传）
+  - 接口一览展示优先用 `###` 标题；`# @name` 仍是跨请求引用的键，两者不再互相顶掉
 - **v0.6.1** — **「打开 .http」只弹文件对话框，不再连带把浮层顶出来**：
   - 原来 `pickAndOpen()` 一上来就 `enterMode()`，于是「点一下按钮」等于「浮层 + 资源管理器一起开」，取消后浮层还留在那儿。现在先弹框，`pickNative` 返回并**确认选中**之后才由 `openPath()` 展开浮层；取消 / 没选到文件 → 界面完全不动
   - 启动恢复改成**只挂入口**：还记得上次文件（`lastPath` 能读到）时，只在右缘显示灰色半透明箭头，浮层保持隐藏、也不再顺手把工作目录扫一遍；点箭头才展开，展开时才按需扫描。文件已不存在 / 从没打开过 → 什么都不显示

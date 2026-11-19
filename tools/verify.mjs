@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.6.1';
+const VERSION = '0.6.2';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -243,6 +243,59 @@ ok('v0.6.1：打开 .http 只弹对话框；启动只挂箭头', () => {
 
   /* 展开时才补扫目录 */
   assert(/function expand\(\)[\s\S]{0,600}scan\(\)/.test(ed), '展开时应按需扫描目录');
+});
+
+ok('v0.6.2：自带示例 + SSE 流式', () => {
+  const ed = read('ui/http-editor.js');
+  const sm = read('ui/sample-http.js');
+  const rs = read('backend/src/main.rs');
+  const app = read('ui/app.js');
+  const hf = read('ui/http-file.js');
+  const idx = read('ui/index.html');
+
+  /* 示例随包发布 + 引入顺序 */
+  assert(/sample-http\.js/.test(idx), 'index.html 需引入 sample-http.js');
+  assert(idx.indexOf('sample-http.js') < idx.indexOf('http-editor.js'), '示例要在编辑器之前加载');
+  const headings = (sm.match(/^### /gm) || []).length;
+  assert(headings === 8, '示例应有 8 节，实际 ' + headings);
+  ['GET ', 'POST ', 'multipart/form-data', 'text/event-stream', 'x-www-form-urlencoded',
+   '@baseUrl', '@apiBase', 'data: [DONE]', '{{$guid}}', 'response.body.$.'
+  ].forEach(k => assert(sm.includes(k), '示例缺少 ' + k));
+  assert(sm.includes('__AUDIO_PATH__'), '示例用占位符注入附件路径');
+  assert(/replace\(\/__AUDIO_PATH__\/g, attachPath\)/.test(ed), '写入时替换成本机绝对路径');
+  assert(!/sk-[A-Za-z0-9]{20,}/.test(sm), '示例不能夹带真实 Key');
+  assert(!/1793933720837243|1776153319097387/.test(sm), '示例不能夹带参考文件里的真实 ID');
+
+  /* 默认位置初始化 */
+  assert(/async function ensureDefaultSample/.test(ed), '缺少 ensureDefaultSample');
+  assert(/examples\.http/.test(ed), '默认文件名应为 examples.http');
+  assert(/noClobber: true/.test(ed), '写示例必须 noClobber，不能覆盖用户文件');
+  assert(/ensureDefaultSample\(\)[\s\S]{0,500}openPath\(sample, \{ restore: true \}\)/.test(ed), '示例也要以 restore 方式挂箭头');
+  assert(/var sample = await ensureDefaultSample\(\);/.test(ed), '示例应在恢复前就确保存在（老用户也能拿到）');
+  assert(/restored = \(await openPath\(prefs\.lastPath, \{ restore: true \}\)\) === true/.test(ed), '上次文件失败要能回落');
+
+  /* SSE 后端 */
+  assert(/let wants_sse/.test(rs), '后端需识别 SSE 请求');
+  assert(/sse_ms/.test(rs), 'SSE 需要独立的读取上限');
+  assert(/resp\.read\(&mut tmp\)/.test(rs), 'SSE 必须流式读，不能一次性 bytes()');
+  assert(/sseTruncated/.test(rs), '响应需带 sseTruncated');
+  assert(/sseTruncated/.test(app), '前端需展示 SSE 截断状态');
+
+  /* multipart 路径支持变量 + 标题优先 */
+  assert(/pathJoin\(base, rv\(p\.filePath\)\)/.test(ed), 'multipart 附件路径要支持变量');
+  assert(/title: pendingTitle/.test(hf), '解析器需保留 ### 标题');
+  assert(/var ti = String\(\(r && r\.title\)/.test(ed), '接口一览优先显示标题');
+});
+
+ok('README 带 .http 操作方式与完整示例', () => {
+  const rd = read('README.md').replace(/\r\n/g, '\n');
+  assert(/### 怎么用（从打开到跑起来）/.test(rd), 'README 需要「怎么用」操作小节');
+  ['打开', '找接口', '跑一条', '跑全部', '收起与找回'].forEach(k => assert(rd.includes(k), '操作小节缺步骤：' + k));
+  assert(/### 完整示例：`examples\.http`/.test(rd), 'README 需要完整示例小节');
+  assert(/<!-- SAMPLE:BEGIN -->\n```http\n/.test(rd), '示例要放进 http 代码块');
+  assert(/<!-- SAMPLE:END -->/.test(rd), '示例代码块缺结束标记');
+  assert(/data: \[DONE\]/.test(rd), 'README 示例要含 SSE 的 [DONE]');
+  assert(/sync-readme-sample\.mjs/.test(rd), 'README 要说明示例由脚本同步');
 });
 
 console.log('\n' + pass + ' checks passed');

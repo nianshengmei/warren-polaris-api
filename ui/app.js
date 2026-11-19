@@ -455,6 +455,7 @@ async function send(){
         timeMs: r.timeMs || (t1 - t0), size: r.size || respSize(ct, text, r.isBase64) || 0,
         contentType: ct, headers: r.headers || {}, text, isBinary: isBin, blobUrl, url,
         parsed: parsed.ok ? parsed.value : undefined,
+        sse: !!r.sse, sseTruncated: !!r.sseTruncated,
       };
     }
     if(t.stopped||t.sendSeq!==seq){ if(resp&&resp.blobUrl) URL.revokeObjectURL(resp.blobUrl); return; }  // 在途响应丢弃
@@ -514,7 +515,7 @@ function renderResponse(){
   sb.style.display='flex';
   const cls=r.status>=500?'s5':r.status>=400?'s4':r.status>=300?'s3':'s2'; const color=`var(--${cls})`;
   sb.innerHTML=`<span class="status-chip" style="color:${color}"><span class="dotc" style="background:${color}"></span>${r.status} ${esc(r.statusText)}</span>`+
-    `<span class="res-meta"><span>耗时 <b>${ms(r.timeMs)}</b></span><span>大小 <b>${bytes(r.size)}</b></span>`+(r.contentType?`<span>类型 <b>${esc(r.contentType.split(';')[0])}</b></span>`:'')+`</span>`;
+    `<span class="res-meta"><span>耗时 <b>${ms(r.timeMs)}</b></span><span>大小 <b>${bytes(r.size)}</b></span>`+(r.contentType?`<span>类型 <b>${esc(r.contentType.split(';')[0])}</b></span>`:'')+(r.sse?`<span title="SSE 长连接：读满 10 秒或对端断开就收尾，已收到的内容原样显示">SSE <b>${r.sseTruncated?'已截断':'已结束'}</b></span>`:'')+`</span>`;
   sub.style.display='flex';
   // 工具栏（路径下拉 + 手动 + 过滤）
   const baseHasJSON = r.parsed!==undefined;
