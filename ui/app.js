@@ -801,7 +801,57 @@ window.POLARIS_API = {
     renderResponse();
     setStatus('已打开结果：'+resp.status+' '+(resp.statusText||''),'ok');
   },
-  getActiveTab: activeTab
+  getActiveTab: activeTab,
+
+  /* v0.3.2：文件编辑器执行一条 .http 请求，结果渲染进「原先的响应框」(#resPane)。
+   * p: { method, url, headers:{k:v}, body, bodyType, timeoutMs }
+   * 返回 response 对象（含 parsed）供编辑器做跨请求引用；失败返回 { error }。
+   * 复用 app.js 内的 tryJSON / BINARY / b64ToBlob / respSize，避免与 send() 逻辑漂移。 */
+  runRaw: async function(p){
+    p=p||{};
+    var method=String(p.method||'GET').toUpperCase();
+    var url=String(p.url||'').trim();
+    var headers=Object.assign({},p.headers||{});
+    var body=p.body||'';
+    var bodyType=p.bodyType||'text';
+    var tmo=p.timeoutMs||120000;
+    var t0=performance.now();
+    var sub=$('#resSubtabs'), sb=$('#resStatus'), tools=$('#resTools'), pane=$('#resPane');
+    if(sub) sub.style.display='none';
+    if(sb) sb.style.display='none';
+    if(tools) tools.style.display='none';
+    if(pane) pane.innerHTML='<div class="res-loading"><span class="spin"></span> '+esc(method)+' '+esc(url)+
+      '<span style="color:var(--dimmer)"> · 请求发送中…</span></div>';
+    setStatus(method+' '+url+' …');
+    var resp;
+    try{
+      var r=await DBX.invoke('http/request',{method:method,url:url,headers:headers,body:body,bodyType:bodyType,timeoutMs:tmo});
+      var ct=r.contentType||'';
+      var isBin=BINARY.test(ct)||!!r.isBase64;
+      var text=r.body||'';
+      var blobUrl=null;
+      if(isBin&&r.isBase64&&text){ var blob=b64ToBlob(text,ct); if(blob) blobUrl=URL.createObjectURL(blob); }
+      var parsed=isBin?{ok:false}:tryJSON(text);
+      resp={
+        status:r.status, statusText:r.statusText||'', ok:!!r.ok,
+        timeMs:r.timeMs||(performance.now()-t0),
+        size:r.size||respSize(ct,text,r.isBase64)||0,
+        contentType:ct, headers:r.headers||{}, text:text, isBinary:isBin, blobUrl:blobUrl,
+        url:url, parsed:parsed.ok?parsed.value:undefined
+      };
+      window.POLARIS_API.showResponse(resp);
+      setStatus(method+' '+resp.status+' '+resp.statusText+' · '+ms(resp.timeMs)+' · '+bytes(resp.size), resp.ok?'ok':'warn');
+      /* 沿用原有「结果自动落盘」钩子（http-workspace.js） */
+      if(window.POLARIS_HTTP_WS&&window.POLARIS_HTTP_WS.onResponse){
+        try{ window.POLARIS_HTTP_WS.onResponse(activeTab(),resp,{method:method,url:url,headers:headers,body:body}); }catch(e){}
+      }
+    }catch(err){
+      resp={ error:(err&&err.message)||String(err), timeMs:performance.now()-t0, url:url };
+      window.POLARIS_API.showResponse(resp);
+      setStatus('请求失败：'+resp.error,'err');
+    }
+    return resp;
+  }
 };
 
 /* ===================== 启动 ===================== */

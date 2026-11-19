@@ -10,6 +10,7 @@
 //   http/defaultDirs       返回默认结果目录与用户主目录
 //   http/listFiles         扫描目录下的 .http / .rest 文件
 //   http/readFile          读取一个文本文件（.http、外部 body 文件等）
+//   http/writeFile         写回 .http 源码（编辑器保存 / 自动保存）
 //   http/readEnvFiles      读取 http-client.env.json 与 http-client.private.env.json
 //   http/saveResult        把一次请求 + 响应写入 results/*.json
 //   http/listResults       列出历史结果（只读元信息，不载入响应体）
@@ -46,6 +47,7 @@ impl PluginHandler for PolarisApi {
             "http/defaultDirs" => handle_default_dirs(),
             "http/listFiles" => handle_list_files(params),
             "http/readFile" => handle_read_file(params),
+            "http/writeFile" => handle_write_file(params),
             "http/readEnvFiles" => handle_read_env_files(params),
             "http/saveResult" => handle_save_result(params),
             "http/listResults" => handle_list_results(params),
@@ -202,6 +204,43 @@ fn read_json_or_null(path: &Path) -> Value {
         Ok(s) => serde_json::from_str::<Value>(&s).unwrap_or(Value::Null),
         Err(_) => Value::Null,
     }
+}
+
+/// 写回一个文本文件（.http 编辑器保存 / 自动保存）。只处理 UTF-8 文本，不写二进制。
+/// 参数：path（绝对路径）、content（UTF-8 文本）、backup（可选 true，覆盖前留一份 .bak）
+fn handle_write_file(params: Value) -> Result<Value, PluginError> {
+    let p = param_str(&params, "path").ok_or_else(|| PluginError::new(-32602, "缺少 path"))?;
+    let content = param_str(&params, "content").ok_or_else(|| PluginError::new(-32602, "缺少 content"))?;
+    let path = PathBuf::from(p);
+
+    if let Some(dir) = path.parent() {
+        if !dir.as_os_str().is_empty() {
+            fs::create_dir_all(dir).map_err(|e| io_err("创建目录失败", e))?;
+        }
+    }
+
+    let mut backup = String::new();
+    if params.get("backup").and_then(Value::as_bool).unwrap_or(false) && path.is_file() {
+        let mut bp = path.clone();
+        bp.set_file_name(format!(
+            "{}.bak",
+            path.file_name()
+                .map(|x| x.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".to_string())
+        ));
+        if fs::copy(&path, &bp).is_ok() {
+            backup = bp.to_string_lossy().to_string();
+        }
+    }
+
+    fs::write(&path, content.as_bytes()).map_err(|e| io_err("写入文件失败", e))?;
+
+    Ok(json!({
+        "path": path.to_string_lossy().to_string(),
+        "size": content.as_bytes().len() as u64,
+        "modified": now_millis(),
+        "backup": backup,
+    }))
 }
 
 /// 读取 IDEA HTTP Client 的环境变量文件；private 文件由 UI 侧合并时覆盖同名字段。

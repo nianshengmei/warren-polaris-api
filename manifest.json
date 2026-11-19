@@ -3,9 +3,9 @@
   "manifest_version": 1,
   "id": "com.warren.polaris.api",
   "name": "warren-polaris-api",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "warren",
-  "description": "API 请求客户端（sidecar 版）：支持直接打开本地 IDEA .http / .rest 文件（### 分隔、@变量、{{插值}}、http-client.env.json、跨请求引用），请求结果自动保存到本机并可在历史面板重新打开；另有多 tab、环境变量、cURL 导入导出与响应多视图。请求经 Rust sidecar（reqwest）发送，无 CORS/混合内容/禁发头限制，等效 cURL。",
+  "description": "API 请求客户端（sidecar 版）：直接以源码方式打开并编辑本地 IDEA .http / .rest 文件，支持自动保存 / 手动保存回原文件；每个请求首行左侧有 ▶ 运行标识，点击即发，结果显示在原响应框（表格 / 对象 / 原始 / 预览）。支持 ### 分隔、@变量、{{插值}}、http-client.env.json、跨请求引用。请求经 Rust sidecar（reqwest）发送，无 CORS/混合内容/禁发头限制，等效 cURL。",
   "icon": "assets/plugin.svg",
   "permissions": ["host.storage"],
   "engines": {
@@ -26,14 +26,14 @@
       "type": "workbench",
       "id": "com.warren.polaris.api.workbench",
       "label": "warren-polaris-api",
-      "description": "API 请求客户端：打开本地 .http 文件、结果自动存本地并可在历史面板打开，多 tab、环境变量、cURL 导入导出，sidecar 原生发送。",
+      "description": "API 请求客户端：直接编辑本地 .http 源码并自动保存，每个请求左侧 ▶ 一点即发，结果显示在原响应框；多 tab、环境变量、cURL 导入导出，sidecar 原生发送。",
       "icon": "assets/plugin.svg"
     }
   ],
   "localizations": {
     "zh-CN": {
       "name": "warren-polaris-api",
-      "description": "API 请求客户端（sidecar 版）：支持直接打开本地 IDEA .http / .rest 文件，请求结果自动保存到本机并可在历史面板重新打开；另有多 tab、环境变量、cURL 导入导出与响应多视图。请求经 Rust sidecar（reqwest）发送，无 CORS/混合内容/禁发头限制，等效 cURL。",
+      "description": "API 请求客户端（sidecar 版）：直接以源码方式编辑本地 IDEA .http / .rest 文件并自动保存；每个请求左侧 ▶ 一点即发，结果显示在原响应框。另有多 tab、环境变量、cURL 导入导出与响应多视图。",
       "contributions": {
         "com.warren.polaris.api.workbench": {
           "label": "warren-polaris-api",

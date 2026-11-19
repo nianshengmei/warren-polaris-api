@@ -18,7 +18,7 @@
         <div class="env-menu" id="envMenu"></div>
       </div>
       <button class="top-act" id="curlImportBtn" title="粘贴 cURL 导入为请求">⤓ 导入 cURL</button>
-      <button class="top-act" id="httpFileBtn" title="打开本地 .http / .rest 文件（IDEA HTTP Client 格式）">▤ 打开 .http</button>
+      <button class="top-act" id="httpFileBtn" title="打开/编辑本地 .http 源码（自动保存 · 逐请求运行）">▤ 打开 .http</button>
       <button class="top-act" id="httpHistoryBtn" title="查看本机自动保存的请求结果">◷ 历史结果</button>
       <button class="top-act" id="layoutBtn" title="切换 上下/左右 布局">⇄ 左右</button>
       <div class="hint"><span><kbd>⌘/Ctrl</kbd> <kbd>↵</kbd> 发送</span><span><kbd>⌘/Ctrl</kbd> <kbd>S</kbd> 保存</span></div>
@@ -89,7 +89,7 @@
                   · <b>多 tab</b>：顶部 ＋ 新建，双击标签可重命名<br>
                   · <b>环境变量</b>：右上角切换环境，URL 里用 <b>{{baseUrl}}</b><br>
                   · <b>导入 cURL</b>：右上角粘贴 curl 命令一键解析<br>
-                  · <b>.http 文件</b>：右上角「打开 .http」载入本地 IDEA 格式请求，可运行全部<br>
+                  · <b>.http 源码</b>：右上角「打开 .http」直接编辑本地文件，自动保存；每个请求左侧 ▶ 一点即发<br>
                   · <b>结果自动存本地</b>：每次发送自动写入结果目录，「历史结果」里可随时打开<br>
                   · <b>查数据</b>：响应区「路径」下钻、「过滤」筛选，多视图切换<br>
                   · <b>跨域</b>：请求经 sidecar 原生 reqwest 发送，无 CORS/混合内容/禁发头限制，等效 cURL
@@ -124,5 +124,6 @@
   <script src="./dbx-bridge.js"></script>
   <script src="./app.js"></script>
   <script src="./http-workspace.js"></script>
+  <script src="./http-editor.js"></script>
 </body>
 </html>
