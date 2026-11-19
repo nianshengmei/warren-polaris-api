@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.5.1';
+const VERSION = '0.6.0';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -199,6 +199,30 @@ ok('v0.5.1：multipart 按字节拼装 + 附件二进制读取', () => {
   assert(/params\.get\("binary"\)/.test(rs), 'readFile 需支持 binary 参数');
   assert(/fn handle_read_file[\s\S]{0,1200}BASE64_STANDARD\.encode/.test(rs), 'readFile 的 binary 分支需返回 base64');
   assert(/raw_body[\s\S]{0,600}req\.body\(bytes\)/.test(rs), '原始字节 body 必须按 bytes 发送');
+});
+
+ok('v0.6.0：.http 浮层 + 右缘悬浮箭头', () => {
+  const ed = read('ui/http-editor.js');
+
+  /* 浮层挂到 .work（绝对定位），不再塞进 .req-region */
+  assert(/querySelector\('\.work'\)/.test(ed), '浮层必须挂到 .work 下');
+  assert(/\.pa-root \.work\{position:relative\}/.test(ed), '.work 需要 position:relative');
+  assert(/\.pa-fe\.off\{transform:translateX\(var\(--fe-slide/.test(ed), '收起动画应走 --fe-slide');
+  assert(/--fe-slide/.test(ed), '滑出距离需按工作区宽度算');
+
+  /* 三态 + 箭头 */
+  ['function collapse(', 'function expand(', 'function exitMode(']
+    .forEach(k => assert(ed.includes(k), '缺少 ' + k));
+  assert(/\.pa-root \.pa-edge\.on\{/.test(ed), '箭头缺少 .on 展示态');
+  assert(/backdrop-filter:blur/.test(ed), '箭头需要磨砂半透明');
+  assert(/edgeTop/.test(ed), '箭头位置需要持久化');
+  assert(/pointerdown/.test(ed) && /setPointerCapture/.test(ed), '箭头需要可拖动');
+  assert(/contextmenu/.test(ed), '箭头右键应彻底关闭');
+
+  /* 点 tab / 侧栏自动收起 + 快捷键归属 */
+  assert(/byId\('tabbar'\)[\s\S]{0,200}collapse\(true\)/.test(ed), '点请求 tab 应自动收起浮层');
+  assert(/isOpen: function \(\) \{ return S\.open && !S\.collapsed; \}/.test(ed), 'isOpen 只代表浮层当前可见');
+  assert(!/pane\.hidden = /.test(ed), '浮层不应再用 hidden 属性（会吃掉动画）');
 });
 
 console.log('\n' + pass + ' checks passed');

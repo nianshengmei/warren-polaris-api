@@ -43,6 +43,8 @@
   var S = {
     ready: false,
     open: false,
+    collapsed: false,  /* v0.6.0：浮层是否已收进右缘箭头（状态保留，不是关闭） */
+    edgeTop: 20,       /* 右缘箭头垂直位置（%.work 高度）；可拖动，记在这里 */
     dir: '',
     path: '',
     name: '',
@@ -71,14 +73,13 @@
     lastRun: {},       /* 请求行号 -> ''|busy|ok|warn|err */
     files: [],
     gutterSig: '',
-    prevLayout: null,
     saveCount: 0,      /* 本次打开后成功保存的次数（UI 上显示 ×N，证明「点多次都能存」） */
     lastOpenAt: 0,     /* 防抖：HTML5 drop 与宿主 onDrop 同时到达 */
     picking: false,    /* 系统文件对话框互斥，避免叠两个框 */
     pickError: ''      /* 原生对话框不可用时的原因，降级时提示用 */
   };
 
-  var pane = null, ta = null, ginner = null, hlEl = null, E = {};
+  var pane = null, edge = null, ta = null, ginner = null, hlEl = null, E = {};
   var parseTimer = null, saveTimer = null, hitTimer = null, trackTimer = null;
 
   /* ===================== 小工具 ===================== */
@@ -275,8 +276,21 @@
   function injectCss() {
     if (byId('paFeCss')) return;
     var css = [
-      '.pa-fe{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--bg,#16181e);color:var(--ink,#d8dae2);font-size:12.5px;overflow:hidden}',
-      '.pa-fe[hidden]{display:none}',
+      /* ===== .http 浮层（v0.6.0）=====
+       * 只盖「顶栏 tab 之下、响应框之上」的请求编辑区：上方 tab 点得到，下方响应框还看得见，
+       * 收起时整体向右滑出屏幕，留下右缘一颗灰色半透明箭头。 */
+      '.pa-root .work{position:relative}',
+      '.pa-fe{position:absolute;left:0;right:0;top:79px;bottom:0;z-index:16;display:flex;flex-direction:column;background:var(--bg,#16181e);color:var(--ink,#d8dae2);font-size:12.5px;overflow:hidden;border-radius:10px 0 0 10px;box-shadow:-18px 0 46px -20px rgba(0,0,0,.62),inset 1px 0 0 var(--line,rgba(255,255,255,.1));transform:translateX(0);opacity:1;visibility:visible;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s}',
+      '.pa-fe.off{transform:translateX(var(--fe-slide,100%));opacity:0;pointer-events:none;visibility:hidden;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s .36s}',
+      /* 收起后的入口：贴右边缘的灰色半透明箭头（可上下拖动，单击展开，右键彻底关闭） */
+      '.pa-root .pa-edge{position:absolute;right:0;top:20%;width:24px;height:96px;z-index:18;margin:0;padding:0;border:0;border-radius:14px 0 0 14px;background:rgba(150,156,172,.32);color:#fff;-webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);box-shadow:inset 1px 0 0 rgba(255,255,255,.16),-4px 0 18px -6px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;pointer-events:none;transform:translateY(-50%) translateX(110%);transition:opacity .22s ease,background-color .18s,transform .32s cubic-bezier(.22,.61,.36,1);-webkit-tap-highlight-color:transparent;touch-action:none;user-select:none}',
+      '.pa-root .pa-edge.on{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0);transition-delay:.08s}',
+      '.pa-root .pa-edge::before{content:"";position:absolute;inset:0 0 0 -20px}',
+      '.pa-root .pa-edge:hover{background:rgba(150,156,172,.46)}',
+      '.pa-root .pa-edge.dragging{cursor:grabbing;background:rgba(150,156,172,.55)}',
+      '.pa-root .pa-edge svg{display:block;pointer-events:none}',
+      '[data-dbx-theme="light"] .pa-root .pa-edge{background:rgba(0,0,0,.42);box-shadow:inset 1px 0 0 rgba(255,255,255,.18),-4px 0 18px -6px rgba(0,0,0,.22)}',
+      '[data-dbx-theme="light"] .pa-root .pa-edge:hover{background:rgba(0,0,0,.55)}',
       '.pa-fe-bar{display:flex;align-items:center;gap:7px;padding:5px 9px;border-bottom:1px solid var(--line,rgba(255,255,255,.1));background:var(--surface,#1e2028);flex:none;min-height:33px;flex-wrap:wrap}',
       '.pa-fe-dot{width:7px;height:7px;border-radius:50%;background:var(--ok,#3fb950);flex:none;box-shadow:0 0 6px var(--ok,#3fb950)}',
       '.pa-fe-name{font-weight:600;font-size:12.5px;white-space:nowrap;max-width:250px;overflow:hidden;text-overflow:ellipsis}',
@@ -428,12 +442,13 @@
 
   /* ===================== DOM ===================== */
   function buildPane() {
-    var host = document.querySelector('.req-region');
+    /* v0.6.0：浮层挂在 .work 下（绝对定位），不再挤进 .req-region，
+     * 这样上方 tab 条与下方响应框都不会被「顶掉」。 */
+    var host = document.querySelector('.work') || document.querySelector('.req-region');
     if (!host) return null;
     var d = document.createElement('div');
-    d.className = 'pa-fe';
+    d.className = 'pa-fe off';
     d.id = 'fileEditorPane';
-    d.hidden = true;
     d.innerHTML = [
       '<div class="pa-fe-bar">',
       '  <span class="pa-fe-dot"></span>',
@@ -447,7 +462,7 @@
       '  <button class="pa-fe-btn" id="paFeSaveAs" title="另存为新的 .http 文件（系统保存对话框）">另存为</button>',
       '  <button class="pa-fe-btn" id="paFeRunAll" title="按顺序运行本文件全部请求">▶▶ 全部运行</button>',
       '  <button class="pa-fe-btn on" id="paFeAuto" title="切换自动保存">自动保存：开</button>',
-      '  <button class="pa-fe-btn ghost" id="paFeClose" title="返回请求编辑器">✕ 返回</button>',
+      '  <button class="pa-fe-btn ghost" id="paFeClose" title="向右收起成右缘悬浮箭头（点箭头原样回来；右键箭头可彻底关闭）">⇥ 收起</button>',
       '</div>',
       '<div class="pa-fe-main">',
       '  <div class="pa-fe-side" id="paFeSide">',
@@ -477,50 +492,106 @@
       '<div class="pa-fe-foot"><span id="paFeFoot">—</span><span class="sp"></span><span>▶ 运行该请求 · Ctrl+S 保存 · Tab 缩进</span></div>'
     ].join('\n');
     host.appendChild(d);
+
+    /* 收起后留在右缘的入口（灰色半透明箭头）。跟浮层是兄弟节点，
+     * 所以浮层滑走时它留在原位；浮层展开时它自己滑出屏幕。 */
+    var e = document.createElement('button');
+    e.type = 'button';
+    e.className = 'pa-edge';
+    e.id = 'paEdgeTab';
+    e.title = '展开 .http 浮层（可上下拖动；右键彻底关闭）';
+    e.innerHTML = '<svg width="12" height="30" viewBox="0 0 12 30" aria-hidden="true">' +
+      '<path d="M9 2.5 L2.5 15 L9 27.5" fill="none" stroke="currentColor" stroke-width="3" ' +
+      'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    host.appendChild(e);
+    edge = e;
     return d;
   }
 
   /* ===================== 模式切换 ===================== */
-  /* 文件模式需要比默认 240px 更大的编辑区：按视口算一个偏大的请求区高度。
-   * app.js 的 applyLayout() 会在切换上下/左右布局时重设 --reqH/--reqW，
-   * 所以这里单独抽出，布局切换与 resize 后都重新施加一次。 */
-  function applyEditorSizes() {
-    var split = $('#split');
-    if (!split) return;
-    var h = Math.round(Math.min((window.innerHeight || 800) * 0.58, 600));
-    var w = Math.round((window.innerWidth || 1200) * 0.6);
-    split.style.setProperty('--reqH', h + 'px');
-    split.style.setProperty('--reqW', w + 'px');
-  }
+  /* v0.6.0 起不再改 --reqH/--reqW：浮层绝对定位，尺寸由 layoutLayer() 贴着
+   * 「请求编辑区」量出来，底下真实布局一点不动，收起后原样可用。 */
 
+  /* ===================== 浮层状态：展开 / 收起 / 彻底关闭 =====================
+   * S.open      浮层是否还“在”（收起也算在，状态全保留）
+   * S.collapsed 是否已经收进右缘箭头
+   * 收起 ≠ 关闭：文件、光标位置、折叠状态、未保存内容都留着，点箭头原样回来。 */
   function enterMode() {
-    if (S.open) return;
-    var split = $('#split');
-    S.prevLayout = {
-      reqH: split ? split.style.getPropertyValue('--reqH') : '',
-      reqW: split ? split.style.getPropertyValue('--reqW') : ''
-    };
-    applyEditorSizes();
-    var reqSub = byId('reqSubtabs'); if (reqSub) reqSub.style.display = 'none';
-    var reqPane = byId('reqPane'); if (reqPane) reqPane.style.display = 'none';
-    var reqbar = document.querySelector('.reqbar'); if (reqbar) reqbar.style.display = 'none';
-    pane.hidden = false;
+    if (!pane) return;
+    layoutLayer();
+    pane.classList.remove('off');
+    if (edge) edge.classList.remove('on');
+    if (S.open) { S.collapsed = false; return; }
     S.open = true;
+    S.collapsed = false;
     setTimeout(syncGutter, 30);
+    setTimeout(syncGutter, 400);
   }
 
-  function exitMode() {
-    if (!S.open) return;
-    var split = $('#split');
-    if (split && S.prevLayout) {
-      split.style.setProperty('--reqH', S.prevLayout.reqH || '');
-      split.style.setProperty('--reqW', S.prevLayout.reqW || '');
+  /* 关键：浮层尺寸跟着「请求编辑区」走 —— 上下分栏时盖到响应框上沿（结果还看得见），
+   * 左右分栏时只盖左列。不写死，布局/窗口变化都重算一次。 */
+  function layoutLayer() {
+    if (!pane) return;
+    var work = document.querySelector('.work');
+    if (!work) return;
+    var tabbar = document.querySelector('.tabbar');
+    var res = document.querySelector('.res-region');
+    var req = document.querySelector('.req-region');
+    if (!edge || !work.contains(edge)) {
+      /* 极端情况下浮层被重建过：补挂箭头 */
+      if (edge) work.appendChild(edge);
     }
-    var reqSub = byId('reqSubtabs'); if (reqSub) reqSub.style.display = '';
-    var reqPane = byId('reqPane'); if (reqPane) reqPane.style.display = '';
-    var reqbar = document.querySelector('.reqbar'); if (reqbar) reqbar.style.display = '';
-    pane.hidden = true;
+    var wr = work.getBoundingClientRect();
+    var top = tabbar ? Math.round(tabbar.getBoundingClientRect().bottom - wr.top) : 79;
+    var right = 0, bottom = 0;
+    if (res && req) {
+      var rr = res.getBoundingClientRect(), qr = req.getBoundingClientRect();
+      if (rr.top >= qr.bottom - 2) bottom = Math.round(wr.bottom - rr.top);     /* 上下 */
+      else right = Math.round(wr.right - qr.right);                             /* 左右 */
+    }
+    pane.style.top = Math.max(0, top) + 'px';
+    pane.style.bottom = Math.max(0, bottom) + 'px';
+    pane.style.right = Math.max(0, right) + 'px';
+    /* 收起时要整块滑出 .work 右边界：位移量按工作区宽度算，
+     * 左右分栏时浮层比工作区窄，100% 不够（会露出一截盖在响应框上）。 */
+    pane.style.setProperty('--fe-slide', Math.round(wr.width) + 'px');
+  }
+
+  /* 收起：向右滑出 → 右缘浮出灰色半透明箭头 */
+  function collapse(silent) {
+    if (!S.open || S.collapsed) return;
+    S.collapsed = true;
+    layoutLayer();
+    if (pane) pane.classList.add('off');
+    if (edge) {
+      edge.style.top = (S.edgeTop || 20) + '%';
+      edge.title = '展开 ' + (S.name || '.http') + '（可上下拖动；右键彻底关闭）';
+      edge.classList.add('on');
+    }
+    /* 收起前把没落盘的改动写掉，避免“看不见了就不敢改”的心结 */
+    if (S.dirty && saveTimer) { clearTimeout(saveTimer); doSave(false); }
+    if (!silent) toast('已收起到右侧箭头 · 点箭头回到 .http');
+  }
+
+  /* 展开：箭头滑出，浮层从右侧滑回 */
+  function expand() {
+    if (!S.open) { open(); return; }
+    layoutLayer();
+    S.collapsed = false;
+    if (pane) pane.classList.remove('off');
+    if (edge) edge.classList.remove('on');
+    setTimeout(function () { if (ta) ta.focus(); }, 140);
+    setTimeout(syncGutter, 400);
+  }
+
+  /* 彻底关闭：浮层和箭头一起消失，回到普通请求编辑器 */
+  function exitMode(silent) {
+    var was = S.open;
     S.open = false;
+    S.collapsed = false;
+    if (pane) pane.classList.add('off');
+    if (edge) edge.classList.remove('on');
+    if (was && !silent) toast('已关闭 .http 浮层');
   }
 
   /* ===================== 文本权威：S.text 才是文档 ===================== */
@@ -1860,7 +1931,8 @@
   function savePrefs() {
     try {
       DBX.storage.set(ST_KEY, {
-        dir: S.dir, autoSave: S.autoSave, activeEnv: S.activeEnv, lastPath: S.path
+        dir: S.dir, autoSave: S.autoSave, activeEnv: S.activeEnv, lastPath: S.path,
+        edgeTop: S.edgeTop
       });
     } catch (e) { }
   }
@@ -1872,6 +1944,7 @@
       S.autoSave = p.autoSave !== false;
       S.dir = p.dir || '';
       S.activeEnv = p.activeEnv || '';
+      if (isFinite(p.edgeTop)) S.edgeTop = Math.max(6, Math.min(94, Number(p.edgeTop)));
     }
     updateAutoBtn();
     if (!S.dir) {
@@ -1923,7 +1996,65 @@
     E.save.onclick = function () { doSave(true); };
     E.saveAs.onclick = function () { saveAs(); };
     byId('paFeRunAll').onclick = function () { runAll(); };
-    byId('paFeClose').onclick = function () { exitMode(); };
+    byId('paFeClose').onclick = function () { collapse(); };
+
+    /* ---- 右缘箭头：单击展开 / 上下拖动挪位置 / 右键彻底关闭 ---- */
+    if (edge) {
+      var drag = null;
+      edge.addEventListener('pointerdown', function (e) {
+        if (e.button !== 0) return;
+        var box = document.querySelector('.work');
+        if (!box) return;
+        var wr = box.getBoundingClientRect();
+        var er = edge.getBoundingClientRect();
+        drag = {
+          y0: e.clientY,
+          top0: (er.top + er.height / 2 - wr.top) / wr.height * 100,  /* 箭头中心（%） */
+          wr: wr, moved: 0, id: e.pointerId, live: false
+        };
+        try { edge.setPointerCapture(e.pointerId); } catch (err) { }
+        e.preventDefault();
+      });
+      edge.addEventListener('pointermove', function (e) {
+        if (!drag) return;
+        var dy = e.clientY - drag.y0;
+        if (!drag.live && Math.abs(dy) > 3) { drag.live = true; edge.classList.add('dragging'); }
+        if (!drag.live) return;
+        drag.moved = dy;
+        var pct = (drag.top0 / 100 * drag.wr.height + dy) / drag.wr.height * 100;
+        pct = Math.max(6, Math.min(94, pct));
+        edge.style.top = pct.toFixed(2) + '%';
+        S.edgeTop = +pct.toFixed(2);
+      });
+      var endDrag = function () {
+        if (!drag) return;
+        var moved = Math.abs(drag.moved), id = drag.id;
+        drag = null;
+        edge.classList.remove('dragging');
+        try { edge.releasePointerCapture(id); } catch (err) { }
+        if (moved > 3) savePrefs();   /* 只是挪位置 */
+        else expand();                /* 单击 → 展开 */
+      };
+      edge.addEventListener('pointerup', endDrag);
+      edge.addEventListener('pointercancel', endDrag);
+      edge.addEventListener('contextmenu', function (e) {
+        e.preventDefault(); e.stopPropagation(); exitMode();
+      });
+      edge.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expand(); }
+      });
+    }
+
+    /* 点上方 tab / 点左侧集合条目 → 浮层向右收起（不是关闭，点箭头能原样回来） */
+    var tb = byId('tabbar');
+    if (tb) tb.addEventListener('pointerdown', function () {
+      if (S.open && !S.collapsed) collapse(true);
+    }, true);
+    var tree = byId('tree');
+    if (tree) tree.addEventListener('pointerdown', function (e) {
+      var it = e.target && e.target.closest ? e.target.closest('.req-item,.group-head') : null;
+      if (it && S.open && !S.collapsed) collapse(true);
+    }, true);
     E.auto.onclick = function () {
       S.autoSave = !S.autoSave;
       updateAutoBtn();
@@ -2052,16 +2183,16 @@
       }
     });
     window.addEventListener('resize', function () {
-      if (S.open) applyEditorSizes();
+      if (S.open) layoutLayer();
       syncGutter();
     });
 
-    /* 布局切换（上下/左右）后 app.js 会重设 --reqH/--reqW，追加监听把它改回来 */
+    /* 布局从「上下」切「左右」（或反过来）时，浮层要重新贴合请求区 */
     var lb = byId('layoutBtn');
     if (lb) {
       lb.addEventListener('click', function () {
         if (!S.open) return;
-        setTimeout(function () { applyEditorSizes(); syncGutter(); }, 60);
+        setTimeout(function () { layoutLayer(); syncGutter(); }, 60);
       });
     }
 
@@ -2102,6 +2233,7 @@
     var prefs = await loadPrefs();
     renderEnvSel();
     updateFoot();
+    if (edge) edge.style.top = S.edgeTop + '%';
 
     /* 恢复上次打开的文件（存在才恢复） */
     if (prefs && prefs.lastPath) {
@@ -2129,7 +2261,13 @@
       urlTail: urlTail,
       docText: docText,
       viewText: viewText,
-      isOpen: function () { return S.open; }
+      /* v0.6.0：浮层展开 / 收起。isOpen 只代表「浮层当前是否真的盖在界面上」，
+       * 收起后为 false —— app.js 的 Ctrl+S / Ctrl+Enter 归属判断据此切换。 */
+      isOpen: function () { return S.open && !S.collapsed; },
+      isLayerOpen: function () { return S.open; },
+      isCollapsed: function () { return !!S.collapsed; },
+      collapse: collapse,
+      expand: expand
     };
 
     /* 二次接管：确保晚于 http-workspace.js 的异步 boot 完成绑定 */
