@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.3.3';
+const VERSION = '0.4.0';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -88,7 +88,7 @@ ok('http-editor.js 关键实现就位', () => {
 
 ok('sidecar 具备全部 10 个扩展方法', () => {
   const s = read('backend/src/main.rs');
-  ['http/defaultDirs', 'http/listFiles', 'http/readFile', 'http/writeFile', 'http/readEnvFiles',
+  ['http/defaultDirs', 'http/listFiles', 'http/readFile', 'http/writeFile', 'http/readEnvFiles', 'http/pickFile',
     'http/saveResult', 'http/listResults', 'http/getResult', 'http/deleteResult', 'http/revealDir',
     'http/request'].forEach(k => assert(s.includes('"' + k + '"'), '缺少 ' + k));
 });
@@ -135,6 +135,20 @@ ok('侧边栏样式：重命名按钮与拖拽态', () => {
 ok('README 记录了编辑器能力与限制', () => {
   const s = read('README.md');
   ['.http', '自动保存', '▶', '结果目录', '历史结果', '运行全部', '不执行'].forEach(k => assert(s.includes(k), '缺少 ' + k));
+});
+
+ok('v0.4.0：打开（系统对话框）/ 拖入 / 可反复保存 就位', () => {
+  const ed = read('ui/http-editor.js');
+  ['http/pickFile', 'paFeOpen', 'paFeSaveAs', 'saveAs', 'pickNative', 'dropFiles', 'bindDrop',
+    'onDrop', 'matchScanned', 'writeCopy', 'saveCount'].forEach(k => assert(ed.includes(k), '缺少 ' + k));
+  assert(/doSave\([\s\S]{0,200}!S\.path[\s\S]{0,120}saveAs\(\)/.test(ed), '未绑定磁盘时 doSave 必须转另存为');
+  assert(ed.includes("noClobber"), '复制副本需 noClobber 防覆盖');
+  const bk = read('backend/src/main.rs');
+  assert(bk.includes('fn handle_pick_file'), '缺少 sidecar handle_pick_file');
+  assert(/fn native_dialog/.test(bk), '缺少 native_dialog 平台实现');
+  /* Ctrl+S 不得在 .http 模式下再触发请求 tab 保存 */
+  const app = read('ui/app.js');
+  assert(/inEditor[\s\S]{0,80}saveCurrent/.test(app), 'app.js 的 Ctrl+S 需为编辑器让路');
 });
 
 console.log('\n' + pass + ' checks passed');

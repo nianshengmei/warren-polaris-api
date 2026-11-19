@@ -623,7 +623,14 @@ function findSaved(id){ for(const g of state.collections){ const r=g.requests.fi
 function snapshot(t){ return { method:t.method,url:t.url,params:JSON.parse(JSON.stringify(t.params)),headers:JSON.parse(JSON.stringify(t.headers)),bodyType:t.bodyType,body:t.body,formBody:JSON.parse(JSON.stringify(t.formBody)) }; }
 function saveCurrent(){
   const t=activeTab();
-  if(t.savedId){ const f=findSaved(t.savedId); if(f){ Object.assign(f.r,snapshot(t)); f.r.name=t.name; t.dirty=false; persist(); renderTabs(); renderSidebar(); setStatus('已更新「'+t.name+'」','ok'); return; } }
+  if(t.savedId){ const f=findSaved(t.savedId); if(f){
+    Object.assign(f.r,snapshot(t)); f.r.name=t.name; t.dirty=false;
+    persist(); renderTabs(); renderSidebar();
+    /* 每次点都给出可见反馈：重复保存不再像「点了没反应」 */
+    setStatus('已更新「'+t.name+'」', 'ok');
+    toast('已更新「'+esc(t.name)+'」 <b>✓</b>');
+    return;
+  } }
   const defName=t.url? t.method+' '+shortUrl(t.url):'未命名请求';
   const groupOpts=state.collections.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
   const m=openModal('保存请求','把当前请求存入一个分组',[
@@ -802,7 +809,16 @@ function bindEvents(){
   const tb=$('#tabbar'); if(tb) tb.addEventListener('scroll',updateTabFade);
   const lb=$('#layoutBtn'); if(lb) lb.onclick=()=>{ ui.layout = ui.layout==='h'?'v':'h'; applyLayout(); persist(); };
   // DBX 单视图，无 currentView 路由判断；快捷键直接生效
-  document.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); send(); } if((e.metaKey||e.ctrlKey)&&(e.key==='s'||e.key==='S')){ e.preventDefault(); saveCurrent(); } });
+  // .http 源码模式下 Ctrl+S 归编辑器（保存文件），这里必须让路，否则会同时弹「保存请求」弹窗
+  document.addEventListener('keydown',e=>{
+    const inEditor = window.POLARIS_EDITOR && window.POLARIS_EDITOR.isOpen && window.POLARIS_EDITOR.isOpen();
+    const inEditorDom = e.target && e.target.closest && e.target.closest('#fileEditorPane');
+    if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); if(!inEditor&&!inEditorDom) send(); return; }
+    if((e.metaKey||e.ctrlKey)&&(e.key==='s'||e.key==='S')){
+      if(inEditor||inEditorDom) return;          // 交给编辑器自己保存 .http
+      e.preventDefault(); saveCurrent();
+    }
+  });
 }
 /* DBX 无代理按钮（顶栏未渲染 proxyBtn）；applyProxyBtn 保留为空操作以兼容 initApi 调用 */
 function applyProxyBtn(){ /* no-op: DBX 沙箱无本地中继代理 */ }

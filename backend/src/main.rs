@@ -12,6 +12,7 @@
 //   http/readFile          读取一个文本文件（.http、外部 body 文件等）
 //   http/writeFile         写回 .http 源码（编辑器保存 / 自动保存）
 //   http/readEnvFiles      读取 http-client.env.json 与 http-client.private.env.json
+//   http/pickFile          原生文件对话框（打开 / 另存为），返回绝对路径
 //   http/saveResult        把一次请求 + 响应写入 results/*.json
 //   http/listResults       列出历史结果（只读元信息，不载入响应体）
 //   http/getResult         读取某次完整结果
@@ -49,6 +50,7 @@ impl PluginHandler for PolarisApi {
             "http/readFile" => handle_read_file(params),
             "http/writeFile" => handle_write_file(params),
             "http/readEnvFiles" => handle_read_env_files(params),
+            "http/pickFile" => handle_pick_file(params),
             "http/saveResult" => handle_save_result(params),
             "http/listResults" => handle_list_results(params),
             "http/getResult" => handle_get_result(params),
@@ -109,10 +111,19 @@ fn user_home() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
+/// 默认工作目录：主目录下的 warren-polaris-api（拖入/导入时的副本落点，首次访问时创建）。
+/// 用独立子目录而不是直接拿主目录，避免把一个 .http 副本丢进 C:\Users\xxx 根下。
+fn default_work_dir() -> PathBuf {
+    let p = user_home().join("warren-polaris-api");
+    let _ = fs::create_dir_all(&p);
+    p
+}
+
 fn handle_default_dirs() -> Result<Value, PluginError> {
     Ok(json!({
         "resultsDir": default_results_dir().to_string_lossy().to_string(),
         "homeDir": user_home().to_string_lossy().to_string(),
+        "workDir": default_work_dir().to_string_lossy().to_string(),
     }))
 }
 
@@ -207,7 +218,8 @@ fn read_json_or_null(path: &Path) -> Value {
 }
 
 /// 写回一个文本文件（.http 编辑器保存 / 自动保存）。只处理 UTF-8 文本，不写二进制。
-/// 参数：path（绝对路径）、content（UTF-8 文本）、backup（可选 true，覆盖前留一份 .bak）
+/// 参数：path（绝对路径）、content（UTF-8 文本）、backup（可选 true，覆盖前留一份 .bak）、
+///       noClobber（可选 true，目标已存在时不写、返回 exists:true，供 UI 换名重试）
 fn handle_write_file(params: Value) -> Result<Value, PluginError> {
     let p = param_str(&params, "path").ok_or_else(|| PluginError::new(-32602, "缺少 path"))?;
     let content = param_str(&params, "content").ok_or_else(|| PluginError::new(-32602, "缺少 content"))?;
@@ -217,6 +229,15 @@ fn handle_write_file(params: Value) -> Result<Value, PluginError> {
         if !dir.as_os_str().is_empty() {
             fs::create_dir_all(dir).map_err(|e| io_err("创建目录失败", e))?;
         }
+    }
+
+    if params.get("noClobber").and_then(Value::as_bool).unwrap_or(false) && path.is_file() {
+        return Ok(json!({
+            "path": path.to_string_lossy().to_string(),
+            "exists": true,
+            "written": false,
+            "size": 0,
+        }));
     }
 
     let mut backup = String::new();
@@ -237,10 +258,221 @@ fn handle_write_file(params: Value) -> Result<Value, PluginError> {
 
     Ok(json!({
         "path": path.to_string_lossy().to_string(),
+        "exists": false,
+        "written": true,
         "size": content.as_bytes().len() as u64,
         "modified": now_millis(),
         "backup": backup,
     }))
+}
+
+/* ===================== 原生文件对话框 ===================== */
+
+/// 原生「打开 / 另存为」对话框，返回绝对路径。
+/// 参数：mode("open"|"save")、title、name（另存为默认文件名）、ext（可选，逗号分隔扩展名）。
+/// 返回：{ cancelled: true } 或 { cancelled:false, path, dir, name }。
+///
+/// 为什么自己弹框：DBX 宿主提供的 fileTransfer.pick 只回句柄不回路径，
+/// 插件拿不到真实路径就无法把编辑内容写回原文件；本 sidecar 以本机用户身份运行，
+/// 自己弹系统对话框即可拿到绝对路径，后续 readFile/writeFile 都直接可用。
+/// 实现只用系统自带能力（Windows PowerShell/WinForms、macOS osascript、Linux zenity/kdialog），
+/// 不引入额外 crate，避免多平台 CI 编译依赖。
+fn handle_pick_file(params: Value) -> Result<Value, PluginError> {
+    let mode = match param_str(&params, "mode").unwrap_or("open") {
+        "save" => "save",
+        _ => "open",
+    };
+    let title = param_str(&params, "title").unwrap_or(if mode == "save" {
+        "保存 .http 文件"
+    } else {
+        "选择 .http 文件"
+    });
+    let name = param_str(&params, "name").unwrap_or("");
+    let exts = param_str(&params, "ext").unwrap_or("http,rest");
+
+    let picked = native_dialog(mode, title, name, exts).map_err(|e| PluginError::new(-32000, e))?;
+    match picked {
+        None => Ok(json!({ "cancelled": true })),
+        Some(p) => {
+            let path = PathBuf::from(&p);
+            Ok(json!({
+                "cancelled": false,
+                "path": p,
+                "dir": path.parent().map(|x| x.to_string_lossy().to_string()).unwrap_or_default(),
+                "name": path.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default(),
+            }))
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn native_dialog(mode: &str, title: &str, name: &str, exts: &str) -> Result<Option<String>, String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let list: Vec<String> = exts
+        .split(',')
+        .map(|s| s.trim().trim_start_matches("*.").to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let patterns = list.iter().map(|e| format!("*.{e}")).collect::<Vec<_>>().join(";");
+    let filter = if patterns.is_empty() {
+        "所有文件 (*.*)|*.*".to_string()
+    } else {
+        format!("请求文件 ({patterns})|{patterns}|所有文件 (*.*)|*.*")
+    };
+    /* PowerShell 单引号字符串转义：' → '' */
+    let q = |s: &str| s.replace('\'', "''");
+
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir().join(format!("dbx-pa-pick-{pid}.ps1"));
+    let out_path = std::env::temp_dir().join(format!("dbx-pa-pick-{pid}.out"));
+
+    let mut ps = String::new();
+    ps.push_str("$ErrorActionPreference = 'Stop'\n");
+    ps.push_str("Add-Type -AssemblyName System.Windows.Forms\n");
+    /* 用 0 尺寸、不上任务栏的 owner 窗口，让对话框出现在最前面；
+     * 不碰 System.Drawing / Opacity，少一个能失败的依赖 */
+    ps.push_str("$o = New-Object System.Windows.Forms.Form\n");
+    ps.push_str("$o.Text = 'DBX'\n");
+    ps.push_str("$o.TopMost = $true\n");
+    ps.push_str("$o.ShowInTaskbar = $false\n");
+    ps.push_str("$o.FormBorderStyle = 'FixedToolWindow'\n");
+    ps.push_str("$o.StartPosition = 'CenterScreen'\n");
+    ps.push_str("$o.Width = 0\n");
+    ps.push_str("$o.Height = 0\n");
+    ps.push_str("$o.Show()\n");
+    ps.push_str("$o.Activate()\n");
+    if mode == "save" {
+        ps.push_str("$d = New-Object System.Windows.Forms.SaveFileDialog\n");
+        ps.push_str(&format!("$d.FileName = '{}'\n", q(name)));
+        ps.push_str("$d.OverwritePrompt = $true\n");
+        ps.push_str("$d.AddExtension = $true\n");
+        ps.push_str("$d.DefaultExt = 'http'\n");
+        ps.push_str("$d.RestoreDirectory = $true\n");
+    } else {
+        ps.push_str("$d = New-Object System.Windows.Forms.OpenFileDialog\n");
+        ps.push_str("$d.CheckFileExists = $true\n");
+        ps.push_str("$d.Multiselect = $false\n");
+        ps.push_str("$d.RestoreDirectory = $true\n");
+    }
+    ps.push_str(&format!("$d.Title = '{}'\n", q(title)));
+    ps.push_str(&format!("$d.Filter = '{}'\n", q(&filter)));
+    ps.push_str("$r = $d.ShowDialog($o)\n");
+    ps.push_str("$o.Close()\n");
+    /* 结果写临时文件（UTF-8 无 BOM），比走 stdout 更稳：不受控制台代码页影响 */
+    ps.push_str(&format!(
+        "if ($r -eq [System.Windows.Forms.DialogResult]::OK) {{ [System.IO.File]::WriteAllText('{}', $d.FileName, (New-Object System.Text.UTF8Encoding($false))) }}\n",
+        q(&out_path.to_string_lossy())
+    ));
+
+    let _ = fs::remove_file(&out_path);
+    /* 带 UTF-8 BOM：Windows PowerShell 5.1 才按 UTF-8 解析脚本里的中文 */
+    let mut bytes = vec![0xEFu8, 0xBB, 0xBF];
+    bytes.extend_from_slice(ps.as_bytes());
+    fs::write(&tmp, bytes).map_err(|e| format!("写入临时脚本失败: {e}"))?;
+
+    let run = |exe: &str, sta: bool| -> std::io::Result<std::process::Output> {
+        let mut c = Command::new(exe);
+        c.arg("-NoProfile").arg("-NonInteractive").arg("-ExecutionPolicy").arg("Bypass");
+        if sta {
+            c.arg("-STA");
+        }
+        c.arg("-File").arg(&tmp);
+        c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：不闪黑框
+        c.output()
+    };
+    let out = match run("powershell", true) {
+        Ok(o) => Ok(o),
+        Err(_) => run("pwsh", false),
+    };
+    let _ = fs::remove_file(&tmp);
+
+    let picked = fs::read_to_string(&out_path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let _ = fs::remove_file(&out_path);
+
+    match out {
+        Ok(o) => {
+            if picked.is_some() {
+                return Ok(picked);
+            }
+            if !o.status.success() {
+                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                return Err(format!(
+                    "原生文件对话框不可用{}",
+                    if err.is_empty() { String::new() } else { format!("：{err}") }
+                ));
+            }
+            Ok(None) // 用户取消
+        }
+        Err(e) => Err(format!("无法启动 PowerShell 文件对话框: {e}")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn native_dialog(mode: &str, title: &str, name: &str, _exts: &str) -> Result<Option<String>, String> {
+    use std::process::{Command, Stdio};
+
+    let q = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = if mode == "save" {
+        format!(
+            "POSIX path of (choose file name with prompt \"{}\" default name \"{}\")",
+            q(title),
+            q(if name.is_empty() { "new.http" } else { name })
+        )
+    } else {
+        format!("POSIX path of (choose file with prompt \"{}\")", q(title))
+    };
+    let out = Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("无法启动 osascript: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if text.is_empty() {
+        Ok(None) // 用户取消：osascript 以非 0 退出且无输出
+    } else {
+        Ok(Some(text))
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn native_dialog(mode: &str, title: &str, name: &str, _exts: &str) -> Result<Option<String>, String> {
+    use std::process::{Command, Stdio};
+
+    /* zenity 取消时退出码 1；找不到命令 / 无 DISPLAY 时走 kdialog */
+    let mut args: Vec<String> = vec!["--file-selection".into(), format!("--title={title}")];
+    if mode == "save" {
+        args.push("--save".into());
+        args.push("--confirm-overwrite".into());
+        if !name.is_empty() {
+            args.push(format!("--filename={name}"));
+        }
+    }
+    if let Ok(o) = Command::new("zenity").args(&args).stdin(Stdio::null()).output() {
+        let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !t.is_empty() {
+            return Ok(Some(t));
+        }
+        if o.status.code() == Some(1) {
+            return Ok(None);
+        }
+    }
+    let kflag = if mode == "save" { "--getsavefilename" } else { "--getopenfilename" };
+    let kstart = if mode == "save" && !name.is_empty() { name.to_string() } else { ".".to_string() };
+    let kargs: Vec<String> = vec![kflag.to_string(), kstart, format!("--title={title}")];
+    if let Ok(o) = Command::new("kdialog").args(&kargs).stdin(Stdio::null()).output() {
+        let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !t.is_empty() {
+            return Ok(Some(t));
+        }
+        if o.status.code() == Some(1) {
+            return Ok(None);
+        }
+    }
+    Err("当前环境没有可用的原生文件对话框（zenity/kdialog），请用界面上的「选择文件」按钮".into())
 }
 
 /// 读取 IDEA HTTP Client 的环境变量文件；private 文件由 UI 侧合并时覆盖同名字段。
