@@ -29,6 +29,21 @@
 
 一键自测：`node tools/all.mjs`（9 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）。
 
+### 本地浏览器调试（`dev/`）
+
+不必每次等 CI 出包才能看效果，用本地假宿主直接跑：
+
+```bash
+node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 PORT=9000
+```
+
+- `dev/mock-host.js` 顶替 DBX 注入的 `window.dbxPlugin`：`invoke` 发到本地服务，
+  `storage` 落 localStorage；`ready` 里先从 `http-client.env.json` 灌好环境（省得每次手填）。
+- `dev/dev-server.mjs`：静态托管 `ui/`、`/__dev/invoke` 落到真实文件系统、真发 HTTP 请求，
+  外加 `/api/*` 几个假接口（`/api/pets`、`/api/slow?ms=3000`、`/api/500`、`/api/big?n=200`），不联网也能点。
+- 数据目录在仓库外：`../dev-workspace`，首启种 `本地自测.http`、`示例 · 宠物店.http`、`http-client.env.json`。
+- **只用来验界面与交互**：安装、签名、商店、真后端权限这些必须用真包验。
+
 **S1.5 留下的三件事**（不影响往下走，记着别忘）：
 1. **拖拽移动暂停**：文件真源下跨文件搬段要保住段落原文，`moveSaved()` 现在直接提示"暂不支持"，`item.draggable=!DOCS.enabled`。要做就得写「原文搬段」（读 src 段行 → 删 → 插到 dst），留 1.0.1。
 2. **首次启动会写 `示例 · DEMO.http`**：0.6.x 的 seed 集合被迁移成文件，S5.3 会把 seed 换成 `examples.http` 单一样例。
