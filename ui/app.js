@@ -107,7 +107,8 @@ function seed(){
  * 下面的渲染与编辑代码一行不用改。
  */
 const DOCS_KEY='warren-polaris-api.httpws.v1';   // 与 http-workspace.js 共用（资源目录 / 结果目录）
-const DOCS={ enabled:false, dir:'', store:null, files:[], busy:false, lastScan:0 };
+const DOCS={ enabled:false, dir:'', store:null, files:[], busy:false, lastScan:0,
+             map:null, mapError:null, mapLoaded:false };
 const STORE=window.POLARIS_STORE;
 
 async function docsResolveDir(){
@@ -134,7 +135,53 @@ async function initDocs(){
     }catch(e){ setStatus('迁移旧分组失败：'+(e.message||e),'warn'); }
   }
   await loadEnvsFromFile();
+  await loadWorkspaceMap();
   await refreshDocs(true);
+}
+
+/* 侧栏映射（wpa-workspace.json，S2.5a）。它只决定「哪些文件、挂哪个文件夹、什么顺序」，
+ * 内容真源仍是 .http 文件本身。
+ * 首启把资源目录里已有的 .http 全量登记一次；之后只做增量补缺，
+ * 已有 folders 的名字/顺序/折叠态一律不动（测试见 tools/map.test.mjs）。
+ * 手改坏的映射先留一份 .broken.json 再重建，绝不让一个坏 JSON 卡死侧栏。 */
+async function loadWorkspaceMap(){
+  const M=window.POLARIS_MAP;
+  if(!DOCS.enabled||!M||!DOCS.store) return null;
+  try{
+    const r=await M.load(DOCS.store.host,DOCS.dir);
+    DOCS.mapError=r.error||null;
+    if(r.error){
+      const bak=r.path.replace(/\.json$/i,'.broken.json');
+      try{ await DOCS.store.host.rename(r.path,bak,{overwrite:true}); }catch(e){}
+      toast('侧栏映射解析失败，已留档 '+STORE.baseName(bak)+' 并重建');
+    }
+    DOCS.map=r.map;
+    const reg=await M.ensureRegistered(DOCS.store.host,DOCS.dir,DOCS.map);
+    DOCS.map=reg.map;
+    if(reg.changed){
+      const w=await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
+      if(!w.ok) setStatus('写侧栏映射失败：'+(w.reason||'未知'),'warn');
+      else if(!r.exists) setStatus('已登记 '+reg.added.length+' 个 .http 到侧栏映射','ok');
+    }
+    DOCS.mapLoaded=true;
+    return DOCS.map;
+  }catch(e){
+    DOCS.mapError=String((e&&e.message)||e);
+    DOCS.mapLoaded=false;
+    return null;
+  }
+}
+
+/* 新建文件后立刻登记，否则「映射为权威」的侧栏会把它当成不存在（S2.5b 起生效） */
+async function registerDocFile(path){
+  const M=window.POLARIS_MAP;
+  if(!DOCS.map||!M||!path) return;
+  try{
+    const e=M.toEntry(DOCS.dir,path);
+    if(M.entries(DOCS.map).some(x=>M.pathKey(x)===M.pathKey(e))) return;
+    DOCS.map.unfiled.push(e);
+    await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
+  }catch(err){ /* 登记失败不影响文件本身，下次启动会补 */ }
 }
 
 /* 扫目录 → 投影成 state.collections。busy 期间的重入直接忽略（保存后连刷两次很常见）。 */
@@ -1113,6 +1160,7 @@ async function saveToDocNew(t){
   if(!state.collections.length){
     const c=await DOCS.store.createCollection('我的接口');
     if(!c.ok){ setStatus('创建 .http 文件失败：'+(c.reason||''),'err'); return false; }
+    await registerDocFile(c.path);
     await refreshDocs(true);
   }
   const defName=t.url? t.method+' '+shortUrl(t.url):'未命名请求';
@@ -1145,6 +1193,7 @@ async function appendToDoc(t,path,newFileName,name){
   if(newFileName){
     const c=await DOCS.store.createCollection(newFileName);
     if(!c.ok){ setStatus('创建文件失败：'+(c.reason||''),'err'); return; }
+    await registerDocFile(c.path);
     target=c.path;
   }
   const req=storeReqFromTab(t); req.name=name; req.title=name;
@@ -1196,6 +1245,14 @@ function renameGroup(g){
       if(!r.ok){ setStatus('改名失败：'+(r.reason||'')+(r.reason==='EXISTS'?'（已有同名文件）':''),'err'); return; }
       /* 文件路径变了，先把 tab 的 docRef.file 改过来，否则重扫后会被当成「已消失」 */
       state.tabs.forEach(t=>{ if(t.docRef&&t.docRef.file===g.path) t.docRef.file=r.path; });
+      /* 映射里的登记也一起改，否则侧栏会同时出现「新文件未登记 + 旧路径找不到」 */
+      const M=window.POLARIS_MAP;
+      if(M&&DOCS.map){
+        try{
+          const mv=M.relocate(DOCS.map,M.toEntry(DOCS.dir,g.path),M.toEntry(DOCS.dir,r.path));
+          if(mv.ok){ DOCS.map=mv.map; await M.save(DOCS.store.host,DOCS.dir,DOCS.map); }
+        }catch(e){}
+      }
       await refreshDocs(true); renderSidebar();
       setStatus('已改名为「'+r.name+'」','ok');
       return;
@@ -1258,6 +1315,15 @@ function deleteGroup(g){
       if(!ok) return;
       const r=await DOCS.store.deleteCollection(g.path);
       if(!r.ok){ setStatus('删除失败：'+(r.reason||''),'err'); return; }
+      /* 用户主动删的文件：顺手从映射里去掉，别在侧栏留一条灰色「找不到」。
+       * 注意只有「主动删」才摘登记；文件被外部删掉时仍保留登记并标灰（S2.5b）。 */
+      const M=window.POLARIS_MAP;
+      if(M&&DOCS.map){
+        try{
+          const un=M.unregister(DOCS.map,M.toEntry(DOCS.dir,g.path));
+          if(un.ok){ DOCS.map=un.map; await M.save(DOCS.store.host,DOCS.dir,DOCS.map); }
+        }catch(e){}
+      }
       state.tabs.forEach(t=>{ if(t.docRef&&t.docRef.file===g.path){ t.savedId=null; t.docRef=null; t.dirty=true; } });
       await refreshDocs(true); renderTabs();
       setStatus('已删除 '+STORE.baseName(g.path),'ok');
@@ -1392,6 +1458,7 @@ function bindEvents(){
     if(DOCS.enabled){
       const r=await DOCS.store.createCollection(n.trim());
       if(!r.ok){ setStatus('创建失败：'+(r.reason==='EXISTS'?'已有同名 .http 文件':(r.reason||'')),'err'); return; }
+      await registerDocFile(r.path);
       await refreshDocs(true);
       setStatus('已创建 '+STORE.baseName(r.path),'ok');
       return;
@@ -1550,6 +1617,9 @@ window.POLARIS_DOCS = {
   enabled: function(){ return DOCS.enabled; },
   dir: function(){ return DOCS.dir; },
   refresh: function(quiet){ return refreshDocs(quiet !== false); },
+  /* S2.5：侧栏映射（wpa-workspace.json）。S2.5b 的文件夹树直接吃这个对象 */
+  map: function(){ return DOCS.map; },
+  mapError: function(){ return DOCS.mapError; },
   /* S2.3：源码视图点「▭」→ 在表单里打开这一段 */
   openInForm: function(path,info){ return openInFormForDoc(path,info); },
   /* S2.3：表单右上角「</>」→ 在源码里定位这一段 */
@@ -1558,6 +1628,9 @@ window.POLARIS_DOCS = {
     dir=String(dir||'').trim();
     if(!DOCS.enabled||!dir||dir===DOCS.dir) return false;
     DOCS.dir=dir; DOCS.store.setDir(dir);
+    /* 映射跟着资源目录走：换了目录就得读新目录里的 wpa-workspace.json */
+    DOCS.map=null; DOCS.mapLoaded=false; DOCS.mapError=null;
+    await loadWorkspaceMap();
     return refreshDocs(true);
   }
 };

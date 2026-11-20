@@ -46,6 +46,8 @@ ok('index.html 引用的脚本都存在且顺序正确', () => {
   refs.forEach(r => assert(fs.existsSync(path.join(root, 'ui', r)), '缺少 ' + r));
   assert(refs.indexOf('http-file.js') < refs.indexOf('http-workspace.js'), 'http-file 应在 workspace 之前');
   assert(refs.indexOf('http-workspace.js') < refs.indexOf('http-editor.js'), 'http-editor 应在 workspace 之后（覆盖按钮绑定）');
+  assert(refs.indexOf('workspace-map.js') >= 0, '缺少 workspace-map.js（侧栏映射）');
+  assert(refs.indexOf('workspace-map.js') < refs.indexOf('app.js'), 'workspace-map 应在 app 之前（boot 时要用）');
 });
 
 ok('编辑器入口与容器已挂载', () => {
