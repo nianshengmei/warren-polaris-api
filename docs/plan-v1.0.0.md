@@ -25,9 +25,10 @@
 | S2.1 字段隔离验收 | ✅ | `store.test.mjs` +4 项（只改 URL / 只改 header / 只改 body / 方法大小写；`<` `>` 行与 Tab 缩进逐字节保留）、`locateSegment` 方法比对统一大写；共 26 项 |
 | S2.2 反向刷新 + 冲突 | ✅ | `app.js` 的 `syncTabsWithDocs`（扫完目录对齐 tab）+ `baseMtime`（基线跟着 tab 走，不再用刚扫出的 mtime，否则外部改动会被静默覆盖）+ `#docConflict` 冲突栏（加载磁盘版本 / 保留我的并覆盖 / 稍后）+ tab ⚠ 标记；`http-editor.js` 记 `mtime` + `loadedText`，保存前比对、冲突停手，底部「用本地覆盖 / 载入磁盘版本」；`verify-ui/check-s22.mjs` 26 项真机端到端（表单侧 + 编辑器侧） |
 | S2.3 双向跳转 | ✅ | 表单 → 源码：请求栏 `</>`（`openSourceForTab`，脏了先落盘）→ `POLARIS_EDITOR.openAt`（同一文件且磁盘变了会先 `ensureFresh` 重读）；源码 → 表单：gutter 请求行左侧 `▤` + 接口一览 `▤`（`openInForm` → `POLARIS_DOCS.openInForm`，按 id → 行号+方法 → 名称+方法 认段，切过去自动收起浮层）；`verify-ui/check-s23.mjs` 20 项 |
-| S2.4 变量统一 | ⬜ 下一步 | — |
+| S2.4 变量统一 | ✅ | 表单侧 `resolveVars(str,t)` 不再自己实现一套，改走 `POLARIS_HTTP.resolveDeep`：文件级 `@var` → 环境 → 内置动态变量（`$guid/$timestamp/...`）→ 跨请求引用；`syncTabVars` 在打开/重绑/保存后对齐 `fileVars`；投影层透传 `fileVars`；跨请求引用正则改 `\p{L}`（`\w` 不认中文，也认空格）；**环境也以 `http-client.env.json` 为真源**（`loadEnvsFromFile` 启动读、`saveEnvsToFile` 改完写）；`vars.test.mjs` 19 项 + `verify-ui/check-s24.mjs` 10 项 |
+| S2.5 侧栏唯一入口 | ⬜ 下一步 | 见下方拆解（按 2026-11-20 决定：映射为权威） |
 
-一键自测：`node tools/all.mjs`（9 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）。
+一键自测：`node tools/all.mjs`（10 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）。
 
 ### 本地浏览器调试（`dev/`）
 
@@ -46,7 +47,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 
 **S1.5 留下的三件事**（不影响往下走，记着别忘）：
 1. **拖拽移动暂停**：文件真源下跨文件搬段要保住段落原文，`moveSaved()` 现在直接提示"暂不支持"，`item.draggable=!DOCS.enabled`。要做就得写「原文搬段」（读 src 段行 → 删 → 插到 dst），留 1.0.1。
-2. **首次启动会写 `示例 · DEMO.http`**：0.6.x 的 seed 集合被迁移成文件，S5.3 会把 seed 换成 `examples.http` 单一样例。
+2. **首次启动会写 `示例 · DEMO.http`**：0.6.x 的 seed 集合被迁移成文件。S2.5a 做「首启全量登记」时一并收口，最终只留 `examples.http`。
 3. **`.http` 面板与侧栏各扫一遍目录**：现在同目录但各自缓存，改了源码靠 `POLARIS_DOCS.refresh()` 合帧重扫。真做 watch（S2.2）时合并成一处。
 
 
@@ -164,9 +165,32 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 
 ### S2.4 变量统一
 
+> **已落地**（2026-11-20）。原文写的「只有一份环境」做到了两层：
+> ① 求值规则统一（文件级 → 环境 → 动态 → 跨请求），② 环境来源统一到 `http-client.env.json`。
+> 踩到的两个坑：跨请求引用的名字用 `\w` 匹配不到中文（`登录.response...` 直接失效），
+> 变量值里套占位符（`@token = {{$guid}}`）只解一层会发出字面量 → 补 `resolveDeep`（最多叠 3 层，无变化即停）。
+
 - **目标**：两个视图解析 `{{baseUrl}}` 得到同值；只有 `http-client.env.json` 一份。
-- **改动**：`ui/app.js` 的 `curEnv()` 改为读 env 文件；环境管理界面写回该文件。
-- **验收**：改 env 文件里的 baseUrl → 表单发送与源码发送的 URL 完全一致（看历史记录里的 `url`）。
+- **改动**：`resolveVars` 复用 `http-file.js`；`fileVars` 跟着 tab 走；环境读写走文件。
+- **验收**：改 env 文件里的 baseUrl → 表单发送与源码发送的 URL 完全一致。
+
+### S2.5 侧栏唯一入口（新，2026-11-20 定）
+
+> **决定**：侧栏内容**完全由 `wpa-workspace.json` 决定**，磁盘上有但没登记的文件不显示。
+> 代价必须用「发现未登记」提示补上，否则用户新建文件后以为坏了。
+> 映射只记「路径 → 文件夹」，不记请求/名字/内容 —— 它丢了最多让外部文件从侧栏消失，文件本身不受影响。
+
+拆四步，每步一次提交：
+
+| 步 | 目标 | 验收 |
+|---|---|---|
+| **S2.5a 映射层** | `ui/workspace-map.js`：读写 `wpa-workspace.json`、相对/绝对路径归一、首启把资源目录现有 `.http` 全量登记、未登记文件清单 | `tools/map.test.mjs`：路径归一、首启登记、丢失文件标 missing、不覆盖已有 folders |
+| **S2.5b 侧栏文件夹树** | 渲染改成「文件夹 → 文件 → 请求」；折叠态进映射；映射里找不到的文件显示灰色「找不到」+ 重新定位；底部「发现 N 个未登记」入口 | `verify-ui/check-s25.mjs`：两个文件夹 + 外部文件 + 缺失文件的渲染与点击 |
+| **S2.5c 面板去文件树** | 删掉 `.http` 浮层里的文件列表与「文件目录」输入框，只留「接口一览 + 源码」；所有打开入口收归侧栏 | 面板里不再出现 `http/listFiles` 调用；侧栏点文件能直接进源码视图 |
+| **S2.5d 归位与排序** | 把外部文件拖进文件夹、文件夹内调顺序（写回映射）；恢复 S1.5 暂停的拖拽 | 拖完映射文件变了、重启后顺序还在 |
+
+- **风险**：侧栏从扁平数组变树，牵动搜索 / 折叠 / tab 重绑 / 拖拽，是 M2 里改动面最大的一步。先做 a（纯数据层，可单测）再做 b（渲染），c 最后收口。
+- **与旧计划冲突处**：设计稿原写「不需要注册表」，已改为「映射为权威」；`S1.5 留下的三件事` 第 2 条（首启写 `示例 · DEMO.http`）由 S2.5a 的「首启全量登记」一并解决。
 
 ---
 

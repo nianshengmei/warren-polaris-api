@@ -133,6 +133,7 @@ async function initDocs(){
       if(out.skipped.length) toast('有 '+out.skipped.length+' 个同名文件已存在，旧数据留档在 .warren-migrate/');
     }catch(e){ setStatus('迁移旧分组失败：'+(e.message||e),'warn'); }
   }
+  await loadEnvsFromFile();
   await refreshDocs(true);
 }
 
@@ -207,7 +208,8 @@ function rebindTabs(){
       t.savedId=hit.r.id;
       t.docRef={ file:hit.g.path, line:hit.r.httpSource?hit.r.httpSource.line:null,
                  interfaceId:hit.r.interfaceId||null, name:hit.r.name, method:hit.r.method };
-    }else{ t.savedId=null; t.docRef=null; }
+      syncTabVars(t);
+    }else{ t.savedId=null; t.docRef=null; t.fileVars={}; }
   });
 }
 /* baseMtime = 这个 tab 的内容「读到的是哪一版」。写回时拿它当基线，磁盘变了就 CONFLICT，
@@ -219,6 +221,7 @@ function setTabDocRef(t,path,req,mtime){
   if(mtime!=null) t.baseMtime=Math.round(mtime);
   else if(req.httpSource&&req.httpSource.mtime) t.baseMtime=Math.round(req.httpSource.mtime);
   t.docConflict=null;
+  syncTabVars(t);
 }
 
 /* 把磁盘上的那一段灌回 tab（清掉草稿状态）。字段一一对应，别漏 bodyType/formBody：
@@ -436,14 +439,108 @@ async function openSourceForTab(){
 
 /* ===================== 变量解析 ===================== */
 function curEnv(){ return state.envs.find(e=>e.id===state.activeEnv); }
-function resolveVars(str){
+/* ===================== 变量求值（表单侧） =====================
+ * 统一走 http-file.js 的那一套：文件级 @var → 环境变量 → 内置动态变量。
+ * 以前这里只认环境，于是 .http 里写的 @base = ... 在表单里根本不生效，
+ * 发出去的是字面 `{{base}}`（ENOTFOUND）—— 同一个文件两种视图给出两种结果。 */
+function fileVarsOf(path){
+  if(!path) return {};
+  const g=state.collections.find(x=>x.path===path);
+  return (g&&g.fileVars)||{};
+}
+/* 把「当前文件里的 @变量」挂到 tab 上：打开、重绑、保存后都要对齐 */
+function syncTabVars(t){
+  if(!t) return t;
+  t.fileVars = t.docRef ? fileVarsOf(t.docRef.file) : {};
+  return t;
+}
+function envAsVars(){
+  const env=curEnv(); const out={};
+  if(!env) return out;
+  if(env.baseUrl) out.baseUrl=env.baseUrl;
+  (env.vars||[]).forEach(r=>{ if(r.on && r.k) out[r.k]=r.v==null?'':r.v; });
+  return out;
+}
+/* 跨请求引用 {{名字.response.body.$.x}} 的取值池：发送成功后按 tab 名记一份 */
+const RESP_CACHE={};
+
+/* ---------- 环境：http-client.env.json 是真源 ----------
+ * state.envs 只是它的一份内存投影（UI 到处在用 env.id / env.vars 这种形状），
+ * 切换环境、关掉环境面板时写回文件；启动时从文件读。
+ * 两边都想当真源的话，用户改文件不生效、在 UI 改又不落盘，迟早对不上。 */
+function envsFromFile(json){
+  if(!json || typeof json!=='object') return null;
+  const out=[];
+  Object.keys(json).forEach(name=>{
+    const v=json[name]||{};
+    const vars=Object.keys(v).filter(k=>k!=='baseUrl')
+      .map(k=>({ id:'ev:'+name+':'+k, on:true, k:k, v:v[k]==null?'':String(v[k]) }));
+    out.push({ id:'env:'+name, name:name, baseUrl:v.baseUrl||'', vars:vars.length?vars:[blankRow()] });
+  });
+  return out.length?out:null;
+}
+function envsToFile(){
+  const out={};
+  state.envs.forEach(e=>{
+    const name=String(e.name||'').trim(); if(!name) return;
+    const o={};
+    if(e.baseUrl) o.baseUrl=e.baseUrl;
+    (e.vars||[]).forEach(r=>{ if(r.on && r.k) o[r.k]=r.v==null?'':String(r.v); });
+    out[name]=o;
+  });
+  return out;
+}
+async function saveEnvsToFile(){
+  if(!DOCS.enabled || !DOCS.dir || !STORE) return false;
+  try{
+    await DBX.invoke('http/writeFile',{
+      path:STORE.joinPath(DOCS.dir,'http-client.env.json'),
+      content:JSON.stringify(envsToFile(),null,2)+'\n'
+    });
+    return true;
+  }catch(e){
+    setStatus('环境写入 '+ 'http-client.env.json 失败：'+(e.message||e),'err');
+    return false;
+  }
+}
+async function loadEnvsFromFile(){
+  if(!DOCS.enabled || !DOCS.dir) return false;
+  let r=null;
+  try{ r=await DBX.invoke('http/readEnvFiles',{dir:DOCS.dir}); }catch(e){ return false; }
+  const parsed=envsFromFile(r&&r.public);
+  if(parsed){
+    const keepName=(curEnv()&&curEnv().name)||ui.envName||null;
+    state.envs=parsed;
+    const hit=parsed.find(e=>e.name===keepName);
+    state.activeEnv=hit?hit.id:parsed[0].id;
+    ui.envName=hit?hit.name:parsed[0].name;
+    return true;
+  }
+  /* 文件里还没有环境：把 storage 里的旧环境写进去一次，不让用户白填 */
+  if(state.envs.length && !ui.envsMigratedAt){
+    ui.envsMigratedAt=Date.now();
+    await saveEnvsToFile();
+  }
+  return false;
+}
+/* 记下「当前是哪个环境」，下次启动按名字找回来（env.id 是按名字算的，也稳） */
+function rememberEnv(env){ ui.envName=env?env.name:null; }
+
+
+function resolveVars(str,t){
   if(str==null || String(str).indexOf('{{')<0) return str;
-  const env=curEnv();
+  const tab=t||(typeof activeTab==='function'?activeTab():null);
+  const vars=(tab&&tab.fileVars)||{};
+  const H=window.POLARIS_HTTP;
+  if(H&&(H.resolveDeep||H.resolveVars)){
+    const fn=H.resolveDeep||H.resolveVars;
+    return fn(String(str),{ vars:vars, envs:{__cur:envAsVars()}, activeEnv:'__cur', responses:RESP_CACHE });
+  }
+  /* 兜底：http-file.js 没加载时至少别把环境丢了 */
+  const env=envAsVars();
   return String(str).replace(/\{\{\s*([\w.\-]+)\s*\}\}/g,(m,key)=>{
-    if(!env) return m;
-    if(key==='baseUrl') return env.baseUrl||'';
-    const v=(env.vars||[]).find(r=>r.on&&r.k===key);
-    return v? v.v : m;
+    if(Object.prototype.hasOwnProperty.call(vars,key)) return String(vars[key]);
+    return Object.prototype.hasOwnProperty.call(env,key)? String(env[key]) : m;
   });
 }
 
@@ -531,11 +628,11 @@ function renderEnv(){
   const menu=$('#envMenu'); menu.innerHTML='';
   state.envs.forEach(e=>{
     const b=el('button','env-item'+(e.id===state.activeEnv?' on':''),`<span>${esc(e.name)}</span><small>${esc(e.baseUrl||'(无 baseUrl)')}</small>`);
-    b.onclick=()=>{ state.activeEnv=e.id; persist(); renderEnv(); renderRequestBar(); $('#envMenu').classList.remove('open'); setStatus('已切换环境：'+e.name,'ok'); };
+    b.onclick=()=>{ state.activeEnv=e.id; rememberEnv(e); persist(); renderEnv(); renderRequestBar(); $('#envMenu').classList.remove('open'); setStatus('已切换环境：'+e.name,'ok'); };
     menu.appendChild(b);
   });
   const none=el('button','env-item'+(!state.activeEnv?' on':''),'<span>无环境</span><small>不解析变量</small>');
-  none.onclick=()=>{ state.activeEnv=null; persist(); renderEnv(); renderRequestBar(); $('#envMenu').classList.remove('open'); };
+  none.onclick=()=>{ state.activeEnv=null; rememberEnv(null); persist(); renderEnv(); renderRequestBar(); $('#envMenu').classList.remove('open'); };
   menu.appendChild(none);
   const mng=el('button','env-item manage','<span>⚙ 管理环境与变量…</span>'); mng.onclick=()=>{ $('#envMenu').classList.remove('open'); openEnvManager(); };
   menu.appendChild(mng);
@@ -560,11 +657,11 @@ function openEnvManager(){
     const acts=el('div','acts');
     if(env){ const del=el('button','btn ghost danger','删除'); del.onclick=()=>{ PD.confirm('确定删除环境「'+env.name+'」？',ok=>{ if(!ok)return; state.envs=state.envs.filter(e=>e.id!==env.id); if(state.activeEnv===env.id)state.activeEnv=state.envs[0]?state.envs[0].id:null; selId=state.envs[0]&&state.envs[0].id; render(); }); }; acts.appendChild(del); }
     const sp=el('div'); sp.style.flex='1'; acts.appendChild(sp);
-    if(env){ const use=el('button','btn',env.id===state.activeEnv?'✓ 当前环境':'设为当前'); use.onclick=()=>{ state.activeEnv=selId; persist(); renderEnv(); renderRequestBar(); render(); }; acts.appendChild(use); }
+    if(env){ const use=el('button','btn',env.id===state.activeEnv?'✓ 当前环境':'设为当前'); use.onclick=()=>{ state.activeEnv=selId; rememberEnv(state.envs.find(e=>e.id===selId)); persist(); saveEnvsToFile(); renderEnv(); renderRequestBar(); render(); }; acts.appendChild(use); }
     const done=el('button','btn primary','完成'); done.onclick=close; acts.appendChild(done);
     m.appendChild(acts);
   }
-  function close(){ state.envs.forEach(e=>{ if(e.vars)e.vars=e.vars.filter(r=>r.k||r.v); }); persist(); renderEnv(); renderRequestBar(); bg.classList.remove('open'); bg.innerHTML=''; }
+  function close(){ state.envs.forEach(e=>{ if(e.vars)e.vars=e.vars.filter(r=>r.k||r.v); }); rememberEnv(curEnv()); persist(); saveEnvsToFile(); renderEnv(); renderRequestBar(); bg.classList.remove('open'); bg.innerHTML=''; }
   bg.innerHTML=''; bg.appendChild(m); bg.classList.add('open'); bg.onclick=e=>{if(e.target===bg)close();};
   render();
 }
@@ -659,7 +756,7 @@ function renderRequestBar(){
 }
 function updateResolvedPreview(){
   const t=activeTab(); const box=$('#urlResolved');
-  if(t.url && t.url.indexOf('{{')>=0){ const r=resolveVars(t.url); box.innerHTML='→ <b>'+esc(r)+'</b>'; }
+  if(t.url && t.url.indexOf('{{')>=0){ const r=resolveVars(t.url,t); box.innerHTML='→ <b>'+esc(r)+'</b>'; }
   else box.innerHTML='';
 }
 
@@ -730,10 +827,10 @@ async function send(){
   t.sendSeq=seq;
   t.stopped=false;                       // 新发送重置中断标记
   if(t.abortCtl) t.abortCtl.abort();     // 清理上个 in-flight（若还在）
-  let url=resolveVars(t.url.trim());
+  let url=resolveVars(t.url.trim(),t);
   if(!url){ setStatus('请先输入 URL','warn'); $('#url').focus(); return; }
   if(!/^[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//.test(url)) url='https://'+url;
-  const headers={}; t.headers.filter(r=>r.on&&r.k).forEach(r=>headers[resolveVars(r.k)]=resolveVars(r.v));
+  const headers={}; t.headers.filter(r=>r.on&&r.k).forEach(r=>headers[resolveVars(r.k,t)]=resolveVars(r.v,t));
   // DBX 沙箱纯 fetch 直连：无 cap.http 宿主直发、无本地中继代理。
   // 禁发头（Cookie/UA/Referer 等 forbidden headers）会被浏览器静默剥离，UI 无感知丢失。
   // 不再硬拦截——改为发送后若失败提示可能原因；用户可去掉这些头或接受丢失。
@@ -741,9 +838,9 @@ async function send(){
   t.strippedHeaders=strippedHeaders;
   let body; const method=t.method;
   if(!['GET','HEAD'].includes(method)){
-    if(t.bodyType==='json'){ body=resolveVars(t.body); if(!Object.keys(headers).some(h=>h.toLowerCase()==='content-type')) headers['Content-Type']='application/json'; }
-    else if(t.bodyType==='text'){ body=resolveVars(t.body); }
-    else if(t.bodyType==='form'){ body=t.formBody.filter(r=>r.on&&r.k).map(r=>encodeURIComponent(resolveVars(r.k))+'='+encodeURIComponent(resolveVars(r.v))).join('&'); if(!Object.keys(headers).some(h=>h.toLowerCase()==='content-type')) headers['Content-Type']='application/x-www-form-urlencoded'; }
+    if(t.bodyType==='json'){ body=resolveVars(t.body,t); if(!Object.keys(headers).some(h=>h.toLowerCase()==='content-type')) headers['Content-Type']='application/json'; }
+    else if(t.bodyType==='text'){ body=resolveVars(t.body,t); }
+    else if(t.bodyType==='form'){ body=t.formBody.filter(r=>r.on&&r.k).map(r=>encodeURIComponent(resolveVars(r.k,t))+'='+encodeURIComponent(resolveVars(r.v,t))).join('&'); if(!Object.keys(headers).some(h=>h.toLowerCase()==='content-type')) headers['Content-Type']='application/x-www-form-urlencoded'; }
   }
   // 超时：全局 ui.timeoutMs（默认 120s）；`0` = 无限制（fetch 不设 timer）
   const tmo = (typeof ui.timeoutMs==='number' && Number.isFinite(ui.timeoutMs)) ? ui.timeoutMs : 120000;
@@ -806,6 +903,8 @@ async function send(){
     }
     if(t.stopped||t.sendSeq!==seq){ if(resp&&resp.blobUrl) URL.revokeObjectURL(resp.blobUrl); return; }  // 在途响应丢弃
     t.response=resp;
+    /* 供 {{请求名.response.body.$.x}} 跨请求引用：按 tab 名记一份，同名以最后一次为准 */
+    try{ RESP_CACHE[t.name]={ status:resp.status, headers:resp.headers||{}, text:resp.text||'', parsed:resp.parsed }; }catch(e){}
     /* v0.3.0：发送成功后交给 .http 工作区自动落盘（异步，失败不影响主流程） */
     if(window.POLARIS_HTTP_WS && window.POLARIS_HTTP_WS.onResponse){
       try{ window.POLARIS_HTTP_WS.onResponse(t,resp,{method:method,url:url,headers:headers,body:body}); }catch(e){}
@@ -1069,6 +1168,7 @@ function openSaved(r){
     t.docRef={ file:r.httpSource.file, line:r.httpSource.line, interfaceId:r.interfaceId||null, name:r.name, method:r.method };
     if(r.httpSource.mtime) t.baseMtime=Math.round(r.httpSource.mtime);
   }
+  syncTabVars(t);
   state.tabs.unshift(t); state.activeTab=t.id; renderAll(); persist(); setStatus('已载入「'+r.name+'」');
 }
 

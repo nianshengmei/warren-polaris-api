@@ -486,4 +486,55 @@ ok('S2.3 源码 → 表单：gutter ▤ + 接口一览 ▤', () => {
     'locateDocRequest 的认段顺序应为 id → 行号 → 名称');
 });
 
+/* ---------- v0.9.0 / S2.4：变量统一 ---------- */
+
+ok('S2.4 表单侧不再自己实现一套变量解析', () => {
+  const s = read('ui/app.js');
+  const fn = s.slice(s.indexOf('function resolveVars(str,t)'), s.indexOf('function resolveVars(str,t)') + 700);
+  assert(/POLARIS_HTTP/.test(fn), 'resolveVars 必须复用 http-file.js 的实现');
+  assert(/resolveDeep|resolveVars/.test(fn), '要调 resolveDeep/resolveVars');
+  assert(/fileVars/.test(fn), '要带文件级变量');
+  assert(/envAsVars/.test(s), '缺少 envAsVars（环境 → 变量表）');
+  /* 旧实现只认环境，出现「{{baseUrl}} 之外一律原样」的写法即为回退 */
+  assert(!/function resolveVars\(str\)\{/.test(s), '旧的单参 resolveVars 应当已经删掉');
+});
+
+ok('S2.4 发送链路把 tab 传进 resolveVars', () => {
+  const s = read('ui/app.js');
+  assert(/resolveVars\(t\.url\.trim\(\),t\)/.test(s), 'URL 求值要带 tab');
+  assert(/resolveVars\(r\.v,t\)/.test(s), 'header 值求值要带 tab');
+  assert(/body=resolveVars\(t\.body,t\)/.test(s), 'body 求值要带 tab');
+});
+
+ok('S2.4 fileVars 跟着 tab 走：打开 / 重绑 / 保存后都对齐', () => {
+  const s = read('ui/app.js');
+  assert(s.indexOf('function syncTabVars') > 0, '缺少 syncTabVars');
+  assert(/function openSaved[\s\S]{0,900}syncTabVars\(t\)/.test(s), 'openSaved 要同步 fileVars');
+  assert(/function setTabDocRef[\s\S]{0,500}syncTabVars\(t\)/.test(s), 'setTabDocRef 要同步 fileVars');
+  assert(/function rebindTabs[\s\S]{0,600}syncTabVars\(t\)/.test(s), 'rebindTabs 要同步 fileVars');
+  assert(/function fileVarsOf[\s\S]{0,200}group\.fileVars|g\.fileVars/.test(s), 'fileVarsOf 应从投影后的分组取');
+});
+
+ok('S2.4 投影层透传 fileVars', () => {
+  const store = read('ui/http-store.js');
+  assert(/fileVars:\s*c\.fileVars\s*\|\|\s*\{\}/.test(store), 'toLegacyCollections 要带 fileVars（默认空对象）');
+});
+
+ok('S2.4 环境以 http-client.env.json 为真源', () => {
+  const s = read('ui/app.js');
+  ['loadEnvsFromFile', 'saveEnvsToFile', 'envsFromFile', 'envsToFile'].forEach((k) => {
+    assert(s.indexOf('function ' + k) > 0, 'app.js 缺少 ' + k);
+  });
+  assert(/await loadEnvsFromFile\(\)/.test(s), 'initDocs 之后要从文件读环境');
+  assert(/function close\(\)\{[\s\S]{0,300}saveEnvsToFile\(\)/.test(s), '环境面板关闭要写回文件');
+  assert(/rememberEnv\(/.test(s), '要记住当前环境名，下次启动才找得回来');
+});
+
+ok('S2.4 跨请求引用认中文请求名', () => {
+  const h = read('ui/http-file.js');
+  assert(/\\p\{L\}/.test(h), 'response.body 的正则要用 \\p{L}，否则「登录」这种名字匹配不到');
+  assert(/function resolveDeep/.test(h), '缺少 resolveDeep（变量值里套占位符要一次解到底）');
+  assert(/resolveDeep:\s*resolveDeep/.test(h), 'resolveDeep 要导出');
+});
+
 console.log('\n' + pass + ' checks passed');

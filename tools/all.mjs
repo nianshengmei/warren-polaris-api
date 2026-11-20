@@ -14,6 +14,7 @@ const files = [
   'tools/store.test.mjs',
   'tools/migrate.test.mjs',
   'tools/project.test.mjs',
+  'tools/vars.test.mjs',
   'tools/multipart.test.mjs',
   'tools/sample.test.mjs',
 ];

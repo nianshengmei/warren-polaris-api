@@ -492,8 +492,9 @@
       if (key === '$datetimeIso') return new Date().toISOString();
       if (key === '$randomInt') return String(Math.floor(Math.random() * 1000000));
 
-      /* 跨请求响应引用：name.response.body.$.path / name.response.headers.X */
-      var rm = key.match(/^([\w.\-]+)\.response\.(body|headers)(?:\.\$?\.?(.*))?$/i);
+      /* 跨请求响应引用：name.response.body.$.path / name.response.headers.X
+       * 名字允许中文和空格（\w 在 JS 里只认 ASCII，用 \p{L} 才认「登录」「甲 用文件变量」这种标题） */
+      var rm = key.match(/^([\p{L}\p{N}_.\- ]+)\.response\.(body|headers)(?:\.\$?\.?(.*))?$/iu);
       if (rm) {
         var resp = responses[rm[1]];
         if (!resp) return m;
@@ -514,6 +515,19 @@
       if (Object.prototype.hasOwnProperty.call(env, key)) return String(env[key]);
       return m;
     });
+  }
+
+  /* 变量值自己也可能含占位符（`@token = {{$guid}}`、`@url = {{base}}/v1`），
+   * 只展开一层的话发出去就是字面 `{{$guid}}`。这里最多再叠 3 层，
+   * 一旦某一轮没有变化就停 —— 互相引用的环不会死循环。 */
+  function resolveDeep(text, ctx) {
+    var out = resolveVars(text, ctx);
+    for (var i = 0; i < 3; i++) {
+      if (out == null || String(out).indexOf('{{') < 0 || out === text) break;
+      text = out;
+      out = resolveVars(out, ctx);
+    }
+    return out;
   }
 
   /* 把解析出的 request 转成 app.js 的 tab seed（headers 需要 id/on 字段，由调用方注入 uid）。
@@ -611,6 +625,7 @@
     serializeCollection: serializeCollection,
     ID_NOTE: ID_NOTE,
     resolveVars: resolveVars,
+    resolveDeep: resolveDeep,
     toTab: toTab,
     mergeEnvFiles: mergeEnvFiles,
     jsonPath: jsonPath,

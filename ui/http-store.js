@@ -514,6 +514,7 @@
         name: c.name,
         path: c.path,
         fileId: c.fileId || null,
+        fileVars: c.fileVars || {},
         mtime: c.mtime || 0,
         collapsed: false,
         error: c.error || null,
