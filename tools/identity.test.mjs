@@ -174,4 +174,44 @@ ok('fingerprint：METHOD 大写 + URL 归一化，变量不展开、query 不排
   assert.equal(I.fingerprint({ method: 'GET', url: '' }), 'GET ');
 });
 
+
+/* ---- S4.6：把某段的身份改回旧 id（只在用户点「接回」后调用） ---- */
+ok('改回旧身份：段里已有 id 就换值，行尾说明原样保留', () => {
+  const t = `### 甲\n# @interface_id new00001  接口身份，改了就会断历史\nGET https://a/1\n`;
+  const r = I.retagInterfaceId(t, { line: 3 }, 'old00001');
+  assert.equal(r.changed, true);
+  assert.equal(r.id, 'old00001');
+  const lines = r.text.split('\n');
+  assert.equal(lines[1], '# @interface_id old00001  接口身份，改了就会断历史');
+  assert.equal(lines.length, t.split('\n').length, '换值不该多出/少掉行');
+  assert.equal(H.parseHttpFile(r.text).requests[0].interfaceId, 'old00001');
+});
+
+ok('改回旧身份：段里没有 id 行就在 ### 下一行插一行', () => {
+  const t = `### 甲\nGET https://a/1\n\n### 乙\nGET https://a/2\n`;
+  const r = I.retagInterfaceId(t, { line: 5 }, 'old00002');
+  assert.equal(r.changed, true);
+  const lines = r.text.split('\n');
+  assert.equal(lines[3], '### 乙');
+  assert.ok(lines[4].startsWith('# @interface_id old00002'), lines[4]);   /* 后面可能带说明文字，与 record 首次插入保持一致 */
+  const doc = H.parseHttpFile(r.text);
+  assert.equal(doc.requests.length, 2, '插身份不许改变请求数');
+  assert.equal(doc.requests[1].interfaceId, 'old00002');
+});
+
+ok('改回旧身份：id 已经就是它 → 一个字节都不动', () => {
+  const t = `### 甲\n# @interface_id same0001\nGET https://a/1\n`;
+  const r = I.retagInterfaceId(t, { line: 3 }, 'same0001');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, t);
+});
+
+ok('改回旧身份：定位不到段 → NO_SEGMENT，原文返回', () => {
+  const t = `### 甲\nGET https://a/1\n`;
+  const r = I.retagInterfaceId(t, { line: 99 }, 'x0000001');
+  assert.equal(r.changed, false);
+  assert.equal(r.reason, 'NO_SEGMENT');
+  assert.equal(r.text, t);
+});
+
 console.log('\n' + pass + ' 项通过');

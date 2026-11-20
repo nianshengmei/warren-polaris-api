@@ -178,6 +178,48 @@
     return { text: joinLines(rows), changed: true, id: want, line: at + 2 };
   }
 
+  /* ---- 改回旧身份（S4.6 的「接回」） ----
+   * 与 insertInterfaceId 的区别：段里已经有别的 id 时不返回 EXISTS_OTHER，而是**换掉**。
+   * 只在用户明确点了「接回」之后调用 —— 自动流程绝不会走到这里。
+   * 换值时只动 id 那一段 token，行尾的说明文字（`# 接口身份…`）原样保留。 */
+  function retagInterfaceId(text, req, id) {
+    var src = String(text == null ? '' : text);
+    var rows = splitLines(src);
+    req = req || {};
+    var want = String(id || '').trim();
+    if (!want) return { text: src, changed: false, reason: 'NO_ID' };
+    var at = -1, i;
+
+    if (req.line != null) {
+      var from = Math.floor(Number(req.line)) - 1;
+      if (!(from >= 0) || from >= rows.length) return { text: src, changed: false, reason: 'NO_SEGMENT' };
+      for (i = from; i >= 0; i--) if (DELIM_RE.test(rows[i].text)) { at = i; break; }
+    } else if (req.index != null) {
+      var n = -1;
+      for (i = 0; i < rows.length; i++) {
+        if (!DELIM_RE.test(rows[i].text)) continue;
+        n++;
+        if (n === Number(req.index)) { at = i; break; }
+      }
+    }
+    if (at < 0) return { text: src, changed: false, reason: 'NO_SEGMENT' };
+
+    var end = rows.length;
+    for (i = at + 1; i < rows.length; i++) if (DELIM_RE.test(rows[i].text)) { end = i; break; }
+
+    var exist = findIdRow(rows, 'interface', at + 1, end);
+    if (exist) {
+      if (exist.id === want && exist.valid) return { text: src, changed: false, id: want, line: exist.row + 1 };
+      rows[exist.row].text = rows[exist.row].text.replace(
+        /^(\s*#\s*@interface_id\s+)\S+/i, '$1' + want
+      );
+      return { text: joinLines(rows), changed: true, id: want, line: exist.row + 1, retagged: true };
+    }
+    if (rows[at].eol === '') rows[at].eol = eolOf(src);
+    rows.splice(at + 1, 0, { text: idLine('interface', want, {}), eol: rows[at].eol || eolOf(src) });
+    return { text: joinLines(rows), changed: true, id: want, line: at + 2, retagged: true, inserted: true };
+  }
+
   /* ---- 去重 ----
    * doc 为 POLARIS_HTTP.parseHttpFile 的结果（带 text 字段），也可直接传 text 让它自己解析。
    * 同一文件里 id 重复时，后面那个换新；第一个保持原样（它才是历史的归属）。 */
@@ -266,6 +308,7 @@
     newId: newId,
     insertFileId: insertFileId,
     insertInterfaceId: insertInterfaceId,
+    retagInterfaceId: retagInterfaceId,
     dedupe: dedupe,
     fingerprint: fingerprint,
     normUrl: normUrl,

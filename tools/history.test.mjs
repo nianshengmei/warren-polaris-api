@@ -464,6 +464,89 @@ async function main() {
     assert.equal(fs.readFileSync(gi, 'utf8'), '_history/\n');
   });
 
+
+  /* ================= S4.6：身份索引与接回 ================= */
+
+  await ok('身份索引：删掉 id 行再发，按指纹能找回旧 id 与它的条数', async () => {
+    const dir = mkdir();
+    const p = path.join(dir, 'demo.http');
+    write(p, SAMPLE);
+    const store = S.createStore(fsHost(), { dir });
+    const h = HIST.createHistory({ store, dir });
+
+    const r1 = await h.record({ path: p, req: req(), response: resp(), now: 1700000000001 });
+    assert.equal(r1.assigned, true, '首次发送应当分配身份');
+    await h.record({ path: p, req: req({ interfaceId: r1.interfaceId }), response: resp(), now: 1700000000002 });
+    await h.record({ path: p, req: req({ interfaceId: r1.interfaceId }), response: resp(), now: 1700000000003 });
+    assert.equal(readJsonl(r1.historyPath).length, 3);
+
+    /* 模拟「换机器 / 手滑删了 id 行」 */
+    const stripped = fs.readFileSync(p, 'utf8').split('\n').filter((l) => !/^\s*#\s*@interface_id\b/.test(l)).join('\n');
+    write(p, stripped);
+    const r2 = await h.record({ path: p, req: req(), response: resp(), now: 1700000000004 });
+    assert.equal(r2.ok, true);
+    assert.notEqual(r2.interfaceId, r1.interfaceId);
+    assert.equal(r2.assigned, true);
+    assert.equal(readJsonl(r2.historyPath).length, 1);
+
+    const hit = await HIST.findByIdentity({
+      store, dir, collection: 'demo', fingerprint: r2.fingerprint, excludeId: r2.interfaceId
+    });
+    assert.equal(hit.ok, true);
+    assert.equal(hit.interfaceId, r1.interfaceId, '应当推荐旧 id');
+    assert.equal(hit.hit.count, 3, '要带上旧 id 已有几条，提示条上要写出来');
+    assert.equal(hit.hit.path, r1.historyPath);
+  });
+
+  await ok('接回：文件 id 换回旧的，历史并进旧文件，新文件删掉', async () => {
+    const dir = mkdir();
+    const p = path.join(dir, 'demo.http');
+    write(p, SAMPLE);
+    const store = S.createStore(fsHost(), { dir });
+    const h = HIST.createHistory({ store, dir });
+
+    const r1 = await h.record({ path: p, req: req(), response: resp(), now: 1700000000001 });
+    await h.record({ path: p, req: req({ interfaceId: r1.interfaceId }), response: resp(), now: 1700000000002 });
+    const stripped = fs.readFileSync(p, 'utf8').split('\n').filter((l) => !/^\s*#\s*@interface_id\b/.test(l)).join('\n');
+    write(p, stripped);
+    const r2 = await h.record({ path: p, req: req(), response: resp(), now: 1700000000003 });
+
+    const rr = await HIST.reuse(store, {
+      dir, path: p, collection: 'demo',
+      req: { line: 6, method: 'POST', url: '{{baseUrl}}/login' },
+      fromId: r2.interfaceId, toId: r1.interfaceId
+    });
+    assert.equal(rr.ok, true, JSON.stringify(rr));
+    assert.equal(rr.merged, true);
+    assert.equal(rr.mergedRows, 3);
+
+    const doc = H.parseHttpFile(fs.readFileSync(p, 'utf8'));
+    assert.equal(doc.requests[0].interfaceId, r1.interfaceId, '文件里的 id 必须是旧的');
+    assert.equal(doc.requests.length, 2, '接回不许改变请求数');
+    assert.equal((fs.readFileSync(p, 'utf8').match(/@interface_id/g) || []).length, 1);
+    assert.equal(readJsonl(r1.historyPath).length, 3, '2 + 1，还是 3 条');
+    assert.equal(fs.existsSync(r2.historyPath), false, '新 id 的 jsonl 应当被删掉');
+
+    /* 合并后旧 id 还在索引里，新 id 的候选因为文件没了会被跳过 */
+    const hit = await HIST.findByIdentity({ store, dir, collection: 'demo', fingerprint: r2.fingerprint, excludeId: 'zzzzzzzz' });
+    assert.equal(hit.interfaceId, r1.interfaceId, '删掉文件的 id 不该再被推荐');
+  });
+
+  await ok('接回：区间为空的旧 id（没有历史文件）也能接，只是合并 0 条', async () => {
+    const dir = mkdir();
+    const p = path.join(dir, 'demo.http');
+    write(p, `### 甲\n# @interface_id old00009\nGET https://a/1\n`);
+    const store = S.createStore(fsHost(), { dir });
+    const r = await HIST.reuse(store, {
+      dir, path: p, collection: 'demo',
+      req: { line: 3, method: 'GET', url: 'https://a/1' },
+      fromId: 'new00009', toId: 'old00009'
+    });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.changed, false, 'id 本来就对，不该改文件');
+    assert.equal(r.merged, true, '合并空文件也算成功');
+  });
+
   console.log('\n' + pass + ' 项通过');
 }
 

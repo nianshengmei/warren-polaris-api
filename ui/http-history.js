@@ -228,8 +228,111 @@
     return { ok: true, ref: ref, path: target, bytes: bytes };
   }
 
-  /* ---------------- .gitignore ---------------- */
+  /* ---------------- 身份索引（S4.6 用） ----------------
+   * 宿主只能按 .http 列目录（`http/listFiles` 按扩展名过滤），拿不到 `_history/` 下的文件清单，
+   * 所以「按指纹找回旧 id」不能靠扫目录。这里维护一份同目录下的 `.identities.jsonl`：
+   * 每写一条历史就追加一行 { fp, id, at }，查的时候只读这一个已知路径。
+   * 它只是**候选来源**，命中后还会 stat 一下对应 jsonl 是否还在 —— 合并过的旧 id 自然失效。
+   */
+  var IDX_NAME = '.identities.jsonl';
+  var IDX_MAX = 400;
 
+  function indexPath(dir, collection) {
+    var S = requireStore();
+    return S.joinPath(S.joinPath(historyBase(dir), S.sanitizeName(collection || 'collection')), IDX_NAME);
+  }
+
+  async function noteIdentity(store, dir, collection, fingerprint, interfaceId, at) {
+    if (!store || !dir || !fingerprint || !interfaceId) return { ok: false, reason: 'NOT_ENOUGH' };
+    var S = requireStore();
+    var p = indexPath(dir, collection);
+    try { await store.host.ensureDir(S.dirName(p)); } catch (e) { /* 写时会再失败一次 */ }
+    var line = JSON.stringify({ fp: String(fingerprint), id: String(interfaceId), at: num(at) || Date.now() }) + '\n';
+    return serial(p, function () { return appendEntry(store, p, line, { max: IDX_MAX }); });
+  }
+
+  /* 按指纹找回旧 id：返回最近一条仍在磁盘上、且不是 excludeId 的记录 */
+  async function findByIdentity(o) {
+    o = o || {};
+    var store = o.store;
+    if (!store || !o.dir || !o.fingerprint) return { ok: false, reason: 'NOT_ENOUGH', interfaceId: null };
+    var p = indexPath(o.dir, o.collection);
+    var text = await readTextOr(store, p, '');
+    var rows = parseJsonl(text).rows.filter(function (r) {
+      return r && r.fp === String(o.fingerprint) && r.id && r.id !== o.excludeId;
+    });
+    if (!rows.length) return { ok: true, interfaceId: null, candidates: [] };
+    rows.sort(function (a, b) { return num(a.at) - num(b.at); });
+    var seen = Object.create(null);
+    var hits = [];
+    for (var i = rows.length - 1; i >= 0; i--) {
+      var id = rows[i].id;
+      if (seen[id]) continue;
+      seen[id] = 1;
+      var hp = historyPathFor(o.dir, o.collection, id);
+      var st = null;
+      try { st = await store.host.stat(hp); } catch (e) { st = null; }
+      if (!st || !st.exists) continue;                   /* 已经被合并掉的旧 id */
+      var got = await read({ store: store, path: hp });
+      hits.push({ interfaceId: id, at: num(rows[i].at), count: got.ok ? got.rows.length : 0, path: hp });
+      if (hits.length >= 3) break;
+    }
+    return { ok: true, interfaceId: hits.length ? hits[0].interfaceId : null, hit: hits[0] || null, candidates: hits };
+  }
+
+  /* 把 fromId 的历史并进 toId，然后把 fromId 的 jsonl 删掉（S4.6「接回」的第二步） */
+  async function mergeInto(store, dir, collection, fromId, toId, max) {
+    if (!store || !fromId || !toId || fromId === toId) return { ok: false, reason: 'SAME_ID' };
+    var fromPath = historyPathFor(dir, collection, fromId);
+    var toPath = historyPathFor(dir, collection, toId);
+    var a = await read({ store: store, path: fromPath });
+    var b = await read({ store: store, path: toPath });
+    if (!a.ok) return { ok: false, reason: 'READ_FAILED' };
+    var rows = (b.rows || []).concat(a.rows || []);
+    rows.sort(function (x, y) { return num(x.at) - num(y.at); });
+    var want = max == null ? MAX_LINES : num(max);
+    if (want > 0 && rows.length > want) rows = rows.slice(-want);
+    var text = rows.map(function (r) { return JSON.stringify(r); }).join('\n') + (rows.length ? '\n' : '');
+    var SS = requireStore();
+    try { await store.host.ensureDir(SS.dirName(toPath)); } catch (e) { /* 写的时候还会再失败一次 */ }
+    var w = await store.writeText(toPath, text, {});
+    if (!w || !w.ok) return { ok: false, reason: (w && w.reason) || 'WRITE_FAILED' };
+    try { await store.host.remove(fromPath); } catch (e) { /* 删不掉就留着，不影响读 */ }
+    return { ok: true, rows: rows.length, from: fromPath, to: toPath };
+  }
+
+  /* 「接回」：文件里的 id 换回旧的 + 把新 id 的历史并进旧 id。
+   * 顺序不能反 —— 先把历史并过去、再改文件，中途失败会留下两份同 id 的文件；
+   * 先改文件再并历史，最坏情况是历史暂时少一条，用户重发一次就补上。 */
+  async function reuse(store, o) {
+    o = o || {};
+    var H = requireFile(), I = requireIdentity(), S = requireStore();
+    if (!store || !o.dir || !o.path || !o.toId) return { ok: false, reason: 'NOT_ENOUGH' };
+    var cur;
+    try { cur = await readDoc(store, o.path); } catch (e) { return { ok: false, reason: 'NOT_FOUND' }; }
+    var idx = S.locateSegment(cur.parsed, o.req || {});
+    if (idx < 0) return { ok: false, reason: 'NO_SEGMENT' };
+    var target = cur.parsed.requests[idx];
+    var r = I.retagInterfaceId(cur.text, { line: target.line }, o.toId);
+    if (!r.changed) {
+      if (r.reason) return { ok: false, reason: r.reason };
+    } else {
+      var w = await store.writeText(o.path, r.text, { baseMtime: cur.mtime });
+      if (!w || !w.ok) return { ok: false, reason: (w && w.reason) || 'WRITE_FAILED' };
+    }
+    var mtime = cur.mtime;
+    try {
+      var st = await store.host.stat(o.path);
+      mtime = Math.round((st && st.modified) || 0);
+    } catch (e) { /* 拿不到 mtime 不影响接回 */ }
+    var merged = await mergeInto(store, o.dir, o.collection, o.fromId, o.toId, o.max);
+    return {
+      ok: true, changed: !!r.changed, mtime: mtime, interfaceId: String(o.toId),
+      merged: merged.ok, mergedRows: merged.rows || 0, mergeReason: merged.ok ? null : (merged.reason || null)
+    };
+  }
+
+  /* ---------------- .gitignore ---------------- */
   var giTried = Object.create(null);     /* 每个 dir 只试一次，失败也不反复读盘 */
 
   async function ensureGitignore(store, dir) {
@@ -381,6 +484,10 @@
 
         var line = JSON.stringify(entry) + '\n';
         var app = await serial(hp, function () { return appendEntry(store, hp, line, { max: maxLines }); });
+        /* 身份索引：给 S4.6 的「按指纹找回旧 id」留候选，宿主列不出 _history/ 目录，只能自己记一份 */
+        if (app.ok) {
+          try { await noteIdentity(store, dir, collection, entry.fingerprint, ifaceId, at); } catch (e) { /* 索引坏了不影响历史 */ }
+        }
 
         /* .gitignore 只补一次，失败静默（不影响调用，也不影响历史） */
         if (!giTried[dir]) {
@@ -402,7 +509,9 @@
           rotated: app.ok ? app.dropped : 0,
           bodyRef: entry.bodyRef || null,
           bodyBytes: entry.bodyBytes || 0,
-          bodyOmitted: entry.bodyOmitted || null
+          bodyOmitted: entry.bodyOmitted || null,
+          assigned: !!i2.changed,           /* 这次才给这一段发的新身份（S4.6 的触发条件） */
+          fingerprint: entry.fingerprint
         };
       }
       return { ok: false, reason: 'CONFLICT', wrote: false };
@@ -439,7 +548,13 @@
     b64Bytes: b64Bytes,
     writeBody: writeBody,
     ensureGitignore: ensureGitignore,
-    entryFor: entryFor
+    entryFor: entryFor,
+    indexName: IDX_NAME,
+    indexPath: indexPath,
+    noteIdentity: noteIdentity,
+    findByIdentity: findByIdentity,
+    mergeInto: mergeInto,
+    reuse: reuse
   };
   root.POLARIS_HISTORY = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

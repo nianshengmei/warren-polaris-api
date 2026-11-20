@@ -235,6 +235,9 @@
 .pa-root .doc-conflict .dc-btn:hover{background:var(--surface-3);border-color:var(--dim)}
 .pa-root .doc-conflict .dc-btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:700}
 .pa-root .doc-conflict .dc-btn.ghost{background:transparent;color:var(--dim)}
+.pa-root .id-reuse{border-bottom-color:rgba(255,122,89,.35);background:linear-gradient(180deg,rgba(255,122,89,.13),rgba(255,122,89,.04))}
+.pa-root .id-reuse .dc-ico{color:var(--brand)}
+.pa-root .id-reuse .dc-msg b{color:var(--ink);font-family:var(--mono);font-weight:600}
 .pa-root .rtab .conflict{font-size:10px;color:var(--warn);flex:none}
 
 /* 请求/响应分隔 */
@@ -355,6 +358,24 @@
 .pa-root .res-err .hintbox{margin-top:12px;padding:11px 13px;background:rgba(248,81,73,.07);border:1px solid rgba(248,81,73,.25);border-radius:var(--r);color:var(--dim);font-size:11.5px}
 .pa-root .prev-none,.pa-root .dimnote{padding:30px;text-align:center;color:var(--dimmer);font-size:12.5px}
 .pa-root .dimnote{padding:16px;text-align:left}
+
+/* ---- 调用历史子页（S4.5）：一行一条，列固定宽，URL 吃掉剩余宽度 ---- */
+.pa-root .hist-wrap{display:flex;flex-direction:column;min-height:0;height:100%}
+.pa-root .hist-head{display:flex;align-items:center;gap:9px;padding:7px 12px;border-bottom:1px solid var(--line);font-size:11px;color:var(--dimmer);flex:0 0 auto}
+.pa-root .hist-head .hist-file{color:var(--dim);max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-root .hist-head .hist-id{font-family:var(--mono);color:var(--brand);letter-spacing:.04em}
+.pa-root .hist-head .hist-note{margin-left:auto}
+.pa-root .hist-list{flex:1 1 auto;overflow:auto;padding:4px 8px 10px}
+.pa-root .hist-row{display:grid;grid-template-columns:104px 44px 60px 66px 1fr auto;gap:8px;align-items:center;
+  padding:5px 8px;border-radius:5px;font-size:11.5px;color:var(--dim);font-family:var(--mono);line-height:1.6}
+.pa-root .hist-row:hover{background:var(--surface)}
+.pa-root .hist-row .hist-at{color:var(--dimmer);white-space:nowrap}
+.pa-root .hist-row .hist-st{font-weight:700;text-align:right}
+.pa-root .hist-row .hist-ms,.pa-root .hist-row .hist-sz{text-align:right;color:var(--dimmer)}
+.pa-root .hist-row .hist-url{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)}
+.pa-root .hist-row .hist-bin{font-size:10px;color:var(--s3);border:1px solid rgba(88,166,255,.35);border-radius:4px;padding:0 4px}
+.pa-root .hist-row.bad{background:rgba(248,81,73,.06)}
+.pa-root .hist-row.bad .hist-at{color:rgba(248,81,73,.75)}
 
 .pa-root pre.raw{padding:14px;font-size:12.5px;line-height:1.65;white-space:pre;overflow:auto;tab-size:2}
 .pa-root pre.raw.wrap{white-space:pre-wrap;word-break:break-word}

@@ -365,6 +365,7 @@ function syncTabsWithDocs(){
 
 /* 冲突栏：只在「当前 tab 有冲突」时出现，两个按钮直接决定谁赢，不做隐式覆盖 */
 function renderConflictBar(){
+  renderIdReuseBar();          /* 两条提示共用同一个挂载点，渲染入口也放一起，免得某条路径漏刷 */
   const bar=$('#docConflict'); if(!bar) return;
   const t=activeTab();
   const c=t&&t.docConflict;
@@ -385,6 +386,71 @@ function renderConflictBar(){
   const on=btn('reload'); if(on) on.onclick=()=>resolveConflict(t,'reload');
   const om=btn('mine');   if(om) om.onclick=()=>resolveConflict(t,'mine');
   const ol=btn('later');  if(ol) ol.onclick=()=>{ c.dismissed=true; renderConflictBar(); };
+}
+
+/* ===================== 身份接回提示条（S4.6） =====================
+ * 什么时候出现：这一次发送**刚给这一段发了新 id**（record 的 assigned），
+ * 而历史索引里同一个指纹还挂着一个旧 id（同一个接口换了名字 / 删过 id 行）。
+ * 只提示、不动手：点「接回」才把 id 换回去并把新历史并进旧的。
+ */
+function renderIdReuseBar(){
+  const bar=$('#idReuse'); if(!bar) return;
+  const t=activeTab(); const q=t&&t.idAsk;
+  if(!q||q.dismissed){ bar.style.display='none'; bar.innerHTML=''; return; }
+  bar.style.display='flex';
+  bar.innerHTML=
+    '<span class="dc-ico">⟲</span>'+
+    '<span class="dc-msg">这一段原来没有身份，历史里 <b>'+esc(q.toId)+'</b> 记着同一个接口的 <b>'+q.count+'</b> 条调用'+
+      '（指纹 <b>'+esc(q.fp)+'</b>）。要把身份接回去、历史合并吗？</span>'+
+    '<span class="dc-acts">'+
+      '<button class="dc-btn primary" data-act="reuse">接回 '+esc(q.toId)+'</button>'+
+      '<button class="dc-btn ghost" data-act="no" title="保持新分配的身份，不再问">不用了</button>'+
+    '</span>';
+  const yes=bar.querySelector('[data-act="reuse"]'); if(yes) yes.onclick=()=>applyIdReuse(t);
+  const no=bar.querySelector('[data-act="no"]'); if(no) no.onclick=()=>{ q.dismissed=true; t.idAskDone=true; renderIdReuseBar(); };
+}
+
+/* 发送落历史之后问一句：这个指纹以前是不是有别的 id */
+async function askIdReuse(t,rec){
+  if(!t||!rec||!rec.assigned||!rec.fingerprint) return;
+  if(t.idAskDone||t.idAsk) return;
+  const H=window.POLARIS_HISTORY;
+  const ref=t.docRef||{};
+  if(!H||!DOCS.store||!ref.file) return;
+  try{
+    const hit=await H.findByIdentity({store:DOCS.store,dir:DOCS.dir,collection:H.collectionName(ref.file),
+      fingerprint:rec.fingerprint,excludeId:rec.interfaceId});
+    if(!hit||!hit.interfaceId||hit.interfaceId===rec.interfaceId) return;
+    if(activeTab()!==t) return;
+    t.idAsk={fromId:rec.interfaceId,toId:hit.interfaceId,count:(hit.hit&&hit.hit.count)||0,fp:rec.fingerprint};
+    renderIdReuseBar();
+  }catch(e){ /* 提示失败不影响任何主流程 */ }
+}
+
+async function applyIdReuse(t){
+  const q=t&&t.idAsk; if(!q) return;
+  const H=window.POLARIS_HISTORY; const ref=t.docRef||{};
+  if(!H||!DOCS.store||!ref.file){ setStatus('接回失败：没有资源目录','warn'); return; }
+  try{
+    const r=await H.reuse(DOCS.store,{
+      dir:DOCS.dir, path:ref.file, collection:H.collectionName(ref.file),
+      req:{line:ref.line,method:t.method,url:t.url.trim()},
+      fromId:q.fromId, toId:q.toId
+    });
+    if(!r||!r.ok){ setStatus('接回失败：'+(r&&r.reason||'未知原因'),'warn'); return; }
+    ref.interfaceId=q.toId;
+    state.tabs.forEach(x=>{
+      if(!x.docRef||x.docRef.file!==ref.file) return;
+      if(x.docRef.interfaceId===q.fromId) x.docRef.interfaceId=q.toId;
+      if(r.mtime) x.baseMtime=r.mtime;      /* 对齐 mtime，别让用户接着保存撞上自己造成的冲突 */
+    });
+    t.idAsk=null; t.idAskDone=true;
+    renderIdReuseBar();
+    patchGroup(ref.file).then(g=>{ if(g) renderSidebar(); }).catch(()=>{});
+    if(t.respView==='history'&&activeTab()===t) renderRespBody();
+    setStatus('已接回 '+q.toId+(r.merged?' · 历史合并成 '+r.mergedRows+' 条':''),'ok');
+    persist();
+  }catch(e){ setStatus('接回失败：'+((e&&e.message)||e),'warn'); }
 }
 
 async function resolveConflict(t,how){
@@ -1324,7 +1390,8 @@ async function send(){
     /* S4.2：这次调用落身份 + 历史（异步，绝不挡主流程） */
     recordHistory(t,resp,method,url);
     t.respPath=''; t.respFilter=''; t.tableSel=null; t.colW={}; t.treeOpen='auto'; t.hiddenCols={}; t.sort={};
-    t.respView = resp.parsed!==undefined ? (Array.isArray(resp.parsed)?'table':'object') : /text\/html/i.test(resp.contentType)?'preview' : (resp.isBinary&&/^image\//i.test(resp.contentType))?'preview':'raw';
+    /* 停在「历史」子页时不要被发送结果顶走 —— 那是用户主动选的视图（S4.5） */
+    if(t.respView!=='history') t.respView = resp.parsed!==undefined ? (Array.isArray(resp.parsed)?'table':'object') : /text\/html/i.test(resp.contentType)?'preview' : (resp.isBinary&&/^image\//i.test(resp.contentType))?'preview':'raw';
     renderResponse();
     setStatus(method+' '+resp.status+' '+resp.statusText+' · '+ms(resp.timeMs)+' · '+bytes(resp.size), resp.ok?'ok':'warn');
   }catch(err){
@@ -1379,6 +1446,7 @@ function recordHistory(t,resp,method,url){
       if(r.interfaceId) ref.interfaceId=r.interfaceId;
       if(r.fileId) ref.fileId=r.fileId;
       if(r.mtime) state.tabs.forEach(x=>{ if(x.docRef&&x.docRef.file===ref.file) x.baseMtime=r.mtime; });
+      if(r.assigned&&r.fingerprint) askIdReuse(t,r);
       if(r.changed){
         patchGroup(ref.file).then(g=>{ if(g) renderSidebar(); }).catch(()=>{});
         /* 编辑器若正开着这个文件，让它下次聚焦时按 mtime 重读（不打断输入） */
@@ -1387,6 +1455,9 @@ function recordHistory(t,resp,method,url){
           try{ ed.ensureFresh(ref.file); }catch(e){}
         }
       }
+      /* 历史页正开着这一条：新的一行刚落地，面板自己重读一次（S4.5）。
+         放在这里而不是发送成功处 —— 历史是异步写的，早渲染只能看到旧的那几行。 */
+      if(r.historyWritten&&t.respView==='history'&&activeTab()===t) renderRespBody();
       if(!r.historyWritten&&!t.histWarned){
         t.histWarned=true;
         const why=r.historyReason==='READONLY'?'目录只读':(r.historyReason||'写入失败');
@@ -1473,7 +1544,7 @@ function renderResponse(){
 function renderRespBody(){
   const t=activeTab(); const r=t.response; if(!r||r.error) return;
   const d=getDrilled(t);
-  const caps={table:d.canTable,object:d.hasJSON,raw:true,preview:d.canPrev,headers:true};
+  const caps={table:d.canTable,object:d.hasJSON,raw:true,preview:d.canPrev,headers:true,history:true};
   if(!caps[t.respView]) t.respView=d.hasJSON?'object':(d.canPrev?'preview':'raw');
   $$('#resSubtabs .subtab').forEach(b=>{ const v=b.dataset.rv; b.classList.toggle('active',v===t.respView); b.classList.toggle('disabled',!caps[v]); if(v==='preview') b.style.display=d.canPrev?'':'none'; });
   const isT=t.respView==='table', isO=t.respView==='object', isR=t.respView==='raw';
@@ -1488,6 +1559,7 @@ function renderRespBody(){
   else if(v==='object') pane.appendChild(viewObject(d.data,t));
   else if(v==='table') pane.appendChild(viewTable(d.data,t));
   else if(v==='preview') pane.appendChild(viewPreview(r));
+  else if(v==='history') pane.appendChild(viewHistory(t));
   else pane.appendChild(viewHeaders(r));
 }
 
@@ -1503,6 +1575,74 @@ function viewHeaders(r){
   if(!keys.length) tb.innerHTML='<tr><td colspan="2" style="color:var(--dimmer)">（无可见响应头 — 浏览器可能限制了部分头）</td></tr>';
   keys.forEach(k=>{ const tr=el('tr'); tr.innerHTML=`<td style="color:var(--j-key);white-space:nowrap">${esc(k)}</td><td>${esc(r.headers[k])}</td>`; tb.appendChild(tr); });
   tbl.appendChild(tb); wrap.appendChild(tbl); return wrap;
+}
+
+/* ===================== 调用历史子页（S4.5） =====================
+ * 数据源只有一个：`_history/<collection>/<interfaceId>.jsonl`（S4.3 写的）。
+ * 面板**不缓存、不自己拼路径**，整份交给 POLARIS_HISTORY.read —— 一处算路径，两处不会走偏。
+ * 倒序显示（最新在上），失败行（status>=400 或 ok=false）标红。
+ */
+function viewHistory(t){
+  const box=el('div','hist-wrap');
+  const ref=t.docRef||{};
+  if(!DOCS.enabled||!DOCS.store||!window.POLARIS_HISTORY){
+    box.innerHTML='<div class="prev-none">当前没有资源目录，读不到调用历史（浏览器调试模式下正常）。</div>';
+    return box;
+  }
+  if(!ref.file||!ref.interfaceId){
+    box.innerHTML='<div class="prev-none">这个请求还没有历史。<br>它第一次发送成功时，插件会写一行 <code># @interface_id</code> 并开始记录。</div>';
+    return box;
+  }
+  const HIST=window.POLARIS_HISTORY;
+  const file=(String(ref.file).split(/[\\/]/).pop())||'';
+  const head=el('div','hist-head');
+  head.innerHTML=`<span class="hist-file">${esc(file)}</span><span class="hist-id" title="接口身份">${esc(ref.interfaceId)}</span>`+
+                 `<span class="hist-note" id="histNote">读取中…</span>`;
+  box.appendChild(head);
+  const list=el('div','hist-list');
+  box.appendChild(list);
+  const t0=performance.now();
+  HIST.read({store:DOCS.store, dir:DOCS.dir, collection:HIST.collectionName(ref.file), interfaceId:ref.interfaceId}).then(r=>{
+    const cost=Math.round(performance.now()-t0);
+    const note=$('#histNote');
+    if(!r||!r.ok){ list.innerHTML='<div class="prev-none">历史读取失败'+(r&&r.reason?'（'+esc(r.reason)+'）':'')+'。</div>'; return; }
+    const rows=(r.rows||[]).slice().reverse();      /* 文件是旧→新，面板要新→旧 */
+    if(note) note.textContent=rows.length?`最近 ${rows.length} 条 · ${cost} ms`:`无记录 · ${cost} ms`;
+    const badge=$('#bHist'); if(badge) badge.textContent=rows.length||'';
+    if(!rows.length){ list.innerHTML='<div class="prev-none">这个接口还没有调用记录。<br>发一次请求，这里就会多一行。</div>'; return; }
+    const now=Date.now();
+    rows.forEach(x=>{
+      const bad=x.ok===false||Number(x.status)>=400;
+      const row=el('div','hist-row'+(bad?' bad':''));
+      const when=fmtHistTime(x.at);
+      const st=Number(x.status)||0;
+      const sc=st>=500?'var(--s5)':st>=400?'var(--s4)':st>=300?'var(--s3)':'var(--s2)';
+      row.innerHTML=`<span class="hist-at" title="${esc(new Date(Number(x.at)||0).toLocaleString('zh-CN',{hour12:false}))}">${esc(when)}</span>`+
+        `<span class="hist-st" style="color:${sc}">${st||'—'}</span>`+
+        `<span class="hist-ms">${x.timeMs!=null?ms(x.timeMs):'—'}</span>`+
+        `<span class="hist-sz">${x.size!=null?bytes(x.size):'—'}</span>`+
+        `<span class="hist-url" title="${esc(x.url||'')}">${esc(shortUrl(x.url||''))}</span>`+
+        (x.bodyRef?`<span class="hist-bin" title="响应体外置在 ${esc(x.bodyRef)}">.bin</span>`:'');
+      row.title=`${x.method||''} ${x.url||''}\n状态 ${st||'—'} · 耗时 ${x.timeMs!=null?ms(x.timeMs):'—'} · 大小 ${x.size!=null?bytes(x.size):'—'}\n${new Date(Number(x.at)||0).toLocaleString('zh-CN',{hour12:false})}（${relTime(now,Number(x.at)||0)}）`;
+      list.appendChild(row);
+    });
+  }).catch(e=>{
+    list.innerHTML='<div class="prev-none">历史读取出错：'+esc(String((e&&e.message)||e))+'</div>';
+  });
+  return box;
+}
+function fmtHistTime(at){
+  const d=new Date(Number(at)||0); if(!Number(at)) return '—';
+  const p=n=>String(n).padStart(2,'0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function relTime(now,at){
+  if(!at) return '未知';
+  const d=Math.max(0,now-at);
+  if(d<60000) return Math.round(d/1000)+' 秒前';
+  if(d<3600000) return Math.round(d/60000)+' 分钟前';
+  if(d<86400000) return Math.round(d/3600000)+' 小时前';
+  return Math.round(d/86400000)+' 天前';
 }
 
 /* ===================== cURL：导入 + 导出 ===================== */
