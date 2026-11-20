@@ -1,0 +1,1 @@
+{"v":2,"at":1732060980000,"status":200,"ok":true,"timeMs":11,"size":9,"method":"GET","url":"https://api.example.com/v2","urlTemplate":"{{baseUrl}}/v2","fingerprint":"GET {{baseUrl}}/v2","contentType":"application/json","interfaceId":"v2id0001","fileId":"demo0001","file":"demo.http","name":"v2","traces":[{"span":"db","ms":3}]}

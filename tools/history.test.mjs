@@ -9,9 +9,12 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { fsHost } from './fs-host.mjs';
 
 const require = createRequire(import.meta.url);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const FIX = path.join(ROOT, 'tools', 'fixtures', 'history-v1');
 const H = require('../ui/http-file.js');
 const I = require('../ui/http-identity.js');
 const S = require('../ui/http-store.js');
@@ -545,6 +548,138 @@ async function main() {
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(r.changed, false, 'id 本来就对，不该改文件');
     assert.equal(r.merged, true, '合并空文件也算成功');
+  });
+
+  /* ================= S7.1：数据格式冻结（v1） ================= */
+
+  await ok('格式 v1：每条记录首字段是 v=1，同时种下 _history/_meta.json', async () => {
+    const dir = mkdir();
+    const p = path.join(dir, 'demo.http');
+    write(p, SAMPLE);
+    const store = S.createStore(fsHost(), { dir });
+    const h = HIST.createHistory({ store, dir });
+
+    const r = await h.record({ path: p, req: req(), response: resp(), now: 1732060800000 });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(HIST.FORMAT_VERSION, 1);
+
+    const raw = fs.readFileSync(r.historyPath, 'utf8');
+    assert.match(raw, /^\{"v":1,/, 'v 必须是首字段：' + raw.slice(0, 40));
+    const row = JSON.parse(raw.trim());
+    assert.deepEqual(Object.keys(row).slice(0, 3), ['v', 'at', 'status'], '前三个键的顺序是契约');
+    assert.equal(row.v, 1);
+
+    const mp = path.join(dir, '_history', '_meta.json');
+    assert.equal(mp, HIST.metaPath(dir));
+    const meta = JSON.parse(fs.readFileSync(mp, 'utf8'));
+    assert.deepEqual(Object.keys(meta), ['formatVersion', 'app', 'createdAt']);
+    assert.equal(meta.formatVersion, 1);
+    assert.equal(meta.app, 'com.warren.polaris.api');
+    assert.ok(!Number.isNaN(Date.parse(meta.createdAt)), 'createdAt 应是 ISO 8601');
+  });
+
+  await ok('_meta.json：二次记录一个字节都不动，已有文件绝不覆盖', async () => {
+    const dir = mkdir();
+    const p = path.join(dir, 'demo.http');
+    write(p, SAMPLE);
+    const store = S.createStore(fsHost(), { dir });
+    const h = HIST.createHistory({ store, dir });
+
+    const r1 = await h.record({ path: p, req: req(), response: resp(), now: 1732060800000 });
+    const mp = path.join(dir, '_history', '_meta.json');
+    const first = fs.readFileSync(mp, 'utf8');
+    await h.record({ path: p, req: req({ interfaceId: r1.interfaceId }), response: resp(), now: 1732060860000 });
+    assert.equal(fs.readFileSync(mp, 'utf8'), first, '第二次记录不该重写 _meta.json');
+
+    /* 预置一份（模拟更早版本/别的机器写的），record 之后仍原样 */
+    const dir2 = mkdir();
+    const p2 = path.join(dir2, 'demo.http');
+    write(p2, SAMPLE);
+    fs.mkdirSync(path.join(dir2, '_history'), { recursive: true });
+    const mine = '{"formatVersion":1,"app":"com.warren.polaris.api","createdAt":"2020-01-01T00:00:00.000Z"}\n';
+    write(path.join(dir2, '_history', '_meta.json'), mine);
+    const store2 = S.createStore(fsHost(), { dir: dir2 });
+    await HIST.createHistory({ store: store2, dir: dir2 }).record({ path: p2, req: req(), response: resp() });
+    assert.equal(fs.readFileSync(path.join(dir2, '_history', '_meta.json'), 'utf8'), mine);
+  });
+
+  await ok('_meta.json 读不懂时不覆盖：只报 META_UNREADABLE，数据还在', async () => {
+    const dir = mkdir();
+    fs.mkdirSync(path.join(dir, '_history'), { recursive: true });
+    const broken = '{"formatVersion":2,"app":"com.warren.polaris.api","extra":';
+    const mp = path.join(dir, '_history', '_meta.json');
+    write(mp, broken);
+    const store = S.createStore(fsHost(), { dir });
+    const r = await HIST.ensureMeta(store, dir);
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'META_UNREADABLE');
+    assert.equal(fs.readFileSync(mp, 'utf8'), broken, '不许覆盖读不懂的元数据');
+  });
+
+  await ok('向后兼容：没有 v 的旧行（0.9.x）照常读，按 v1 解释', async () => {
+    const dir = mkdir();
+    const store = S.createStore(fsHost(), { dir });
+    const hp = HIST.historyPathFor(dir, 'demo', 'ping0001');
+    fs.mkdirSync(path.dirname(hp), { recursive: true });
+    fs.copyFileSync(path.join(FIX, 'legacy-no-v.jsonl'), hp);
+
+    const r = await HIST.read({ store, dir, collection: 'demo', interfaceId: 'ping0001' });
+    assert.equal(r.ok, true);
+    assert.equal(r.bad, 0);
+    assert.equal(r.rows.length, 1);
+    assert.equal(r.rows[0].v, undefined, '旧行不该被补上 v');
+    assert.equal(r.rows[0].status, 200);
+    assert.equal(r.formatVersion, 1, '缺 v 一律按 1 算');
+    assert.equal(r.future, false);
+  });
+
+  await ok('未知字段：读取时保留，合并重写时逐字节原样（不洗键序/空白）', async () => {
+    const dir = mkdir();
+    const store = S.createStore(fsHost(), { dir });
+    const base = path.join(dir, '_history', 'demo');
+    fs.mkdirSync(base, { recursive: true });
+
+    const unknownLine = fs.readFileSync(path.join(FIX, 'unknown-field.jsonl'), 'utf8').trim();
+    write(path.join(base, 'avat0001.jsonl'), unknownLine + '\n');
+    write(path.join(base, 'new00002.jsonl'),
+      '{"v":1,"at":1732060990000,"status":200,"ok":true,"timeMs":9,"size":2,"method":"GET","url":"https://api.example.com/avatar","urlTemplate":"{{baseUrl}}/avatar","fingerprint":"GET {{baseUrl}}/avatar","contentType":"image/png","interfaceId":"new00002","fileId":"demo0001","file":"demo.http","name":"头像"}\n');
+
+    const before = await HIST.read({ store, dir, collection: 'demo', interfaceId: 'avat0001' });
+    assert.equal(before.rows[0].serverTiming, 'db;dur=12', '未知字段要能被读出来');
+
+    const m = await HIST.mergeInto(store, dir, 'demo', 'new00002', 'avat0001', 10);
+    assert.equal(m.ok, true, JSON.stringify(m));
+    const text = fs.readFileSync(path.join(base, 'avat0001.jsonl'), 'utf8');
+    assert.ok(text.includes(unknownLine), '未知字段那一行应逐字节保留');
+    assert.match(text.split('\n')[0], /"serverTiming":"db;dur=12"}$/, '未知字段不许被丢掉');
+    assert.equal(text.split('\n').filter(Boolean).length, 2);
+  });
+
+  await ok('更新版本：v=2 的历史只读展示（future），旧版一行都不追加', async () => {
+    const dir = mkdir();
+    const p = path.join(dir, 'demo.http');
+    write(p, SAMPLE);
+    const store = S.createStore(fsHost(), { dir });
+    const h = HIST.createHistory({ store, dir });
+
+    const r1 = await h.record({ path: p, req: req(), response: resp(), now: 1732060800000 });
+    assert.equal(r1.ok, true);
+    const hp = r1.historyPath;
+    const v2 = fs.readFileSync(path.join(FIX, 'v2-future.jsonl'), 'utf8').trim();
+    write(hp, v2 + '\n');
+    const before = fs.readFileSync(hp, 'utf8');
+
+    const rd = await HIST.read({ store, dir, collection: 'demo', interfaceId: r1.interfaceId });
+    assert.equal(rd.future, true);
+    assert.equal(rd.formatVersion, 2);
+    assert.equal(rd.rows.length, 1, '新版本的行仍要列出来');
+
+    const r2 = await h.record({ path: p, req: req({ interfaceId: r1.interfaceId }), response: resp(), now: 1732060900000 });
+    assert.equal(r2.ok, true, '身份已就位，不该整个失败');
+    assert.equal(r2.historyWritten, false);
+    assert.equal(r2.historyReason, 'FUTURE_FORMAT');
+    assert.equal(r2.futureFormatVersion, 2);
+    assert.equal(fs.readFileSync(hp, 'utf8'), before, 'v2 文件一个字节都不许动');
   });
 
   console.log('\n' + pass + ' 项通过');

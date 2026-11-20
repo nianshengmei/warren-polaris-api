@@ -21,6 +21,9 @@
   var root = typeof window !== 'undefined' ? window : globalThis;
 
   var HISTORY_DIR = '_history';
+  var FORMAT_VERSION = 1;            /* S7.1 冻结：jsonl 每行的 `v` 字段，也是 _meta.json 的 formatVersion */
+  var META_NAME = '_meta.json';      /* `_history/_meta.json`：整份历史的格式版本，迁移时先看它 */
+  var APP_ID = 'com.warren.polaris.api';
   var MAX_LINES = 10;                /* 每个接口保留几条：用户 2026-11-20 拍板 = 10 */
   var MAX_RETRY = 2;                 /* 冲突后最多再试 2 次（共 3 次写） */
   var BIN_TRY = 20;                  /* .bin 重名时最多往后找 20 个序号 */
@@ -53,6 +56,13 @@
   function historyBase(dir) {
     var S = requireStore();
     return S.joinPath(dir, HISTORY_DIR);
+  }
+
+  /* `_history/_meta.json`：整份历史的格式版本。
+   * 有它就不必逐文件嗅探；没有（0.9.x 之前写的）一律按 v1 读。 */
+  function metaPath(dir) {
+    var S = requireStore();
+    return S.joinPath(historyBase(dir), META_NAME);
   }
 
   /* `_history/<collection>/<interfaceId>.jsonl`（绝对路径由 dir 拼出来） */
@@ -106,11 +116,17 @@
   }
 
   /* 追加一行；超出上限就在同一次写里裁掉最旧的。
-   * 返回 lines = 写完之后的条数，dropped = 本次扔掉几条。 */
+   * 返回 lines = 写完之后的条数，dropped = 本次扔掉几条。
+   * 若这份 jsonl 里已经有更高版本（v > FORMAT_VERSION）的行，**一行都不写** ——
+   * 只读展示、提示升级，别把新版本的数据混进旧解释器里。 */
   async function appendEntry(store, path, line, o) {
     o = o || {};
     var want = o.max == null ? MAX_LINES : num(o.max);
     var prev = await readTextOr(store, path, '');
+    var mine = maxVersion(parseJsonl(prev).rows);
+    if (mine > FORMAT_VERSION) {
+      return { ok: false, reason: 'FUTURE_FORMAT', lines: 0, dropped: 0, formatVersion: mine };
+    }
     var eol = String(prev).indexOf('\r\n') >= 0 ? '\r\n' : '\n';
     var lines = splitNonEmpty(prev);
     var one = String(line == null ? '' : line).replace(/[\r\n]+$/, '');
@@ -138,7 +154,9 @@
 
   /* ---------------- 读取 ---------------- */
 
-  /* 解析 jsonl 文本。坏行（截断 / 不是对象）跳过并计入 bad，不影响其余行。 */
+  /* 解析 jsonl 文本。坏行（截断 / 不是对象）跳过并计入 bad，不影响其余行。
+   * 每行原文挂在**不可枚举**的 `__raw` 上：合并/重写时原样吐回去，
+   * 未知字段、键序、空白都不会被 JSON.parse → stringify 这趟来回洗掉。 */
   function parseJsonl(text) {
     var rows = [];
     var bad = 0;
@@ -147,9 +165,20 @@
       var v;
       try { v = JSON.parse(lines[i]); } catch (e) { bad++; continue; }
       if (!v || typeof v !== 'object' || Array.isArray(v)) { bad++; continue; }
+      Object.defineProperty(v, '__raw', { value: lines[i], enumerable: false, configurable: true });
       rows.push(v);
     }
     return { rows: rows, bad: bad, total: lines.length };
+  }
+
+  /* 这些行里最高的格式版本；没有 v 字段（0.9.x 写的）按 v1 算，没有行算 0。 */
+  function maxVersion(rows) {
+    var m = 0;
+    for (var i = 0; i < (rows || []).length; i++) {
+      var v = num(rows[i] && rows[i].v);
+      if (v > m) m = v;
+    }
+    return m;
   }
 
   /* read({store, dir, collection, interfaceId}) 或 read({store, path})
@@ -166,10 +195,14 @@
       text = String((rd && rd.content) || '');
     } catch (e) {
       /* 没有历史不是错：第一次调用之前本来就该是空的 */
-      return { ok: true, path: path, rows: [], bad: 0, total: 0, missing: true };
+      return { ok: true, path: path, rows: [], bad: 0, total: 0, missing: true, formatVersion: FORMAT_VERSION, future: false };
     }
     var p = parseJsonl(text);
-    return { ok: true, path: path, rows: p.rows, bad: p.bad, total: p.total, missing: false };
+    var fv = maxVersion(p.rows) || FORMAT_VERSION;
+    return {
+      ok: true, path: path, rows: p.rows, bad: p.bad, total: p.total, missing: false,
+      formatVersion: fv, future: fv > FORMAT_VERSION
+    };
   }
 
   /* ---------------- 二进制外置 ---------------- */
@@ -292,7 +325,8 @@
     rows.sort(function (x, y) { return num(x.at) - num(y.at); });
     var want = max == null ? MAX_LINES : num(max);
     if (want > 0 && rows.length > want) rows = rows.slice(-want);
-    var text = rows.map(function (r) { return JSON.stringify(r); }).join('\n') + (rows.length ? '\n' : '');
+    /* 有 __raw 就原样写回：未知字段、键序、数字写法都不动（只做排序与裁剪） */
+    var text = rows.map(function (r) { return r.__raw || JSON.stringify(r); }).join('\n') + (rows.length ? '\n' : '');
     var SS = requireStore();
     try { await store.host.ensureDir(SS.dirName(toPath)); } catch (e) { /* 写的时候还会再失败一次 */ }
     var w = await store.writeText(toPath, text, {});
@@ -332,8 +366,37 @@
     };
   }
 
+  /* ---------------- _meta.json（S7.1 冻结） ---------------- */
+
+  /* 只在**没有**的时候建：已有的绝不覆盖 —— 里面可能写着更新版本的 formatVersion，
+   * 覆盖等于把「该升级了」这个信号抹掉。读不懂也留着，只报告 META_UNREADABLE。 */
+  async function ensureMeta(store, dir) {
+    if (!store || !dir) return { ok: false, reason: 'NO_DIR' };
+    var p = metaPath(dir);
+    var cur = await readTextOr(store, p, null);
+    if (cur != null) {
+      var got = null;
+      try { got = JSON.parse(cur); } catch (e) { got = null; }
+      if (got && typeof got === 'object' && num(got.formatVersion) > 0) {
+        return { ok: true, path: p, existed: true, changed: false, formatVersion: num(got.formatVersion) };
+      }
+      return { ok: false, path: p, reason: 'META_UNREADABLE' };
+    }
+    var S = requireStore();
+    try { await store.host.ensureDir(S.dirName(p)); } catch (e) { /* 写的时候还会再失败一次 */ }
+    var body = JSON.stringify({
+      formatVersion: FORMAT_VERSION,
+      app: APP_ID,
+      createdAt: new Date().toISOString()
+    }) + '\n';
+    var w = await store.writeText(p, body, {});
+    return w && w.ok ? { ok: true, path: p, created: true, changed: true, formatVersion: FORMAT_VERSION }
+                     : { ok: false, reason: (w && w.reason) || 'WRITE_FAILED' };
+  }
+
   /* ---------------- .gitignore ---------------- */
   var giTried = Object.create(null);     /* 每个 dir 只试一次，失败也不反复读盘 */
+  var metaTried = Object.create(null);   /* 同上：_meta.json 每个资源目录只种一次 */
 
   async function ensureGitignore(store, dir) {
     if (!store || !dir) return { ok: false, reason: 'NO_DIR' };
@@ -364,6 +427,7 @@
     var resp = o.response || {};
     var tpl = String(o.urlTemplate != null ? o.urlTemplate : (o.url || ''));
     return {
+      v: FORMAT_VERSION,              /* 必须是首字段：S7.1 冻结，先看版本再看别的 */
       at: num(o.at) || Date.now(),
       status: num(resp.status),
       ok: !!resp.ok,
@@ -467,6 +531,12 @@
         var collection = collectionName(path);
         try { await store.host.ensureDir(S.dirName(hp)); } catch (e) { /* 写的时候还会再失败一次，由 append 报 */ }
 
+        /* 资源目录第一次记历史时种一份 _history/_meta.json（已有就不动） */
+        if (!metaTried[dir]) {
+          metaTried[dir] = 1;
+          try { await ensureMeta(store, dir); } catch (e) { /* 元数据缺失不影响记历史 */ }
+        }
+
         /* 二进制：先把 body 挪到 .bin，jsonl 只留引用。写失败不挡历史，标 bodyOmitted。 */
         var b64 = input.bodyBase64 != null ? input.bodyBase64 : (resp.isBinary ? resp.text : '');
         var bin = null;
@@ -506,6 +576,7 @@
           lines: app.ok ? app.lines : 0,
           historyWritten: !!app.ok,
           historyReason: app.ok ? null : (app.reason || 'WRITE_FAILED'),
+          futureFormatVersion: app.formatVersion || 0,
           rotated: app.ok ? app.dropped : 0,
           bodyRef: entry.bodyRef || null,
           bodyBytes: entry.bodyBytes || 0,
@@ -533,9 +604,14 @@
   var api = {
     createHistory: createHistory,
     HISTORY_DIR: HISTORY_DIR,
+    FORMAT_VERSION: FORMAT_VERSION,
+    META_NAME: META_NAME,
+    APP_ID: APP_ID,
     MAX_LINES: MAX_LINES,
     collectionName: collectionName,
     historyBase: historyBase,
+    metaPath: metaPath,
+    ensureMeta: ensureMeta,
     historyPath: historyPath,
     historyPathFor: historyPathFor,
     appendEntry: appendEntry,
@@ -543,6 +619,7 @@
     rotateText: rotateText,
     rotateFile: rotateFile,
     parseJsonl: parseJsonl,
+    maxVersion: maxVersion,
     read: read,
     isBinaryContentType: isBinaryContentType,
     b64Bytes: b64Bytes,

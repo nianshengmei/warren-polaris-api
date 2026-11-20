@@ -3,16 +3,18 @@
 > 这份文档是给"另一台电脑上的新会话"看的。**它没有上一轮的对话记忆**，
 > 所有判断依据都在这里和 `docs/plan-v1.0.0.md` 里。读完这份就能接着干活。
 >
-> 生成时间：2026-11-21 01:40（M6 收官）
+> 生成时间：2026-11-21 02:05（M6 收官 + S7.1 格式冻结）
 
 ---
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1–M6 全部完成**，`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1–4.6 + S5.1–5.4 + S6.1–6.3` 全绿，
-**下一步是 M7「数据格式冻结 + 发版」**。
+1.0.0 的 **M1–M6 全部完成**，`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1–4.6 + S5.1–5.4 + S6.1–6.3 + S7.1` 全绿，
+**下一步是 S7.2（版本位齐改到 1.0.0）→ S7.3 出包 → S7.4 商店 PR**。
 M6 于 2026-11-21 收官：响应体改 64 KiB 分块读、点停止写 `_cancel/<requestId>.flag`、
 后端在下一块之前收手——50 MB 下载中途停止，**160 ms 断开**，只带回已收到的 3 MB。
+S7.1 于同日收官：**数据格式冻结成 v1**，写在 `docs/data-format.md`；jsonl 每行首字段 `v`、
+`_history/_meta.json` 只建不覆盖、读到更高版本只读展示并且一行都不追加。
 
 > ⚠ 这批里挖出一个**躺了很久的真 bug**并修了：`ui/dbx-bridge.js` 用 `Object.assign` 搬访问器，
 > 导致 `readyOk` 永远是 `false`，`http-workspace` 的 `hostAvailable()` 恒假 ——
@@ -38,9 +40,9 @@ node -v        # 需要 >= 18，建议 22
 #    再把 .workbuddy/memory/ 解压到该工作区的 .workbuddy/ 下
 #    （Mac 上双击用「归档实用工具」解压即可；包内中文文件名的 UTF-8 标志已校验过）
 
-# 3) 自检：应当全绿，且 git 历史完整（最新一条是 M6 取消）
+# 3) 自检：应当全绿，且 git 历史完整（最新一条是 S7.1 格式冻结）
 cd warren-polaris-api
-git log --oneline | head -3      # 最新一条应是 M6 取消
+git log --oneline | head -3      # 最新一条应是 S7.1 数据格式冻结
 git status --short               # 应为空（或只有 HANDOFF.md）
 node tools/all.mjs               # 14 个文件全绿
 
@@ -52,7 +54,7 @@ node dev/dev-server.mjs
 `verify-ui/check-*.mjs` 里写的是 `path.resolve(..., '..', 'warren-polaris-api')`，
 靠的是相对位置，不是绝对路径。
 
-> **⚠ 仓库里没有的东西**：`verify-ui/`（十七个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
+> **⚠ 仓库里没有的东西**：`verify-ui/`（十九个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
 > - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261121-r10.zip` 里
@@ -112,30 +114,34 @@ node dev/dev-server.mjs
 | S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（`crypto` 优先、可注入 rnd）；`insertFileId` 落在第一个 `###` 之前并与 `###` 隔一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` / `index` 两种定位）；`dedupe` 同文件重复 id 后一个换新；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口/重复斜杠/末尾斜杠/fragment 抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接、不重序列化**，插入行沿用文件自己的行尾（CRLF 不掺裸 LF）。`tools/identity.test.mjs` 9 项 |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → **14 文件全绿**（`verify.mjs` **58** 项、`map.test.mjs` 22、`store.test.mjs` 31、`identity.test.mjs` 13、`history.test.mjs` 23、`sample.test.mjs` 46、`cancel.test.mjs` **14** 等）
-- `verify-ui/` **十八个**端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15、**s61=20**
+- `node tools/all.mjs` → **14 文件全绿**（`verify.mjs` **59** 项、`map.test.mjs` 22、`store.test.mjs` 31、`identity.test.mjs` 13、`history.test.mjs` **29**、`sample.test.mjs` 46、`cancel.test.mjs` **14** 等）
+- `verify-ui/` **十九个**端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15、**s61=20**、**s71=12**
 - Rust 侧（沙箱里现在能跑）：`cargo check` / `clippy` **零警告**；`node tools/live-cancel.mjs` **11 项全过**
 
 ---
 
-## 4. 下一步：M7「数据格式冻结 + 发版」（S7.0–S7.4）
+## 4. 下一步：M7「发版」（S7.2–S7.4；S7.0/S7.1 已完成）
 
 > 进 M7 前先把 `docs/plan-v1.0.0.md` 里 S7.0–S7.4 逐条读一遍，那里写死了发版要同步的五个版本位。
 
-1. **S7.0 撤回商店 PR**：`v0.6.4` 的 PR #557 先前已决定撤回，确认一遍状态即可。
-2. **S7.1 数据格式冻结**：把 `wpa-workspace.json`（version 1）、`_history/*.jsonl`（每行字段）、
-   `.identities.jsonl`、`http-client.env.json` 四处写进 README「数据格式」一节，并标 `frozen at 1.0.0`。
-   冻结的含义：1.0.x 只加字段不删不改语义；要改就等 1.1。
-3. **S7.2 版本位**：`manifest.json`、`backend/Cargo.toml`、`backend/Cargo.lock`、
-   `.dbx-store.json` 的 `releaseNotes`、README 版本历史、`tools/verify.mjs` 的 `const VERSION` —— 六处一起改。
-4. **S7.3 出包**：`cargo build --release`（三平台走 GitHub Actions），产物进 `.dbx` 包，跑一遍 `node tools/all.mjs`。
-5. **S7.4 上架**：新开商店 PR，附 1.0.0 的 release notes。
+- **S7.0 ✅ 已完成**：0.6.4 的 PR #557 已撤回，分支留作参考，不发版本。
+- **S7.1 ✅ 已完成（2026-11-21）**：格式冻结成 v1，落在 `docs/data-format.md`（**不是** README 一节，
+  独立文档便于以后升版只改一处）。jsonl 每行首字段 `v`、`_history/_meta.json`、`FUTURE_FORMAT` 只读守卫、
+  合并时用行原文保留未知字段。夹具在 `tools/fixtures/history-v1/`，`history.test.mjs` 29 项、
+  `check-s71.mjs` 12 项钉住这些承诺。
+- **S7.2 版本位（待办）**：`manifest.json`、`backend/Cargo.toml`、`backend/Cargo.lock`、
+  `.dbx-store.json` 的 `releaseNotes`、README 版本历史、`tools/verify.mjs` 的 `const VERSION` —— 六处一起改。
+  改完 `grep -rn "0\.9\.0" --include=*.json --include=*.mjs --include=*.toml .` 应只剩历史叙述。
+- **S7.3 出包（要通网）**：tag `v1.0.0` → GitHub Release → Actions 三平台构建（本仓库这份沙箱连不上 GitHub，
+  只能在通网机器上做）。
+- **S7.4 上架（要通网 + 维护者审）**：新开商店 PR，`candidates/com.warren.polaris.api.json` 指向 v1.0.0
+  五平台产物 + `publishers/warren.json`，附 release notes。
 
 发版前最后跑一次（沙箱里就能做的）：
 ```bash
 cd backend && cargo clippy --config 'patch.crates-io.dbx-plugin-sdk.path="/root/dbx-sdk"'   # 零警告
 cd .. && node tools/all.mjs && node tools/live-cancel.mjs
-cd ../verify-ui && node check-s61.mjs
+cd ../verify-ui && node check-s61.mjs && node check-s71.mjs
 ```
 
 > **沙箱里怎么编 Rust**（这次摸出来的，Mac 上照做也行）：

@@ -1477,8 +1477,12 @@ function recordHistory(t,resp,method,url){
       if(r.historyWritten&&t.respView==='history'&&activeTab()===t) renderRespBody();
       if(!r.historyWritten&&!t.histWarned){
         t.histWarned=true;
-        const why=r.historyReason==='READONLY'?'目录只读':(r.historyReason||'写入失败');
-        setStatus('这次调用没能记进历史（'+why+'）','warn');
+        if(r.historyReason==='FUTURE_FORMAT'){
+          setStatus('这次调用没有记进历史：这份历史由更新版本写入（v'+(r.futureFormatVersion||'?')+'），本版只读','warn');
+        }else{
+          const why=r.historyReason==='READONLY'?'目录只读':(r.historyReason||'写入失败');
+          setStatus('这次调用没能记进历史（'+why+'）','warn');
+        }
       }
     }).catch(()=>{});
   }catch(e){ /* 记历史是旁路，任何异常都不该冒泡到发送流程 */ }
@@ -1624,6 +1628,12 @@ function viewHistory(t){
     const note=$('#histNote');
     if(!r||!r.ok){ list.innerHTML='<div class="prev-none">历史读取失败'+(r&&r.reason?'（'+esc(r.reason)+'）':'')+'。</div>'; return; }
     const rows=(r.rows||[]).slice().reverse();      /* 文件是旧→新，面板要新→旧 */
+    if(r.future){
+      /* S7.1：更新版本写的 jsonl 只读展示，绝不追加 —— 否则等于用旧解释器污染新数据 */
+      const f=el('div','hist-future');
+      f.textContent=`这份历史由更新版本写入（格式 v${r.formatVersion||'?'}）：本版只读展示，不再追加新记录。升级插件后才能继续记录。`;
+      box.insertBefore(f,list);
+    }
     if(note) note.textContent=rows.length?`最近 ${rows.length} 条 · ${cost} ms`:`无记录 · ${cost} ms`;
     const badge=$('#bHist'); if(badge) badge.textContent=rows.length||'';
     if(!rows.length){ list.innerHTML='<div class="prev-none">这个接口还没有调用记录。<br>发一次请求，这里就会多一行。</div>'; return; }

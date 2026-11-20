@@ -715,4 +715,26 @@ ok('v1.0.0：桥接的访问器要真生效（Object.assign 搬不动 getter）'
     'readyOk 等访问器必须用 defineProperties，否则 hostAvailable() 恒假、结果保存与扫描全静默失效');
 });
 
+ok('v1.0.0：数据格式冻结（docs/data-format.md 与 v1 字段一一对上）', () => {
+  const doc = read('docs/data-format.md');
+  const fields = ['v', 'at', 'status', 'ok', 'timeMs', 'size', 'method', 'url', 'urlTemplate',
+    'fingerprint', 'contentType', 'interfaceId', 'fileId', 'file', 'name',
+    'bodyRef', 'bodyEncoding', 'bodyBytes', 'bodyOmitted'];
+  for (const f of fields) assert(doc.includes('`' + f + '`'), '格式文档缺字段：' + f);
+  assert(/只加字段、不改语义、不删字段/.test(doc), '三条兼容承诺要写死在文档里');
+  assert(/只读展示/.test(doc) && /FUTURE_FORMAT/.test(doc), '更新版本的处理方式要写清');
+  assert(/formatVersion/.test(doc) && /_meta\.json/.test(doc), '缺 _meta.json 的说明');
+
+  const h = read('ui/http-history.js');
+  assert(/FORMAT_VERSION = 1/.test(h), 'FORMAT_VERSION 必须是 1');
+  assert(/v: FORMAT_VERSION/.test(h), '每条历史记录都要带 v');
+  assert(/META_NAME = '_meta\.json'/.test(h), '要写 _history/_meta.json');
+  assert(/__raw/.test(h), '未知字段靠 __raw 原样保留（不许 parse→stringify 洗掉）');
+  assert(/FUTURE_FORMAT/.test(h), '读到更高版本要拒绝追加');
+
+  const app = read('ui/app.js');
+  assert(/hist-future/.test(app), '历史页要提示「更新版本写入，只读」');
+  assert(/futureFormatVersion/.test(app), '状态栏要能说出是哪个版本');
+});
+
 console.log('\n' + pass + ' checks passed');

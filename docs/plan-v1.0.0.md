@@ -358,7 +358,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 | 步骤 | 内容 | 验收 |
 |---|---|---|
 | S7.0 | 撤回 PR #557（close，不合并）；fork 分支 `submit/com.warren.polaris.api-0.6.3` 保留作参考，不发新版本 | PR 状态 closed、未 merged；商店 catalog 里没有 `com.warren.polaris.api` |
-| S7.1 | **数据格式冻结**（见下），写进 `docs/data-format.md` 并作为 1.0.0 的一部分发布 | 文档里每个字段都有「类型 / 必填 / 语义 / 兼容规则」；`tools/history.test.mjs` 用 `tools/fixtures/history-v1/*.jsonl` 断言向后兼容 |
+| S7.1 ✅ | **数据格式冻结**（见下），写进 `docs/data-format.md` 并作为 1.0.0 的一部分发布 | 文档里每个字段都有「类型 / 必填 / 语义 / 兼容规则」；`tools/history.test.mjs` 用 `tools/fixtures/history-v1/*.jsonl` 断言向后兼容 |
 | S7.2 | 版本位齐改：`manifest.json`、`Cargo.toml`、`Cargo.lock`、`.dbx-store.json`、README 历史、`verify.mjs` 的 `VERSION` | `grep -r 0.6.4 src ui backend manifest.json` 无残留 |
 | S7.3 | tag `v1.0.0` + Release → CI 5 平台 | 6 个产物齐全 |
 | S7.4 | **新开**商店 PR（不复活 #557）：`candidates/com.warren.polaris.api.json` 指向 v1.0.0 五平台产物 + `publishers/warren.json` | 候选 sha256/size 与 release 一致；PR 里只有一个候选版本 |
@@ -375,6 +375,13 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 | 资源目录 | `.gitignore` 自动写入 `_history/` | 不覆盖用户已有行 |
 
 冻结的意义：这四条里任何一条在 1.0.0 之后被改动，都会让已经攒了历史的用户数据对不上。所以**上架前必须先把它们写死**，此后只能靠新增字段来演进。`v0.6.4` 的 `results/*.json` 属于被淘汰的过渡格式，不纳入冻结范围、不承诺迁移（有旧数据的人只在设置里手动导入一次）。
+
+**S7.1 完成记录（2026-11-21）**
+
+- 文档：`docs/data-format.md`（九节：四类载体 / 两行身份注释 / jsonl 字段表 / `_meta.json` / `.bin` / env / gitignore / 不冻结清单 / 升版流程）。
+- 代码：`ui/http-history.js` 加 `FORMAT_VERSION = 1`、`v` 首字段、`_history/_meta.json`（只建不覆盖）、`FUTURE_FORMAT` 只读守卫、`__raw`（合并时逐字节保留未知字段）。
+- 夹具：`tools/fixtures/history-v1/` 四份（normal / unknown-field / legacy-no-v / v2-future）。
+- 测试：`history.test.mjs` 23 → **29 项**、`verify.mjs` 58 → **59**、`verify-ui/check-s71.mjs` **12 项**（真浏览器）。
 
 ---
 

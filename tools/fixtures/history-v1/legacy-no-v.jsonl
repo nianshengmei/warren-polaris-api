@@ -1,0 +1,1 @@
+{"at":1732000000000,"status":200,"ok":true,"timeMs":18,"size":42,"method":"GET","url":"https://api.example.com/ping","urlTemplate":"{{baseUrl}}/ping","fingerprint":"GET {{baseUrl}}/ping","contentType":"application/json","interfaceId":"ping0001","fileId":"demo0001","file":"demo.http","name":"ping"}

@@ -376,6 +376,9 @@
 .pa-root .hist-row .hist-bin{font-size:10px;color:var(--s3);border:1px solid rgba(88,166,255,.35);border-radius:4px;padding:0 4px}
 .pa-root .hist-row.bad{background:rgba(248,81,73,.06)}
 .pa-root .hist-row.bad .hist-at{color:rgba(248,81,73,.75)}
+/* 更新版本写的历史：只读展示，别让人以为是本版写的 */
+.pa-root .hist-future{margin:6px 12px 0;padding:6px 9px;border:1px solid rgba(210,153,34,.4);border-radius:5px;
+  background:rgba(210,153,34,.08);color:var(--s4);font-size:11px;line-height:1.6;flex:0 0 auto}
 
 .pa-root pre.raw{padding:14px;font-size:12.5px;line-height:1.65;white-space:pre;overflow:auto;tab-size:2}
 .pa-root pre.raw.wrap{white-space:pre-wrap;word-break:break-word}
