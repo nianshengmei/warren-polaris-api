@@ -737,4 +737,18 @@ ok('v1.0.0：数据格式冻结（docs/data-format.md 与 v1 字段一一对上�
   assert(/futureFormatVersion/.test(app), '状态栏要能说出是哪个版本');
 });
 
+ok('0.9.0：四个版本位一致，自用包脚本与验收清单在位', () => {
+  const m = JSON.parse(read('manifest.json'));
+  const cargoVer = (read('backend/Cargo.toml').match(/^version\s*=\s*"([^"]+)"/m) || [])[1];
+  const lock = read('backend/Cargo.lock');
+  const block = lock.split(/\n\[\[package\]\]\n/).find((b) => b.includes('name = "dbx-plugin-warren-polaris-api"')) || '';
+  const lockVer = (block.match(/^version\s*=\s*"([^"]+)"/m) || [])[1];
+  assert(cargoVer === m.version, `Cargo.toml=${cargoVer} manifest=${m.version}`);
+  assert(lockVer === m.version, `Cargo.lock=${lockVer} manifest=${m.version}`);
+  assert(VERSION === m.version, `verify=${VERSION} manifest=${m.version}`);
+  assert(fs.existsSync(path.join(root, 'tools', 'selfuse-pack.mjs')), '缺自用打包脚本');
+  assert(fs.existsSync(path.join(root, 'docs', 'self-test-0.9.0.md')), '缺 0.9.0 验收清单');
+  assert(read('README.md').includes('v0.9.0'), 'README 版本历史里要有 0.9.0');
+});
+
 console.log('\n' + pass + ' checks passed');

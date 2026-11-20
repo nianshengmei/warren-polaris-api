@@ -16,6 +16,11 @@ M6 于 2026-11-21 收官：响应体改 64 KiB 分块读、点停止写 `_cancel
 S7.1 于同日收官：**数据格式冻结成 v1**，写在 `docs/data-format.md`；jsonl 每行首字段 `v`、
 `_history/_meta.json` 只建不覆盖、读到更高版本只读展示并且一行都不追加。
 
+**0.9.0 自用包已就绪（2026-11-21）**：`node tools/selfuse-pack.mjs` 摊出 `dist/polaris-0.9.0-<os>-<arch>/`
+（manifest + ui/ + bin/），有官方 CLI 再跑 `dbx-plugin package .` 出 `.dbxp`。
+验收清单在 **`docs/self-test-0.9.0.md`**（7 节，标 ★ 的必走）。
+用户已定：**先跑 0.9.0 自用验收，S7.2 暂缓**，验收完再一次性改 1.0.0。
+
 > ⚠ 这批里挖出一个**躺了很久的真 bug**并修了：`ui/dbx-bridge.js` 用 `Object.assign` 搬访问器，
 > 导致 `readyOk` 永远是 `false`，`http-workspace` 的 `hostAvailable()` 恒假 ——
 > 「结果保存到 `_results/`」和「目录扫描」整条链路其实一直是死的（演示站跑了几十次请求，`_results/` 是空的）。
@@ -129,9 +134,11 @@ node dev/dev-server.mjs
   独立文档便于以后升版只改一处）。jsonl 每行首字段 `v`、`_history/_meta.json`、`FUTURE_FORMAT` 只读守卫、
   合并时用行原文保留未知字段。夹具在 `tools/fixtures/history-v1/`，`history.test.mjs` 29 项、
   `check-s71.mjs` 12 项钉住这些承诺。
-- **S7.2 版本位（待办）**：`manifest.json`、`backend/Cargo.toml`、`backend/Cargo.lock`、
+- **S7.2 版本位（**暂缓，等 0.9.0 自用验收**）**：`manifest.json`、`backend/Cargo.toml`、`backend/Cargo.lock`、
   `.dbx-store.json` 的 `releaseNotes`、README 版本历史、`tools/verify.mjs` 的 `const VERSION` —— 六处一起改。
   改完 `grep -rn "0\.9\.0" --include=*.json --include=*.mjs --include=*.toml .` 应只剩历史叙述。
+  > 现在四个版本位（manifest / Cargo.toml / Cargo.lock / verify）已经由 `tools/verify.mjs` 钉住一致；
+  > `.dbx-store.json` 的 `releaseNotes` 仍是 0.6.4 文案 —— 它只影响商店展示，0.9.0 不上架，**留到 1.0.0 再写，避免写两遍**。
 - **S7.3 出包（要通网）**：tag `v1.0.0` → GitHub Release → Actions 三平台构建（本仓库这份沙箱连不上 GitHub，
   只能在通网机器上做）。
 - **S7.4 上架（要通网 + 维护者审）**：新开商店 PR，`candidates/com.warren.polaris.api.json` 指向 v1.0.0
@@ -156,13 +163,48 @@ cd ../verify-ui && node check-s61.mjs && node check-s71.mjs
 
 ## 5. 待用户拍板（**别自己决定，问**）
 
-1. `.pa-fe` 浮层偏矮，是否加「⤢ 铺满」按钮？
-2. ~~历史保留条数 3 / 10 / 30？~~ **已定：10 条**（2026-11-20 拍板，已落进 `MAX_LINES`）
-3. 二进制响应（`.bin`）单文件 5 MB 上限是否合适？**现在 `maxBodyBytes` 默认不设限**，只留了旋钮，等你给数。
-4. ~~后端 4 个新命令只在 Mac/Linux 侧编译验证过吗？~~ **已办（2026-11-21）**：沙箱里用 SDK 源码 patch 的方式
-   真跑了 `cargo check` / `build` / `clippy`，零警告；M6 的分块读还用真二进制做了取消与三条回归的实测。
-   Windows 侧的产物仍靠 GitHub Actions 构建。
-5. M6 之后「停止」的文案改成「已通知后端断开」。若你想更克制（比如只写「已停止」），说一声就改。
+### 5.1 浮层「⤢ 铺满」
+
+**现状**：`.pa-fe` 是 `.work` 里的绝对定位层，`top:79px; bottom:0; left:0; right:0`，已经吃满工作区**除顶部 79px 以外**的高度。
+觉得矮的成因通常不是 CSS 写错，而是 DBX 工作台本身不高、或被分栏压窄。
+
+**一个必须先说清的限制**：插件跑在宿主给的 iframe 里，`position:fixed` 也只认这个 iframe 的视口。
+所以「铺满」最多铺满**插件面板**（含顶栏、侧栏、响应区），**铺不到整个 DBX 窗口**——除非宿主提供全屏 API。
+若用户期待的是「盖住整个 DBX」，那做不到，得提前讲明。
+
+**选项**：A 不做（先用一阵再说）；B 标题条加 ⤢，切成 `fixed; inset:0` 覆盖插件面板（约 40 行 + 1 条 e2e，
+再把 `dbx-bridge` 的 ESC 关浮层一起处理）；C 只把 `top` 从 79 收到 0（一行 CSS，保留侧栏与顶栏，收益最小）。
+
+**建议**：先做 C 试手感（零风险），仍不够再上 B。等 0.9.0 真用几天再定。
+
+### 5.2 `.bin` 单文件 5 MB 上限
+
+**现状**：`maxBodyBytes` 默认 `Infinity`，`app.js` 建 history 时没传，等于不设限。
+
+**真正的硬顶在宿主**：SDK 的 `MAX_JSON_BYTES = 8 MiB`（单条 JSON-RPC 消息）。二进制响应以 base64 走
+`http/request` 的返回值，本身就是 `4/3 × 原始字节`，**原始体约 6 MB 就会顶到 8 MiB**，超了不是「存不下历史」，
+而是**整个响应都回不来**（报错或截断）。所以 5 MB 不是拍脑袋：它给 JSON 外壳留了约 1 MB 余量。
+
+**选项**：A 维持不设限（大响应有整条链路失败的风险）；B 设 5 MB（超过只丢 `.bin`，历史行照记
+`bodyOmitted: TOO_LARGE`，响应体当次仍能看）；C 设 4 MB（更保守，给 SSE/头留更多余量）。
+
+**建议**：B。并且**顺手在 `http/request` 返回前就判断**：若 base64 长度接近 8 MiB，先把响应标 `truncated`，
+别让 JSON-RPC 层直接炸（这条要改 Rust，属于 1.0.0 之后的小修）。
+
+### 5.3 「停止」文案
+
+**现状**：标题「⏹ 已手动中断」；正文「请求已停止。已通知后端断开，正在传输的响应不会再读下去。」+ 耗时/URL；
+状态栏「请求已中断 · 1.2 s」。历史页那条记录不写（没响应）。
+
+**问题**：`已通知后端断开` 是**实现口径**（写了个标志文件），不是用户感受；而且严格说后端只在「下一块读之前」检查，
+对端不发数据时连接会多挂一会儿——这句话有轻微过度承诺。
+
+**选项**：A 保持；B 正文改「已停止。这次请求不再等待响应。」，把「后台连接会尽快关闭」降级成灰色小字；
+C 只留「已停止」，其余删掉。
+
+**建议**：B。主句说人话，技术细节留小字；没有后端时那半句「仅逻辑中断」保留（那是真差异，不能藏）。
+
+> 其余已定：历史保留 **10 条**（2026-11-20）；后端编译验证**已办**（见 §0）。
 
 ---
 

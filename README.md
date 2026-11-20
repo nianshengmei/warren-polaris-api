@@ -12,6 +12,8 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 
 **v0.4.0：打开与保存都变成「系统对话框 + 可反复点」** —— 点「打开 .http」直接拉起资源管理器选文件；文件支持从应用外拖入；「保存」任意多次点击都真正落盘，并显示第几次。
 
+**v0.9.0：文件成为唯一真源（1.0.0 预发）** —— 目录树只认 `wpa-workspace.json`，打开 `.http` 这个动作本身就是挂载；请求身份写进文件（`# @file_id` / `# @interface_id`），每次发送在 `_history/` 记一条（每个接口 10 条，二进制外置成 `.bin`）；响应体改 64 KiB 分块读，点「停止」两秒内真断。功能齐了，这一版只做自用验收，不上商店。
+
 **v0.6.4：在商店里可辨识为 fork** —— 全新图标（青绿纸页 + 琥珀 ▶，与原作紫蓝横线图不同），列表文案明示「polaris-api 的社区 fork」，包内补 `LICENSE` + `NOTICE` 署名（Apache-2.0 §4）；功能代码与 0.6.3 一致。
 
 **v0.6.3：打开就从第一行看起** —— 之前载入文件后 textarea 的光标落在末尾，`focus()` 把视图滚到最后一行；现在载入后光标与滚动都归零，示例打开即是文件头。
@@ -422,6 +424,10 @@ dbx-plugin dev --path . --port 5190
 
 # 构建本机平台的 .dbxp 候选（需要 Rust 工具链）
 dbx-plugin package .
+
+# 没有官方 CLI 时：摊出一份「自用插件目录」（manifest + ui/ + bin/），或给 0.9.0 验收用
+cd backend && cargo build --release --config 'patch.crates-io.dbx-plugin-sdk.path="/path/to/dbx-plugin-sdk"' && cd ..
+node tools/selfuse-pack.mjs      # → dist/polaris-<version>-<os>-<arch>/
 ```
 
 本机安装未签名的开发包：DBX → 插件中心 → 设置 → 第三方与开发者选项 → 允许安装未签名开发包，再选择本地 `.dbxp`。
@@ -442,6 +448,13 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 
 ## 版本历史
 
+- **v0.9.0** — **文件成为唯一真源**（1.0.0 的预发版，**不进商店**）：
+  - **目录树只认 `wpa-workspace.json`**：侧栏是映射文件的渲染，不扫盘；打开 `.http` 即挂载并登记，这是往侧栏加文件的唯一途径；首启的示例仍保证一开机就在侧栏。
+  - **双视图**：请求源码（`.http` 原文、可编辑、自动保存）与响应区并存；`###` 分段、`@变量`、`{{插值}}`、跨请求引用、`http-client.env.json` 全部按 IDEA 语义走。
+  - **身份写进文件**：文件头 `# @file_id`、段首 `# @interface_id`（都是普通 `#` 注释，IDEA / VS Code 不受影响）。写不进去就不记历史——历史里绝不出现文件里没有的 id。
+  - **调用历史 `_history/`**：每个接口一份 jsonl，保留 10 条自动轮转；二进制响应外置成 `.bin`（base64，宿主没有二进制写通道）；删了 id 行会**问一句**再决定是否接回旧历史；格式已冻结成 v1，见 [`docs/data-format.md`](docs/data-format.md)。
+  - **响应体 64 KiB 分块读**：点「停止」写 `_cancel/<requestId>.flag`，后端在下一块之前收手；50 MB 下载中途停止，实测 **160 ms 断开**。
+  - 示例扩到 9 节（含只在 env 文件里定义的变量），首次打开会在资源目录种一份 `http-client.env.json`；响应区第 5 个子页就是「历史」。
 - **v0.6.4** — **让商店里认得出这是 fork，而不是原作的「新版」**（商店审核要求，代码与 0.6.3 一致）：
   - 换图标：盾形色板从原作的紫蓝渐变改为青绿渐变，构图是「白纸 + 折角 + 琥珀色 ▶ 徽章」，与原作（三行横线 + 黄点）不同字节也不同视觉；
   - 说明文案改为「polaris-api 的社区 fork，专注 .http 文件编辑」，明示派生关系；
