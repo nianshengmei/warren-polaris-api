@@ -33,10 +33,9 @@
 | S2.5d 归位与排序 | ✅ | **文件级**：文件夹头 = 归入（追加到末尾）、文件行上/下半区 = 插到前/后（同组即排序）、根区 `.root-zone` = 退回根；落点下标按「先摘后插」算（`dropIndex`），一律 `POLARIS_MAP.moveTo` → `saveWorkspaceMap()`，**只改映射、不碰文件**；拖进折叠的文件夹会顺手展开；拖拽手柄只给 `.group-head`（`.gact` 上的按下不算拖拽，也不触发折叠）。**请求级**：恢复 S1.5 暂停的拖拽 —— 同一文件内调序 = 整段搬移（新增 `store.moveSegment` / 纯函数 `moveSegmentText`，按字符偏移切段重排，文件头与段内字节逐字节不变，`baseMtime` 冲突照旧）；跨文件搬段仍拒绝并提示（会丢注释，留 1.0.1）。`store.test.mjs` +5 项、`verify.mjs` +1 项、`verify-ui/check-s25d.mjs` 23 项 |
 | S3.1 浮层拖拽 | ✅ | 按住标题条拖浮层：位置记在 `--fe-dx/--fe-dy`（**不改 left/top**，基础盒贴着请求区算，改 left 会把宽度压变形），pointer + rAF 合帧 + `setPointerCapture`；夹取按「整块留在 `.work` 里」算；双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，`scrollLeft` 被顶偏 26px，浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S3.2 字号缩放 | ✅ | `--pa-fs` / `--pa-lh` 挂在 `.pa-fe` 上，textarea / 高亮层 / 行号 / 折叠箭头 / ▶ 全部同源引用；`LINE_H` 常量换成 `lineH(fs)`（字号 × 1.6），行号 `top` 跟着重算；`Ctrl+滚轮` 12–28px（步进 1，`passive:false` 拦整页缩放）、`Ctrl+0` 复位、`fontSize` 落偏好。**修掉一个真错位**：`app.css` 的 `.pa-root textarea{font-size:inherit}` 特异性 (0,1,1) 压过 `.pa-fe-text` (0,1,0)，textarea 一直继承 12.5px 而高亮层跟着变量变 —— 规则改成 `.pa-fe .pa-fe-text`。`verify.mjs` +1 组、`verify-ui/check-s32.mjs` 25 项 |
+| S3.3 身份行配色 | ✅ | `# @file_id` / `# @interface_id` 两种行做四层标记：紫色淡底 + 左侧 2px 竖线 + 键斜体加粗（`@` 号变淡）+ 值亮紫 `#c9a9ff`，行号栏对应行变紫并挂 4px 圆点锚点。**只认这两个键**，`@name` / `@baseUrl` / 普通注释一律不动（`# @name` 保持正体，与身份行的斜体一眼可分）。大文件纯文本分支与正常分支都带 `ids`，行号签名纳入身份行位置（换文件后锚点不残留）；浅色主题单独调底色。`verify.mjs` +1 组、`verify-ui/check-s33.mjs` 24 项 |
 
-| S3.1 浮层拖拽 | ✅ | 按住标题条拖浮层，位置记在 `--fe-dx/--fe-dy`（**不改 left/top** —— 基础盒贴着请求区算，改 left 会把宽度压变形），`pointerdown/move/up` + rAF 合帧，`setPointerCapture` 保证拖出标题条也不丢；夹取按「整块留在 `.work` 里」算，拖过头贴边；双击标题条归零；位置写进偏好 `feX/feY`，启动恢复、窗口缩放后重夹。顺带修掉两处既有毛病：`.work` 的 `overflow:hidden` 会变成可滚容器（`scrollLeft` 被顶偏 26px，浮层整体错位）→ 改 `overflow:clip`；标题条上的按钮/下拉不作为拖拽手柄。`verify.mjs` +1 项、`verify-ui/check-s31.mjs` 20 项 |
-
-一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s25d.mjs`（23 项）+ `check-s26.mjs`（8 项）+ `check-s31.mjs`（20 项）+ `check-s32.mjs`（25 项）。
+一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s25d.mjs`（23 项）+ `check-s26.mjs`（8 项）+ `check-s31.mjs`（20 项）+ `check-s32.mjs`（25 项）+ `check-s33.mjs`（24 项）。
 
 ### 本地浏览器调试（`dev/`）
 
@@ -220,11 +219,13 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 - **踩到的坑**：`app.css` 里 `.pa-root button,.pa-root input,.pa-root select,.pa-root textarea{font-size:inherit}` 特异性 (0,1,1)，压过单类 `.pa-fe-text` (0,1,0)。结果是 `line-height:var(--pa-lh)` 生效、`font-size:var(--pa-fs)` 被 `inherit` 顶掉 —— textarea 永远 12.5px、高亮层却跟着变大，**这正是本步要防的错位**。改成 `.pa-fe .pa-fe-text`（两个类）才压得住。
 - **验收**：`verify-ui/check-s32.mjs` —— 三层 computed 字号/行高全等；28px 时行号 `top = 10 + 7×45`、高亮层第 8 行 top 与 textarea 公式一致（±2px）；28px 下点第 2 行第 5 列光标真落在第 2 行第 5 列；滚动到中间再点，滚动偏移一起算；夹 12/28、`Ctrl+0` 复位、刷新后字号还在。
 
-### S3.3 身份行配色
+### S3.3 身份行配色 ✅
 
 - **目标**：`@file_id` / `@interface_id` 行紫色斜体加粗 + 淡底 + 左竖线 + 行号栏锚点，与普通注释一眼可分。
-- **改动**：`ui/http-editor.js` 高亮层按行判定；`ui/app.css` 加 `.pa-line-id`。
-- **验收**：截图对比 —— 同屏同时有普通注释、`@name`、`@interface_id` 三种，颜色层级正确。
+- **落地**：判定写在高亮层 `hlLine()` 的第 5 个分支（`# @xxx` 元数据注释）里，命中就把行号记进 `ctx.ids`，`highlight()` 随 `{html, folds, byOpen, ids}` 一起返回。四层标记分别是：`.pa-l-id` 的淡底 `rgba(163,113,247,.10)`、`.pa-l-id::before` 的 2px 竖线（`left:-9px`，落在行号栏与代码之间的留白里）、`.t-meta` 斜体 700 + `@` 号降透明度、行号栏 `.pa-fe-ln.idln` 变紫并挂 4px 圆点。
+- **不能涂错**：判据是 `mm[1] === '@file_id' || mm[1] === '@interface_id'`，白名单而非黑名单 —— `@name`、`@baseUrl`、`@timeout` 这些仍然是原来的样子（`@name` 是紫色**正体**、无底，身份行是**斜体**加粗带底，两者一眼可分）。`@baseUrl = ...` 走的是文件变量分支，压根进不到这里。
+- **两处容易漏的收尾**：① `highlight()` 的大文件纯文本分支（`plain: true`）也要返回 `ids: {}`，否则 `paint()` 取 `S.hl.ids` 时会在超大文件上炸；② 行号栏有签名缓存 `S.gutterSig`，必须把身份行号也并进签名，否则「换个文件、行数一样、身份行位置不同」时锚点会留在旧行上。
+- **验收**：`verify-ui/check-s33.mjs` —— 15 行样本里身份行恰好是 1/4/13；`@name`（第 2、9 行）与 `@baseUrl`（第 5 行）确实没被涂；插入一行身份行 → 锚点跟着挪到 1/2/5/14，删掉后回到 1/4/13 不残留；字号 22px 时身份行高度 35px、竖线 top/bottom 各 1px 贴住整行；浅色主题底色与深色不同。
 
 ---
 

@@ -248,6 +248,28 @@ ok('S3.2：字号缩放三层同源，行高随字号推导', () => {
   assert(/isFinite\(p\.fontSize\)/.test(ed), '启动时需恢复字号');
 });
 
+ok('S3.3：身份行配色只认两个键，且有四层视觉标记', () => {
+  const ed = read('ui/http-editor.js');
+  /* 判定：只认 @file_id / @interface_id，别的元数据一律不算 */
+  assert(/mm\[1\] === '@file_id' \|\| mm\[1\] === '@interface_id'/.test(ed), '身份行判定必须只认 @file_id / @interface_id');
+  assert(/ctx\.ids\[ctx\.idx\] = 1/.test(ed), '身份行需要记进 ids');
+  assert(/kinds: \[\], script: false,\s*\n?\s*ids: \{\}/.test(ed), 'ctx 需要 ids 容器');
+  /* 三种返回分支都要带 ids，否则大文件/正常文件取值会报 undefined */
+  assert(/return \{ html: html, folds: \[\], byOpen: \{\}, ids: \{\}, plain: true \}/.test(ed), '纯文本分支也要带 ids');
+  assert(/return \{ html: html, folds: ctx\.folds, byOpen: byOpen, ids: ctx\.ids, plain: false \}/.test(ed), '正常分支要带 ids');
+  /* 四层标记：底色 + 竖线 + 斜体加粗 + 行号锚点 */
+  assert(/'\.pa-l-id\{position:relative;background:rgba\(163,113,247,\.10\)\}'/.test(ed), '身份行需要有淡底');
+  assert(/'\.pa-l-id::before\{[^']*background:var\(--m-patch/.test(ed), '身份行需要有左侧竖线');
+  assert(/'\.pa-l-id \.t-meta\{[^']*font-style:italic;font-weight:700/.test(ed), '身份键要斜体加粗');
+  assert(/'\.pa-fe-ln\.idln\{[^']*font-weight:700/.test(ed), '行号栏锚点需要样式');
+  assert(/'\.pa-fe-ln\.idln::before\{[^']*border-radius:50%/.test(ed), '行号栏锚点要有圆点');
+  assert(/\[data-dbx-theme="light"\] \.pa-l-id\{/.test(ed), '浅色主题需要单独调底色');
+  /* 绘制：高亮层与行号栏都要用上 ids */
+  assert(/isId \? ' pa-l-id' : ''/.test(ed), 'paint 需要给身份行加 pa-l-id');
+  assert(/isId \? ' idln' : ''/.test(ed), 'renderGutter 需要给身份行行号加 idln');
+  assert(/idKeys\.sort\(\)/.test(ed), '行号签名要纳入身份行，否则换文件后锚点残留');
+});
+
 ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
   const ed = read('ui/http-editor.js');
   /* 一览 */

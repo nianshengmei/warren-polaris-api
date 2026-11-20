@@ -399,6 +399,19 @@
       '.pa-fe .t-com{color:var(--dimmer,#6e7282);font-style:italic}',
       '.pa-fe .t-meta{color:var(--m-patch,#a371f7);font-weight:600}',
       '.pa-fe .t-metav{color:var(--dim,#a8acba)}',
+      /* ===== S3.3 身份行：@file_id / @interface_id =====
+       * 紫色斜体加粗 + 淡底 + 左竖线 + 行号栏圆点。比普通注释（灰斜体）和
+       * @name 这类元数据（紫、正体、无底）高一级，扫一眼就知道文件身份在哪。 */
+      '.pa-l-id{position:relative;background:rgba(163,113,247,.10)}',
+      '.pa-l-id::before{content:"";position:absolute;left:-9px;top:1px;bottom:1px;width:2px;border-radius:1px;background:var(--m-patch,#a371f7);opacity:.85}',
+      '.pa-l-id .t-com{color:var(--m-patch,#a371f7);font-style:normal;opacity:.55}',
+      '.pa-l-id .t-meta{color:var(--m-patch,#a371f7);font-style:italic;font-weight:700}',
+      '.pa-l-id .t-metav{color:#c9a9ff;font-style:italic;font-weight:600}',
+      '.pa-fe-ln.idln{color:var(--m-patch,#a371f7);font-weight:700}',
+      '.pa-fe-ln.idln::before{content:"";position:absolute;left:-8px;top:50%;width:4px;height:4px;margin-top:-2px;border-radius:50%;background:var(--m-patch,#a371f7)}',
+      '[data-dbx-theme="light"] .pa-l-id{background:rgba(124,58,237,.07)}',
+      '[data-dbx-theme="light"] .pa-l-id .t-metav{color:#6d28d9}',
+      '[data-dbx-theme="light"] .pa-fe-ln.idln{color:#7c3aed}',
       '.pa-fe .t-def{color:var(--j-bool,#d2a8ff);font-weight:600}',
       '.pa-fe .t-var{color:var(--brand-hi,#ff926f);background:rgba(255,122,89,.10);border-radius:3px}',
       '.pa-fe .t-m{font-weight:700}',
@@ -875,7 +888,8 @@
       var html = S.hl.html[fi] || '';
       var tag = S.tags[fi];
       if (tag) html += '<span class="pa-fe-foldtag">⋯ ' + tag + ' 行已折叠</span>';
-      out.push('<div class="pa-fe-l' + (fi === S.hitLine ? ' hit' : '') + '">' + html + '</div>');
+      var isId = S.hl.ids && S.hl.ids[fi];
+      out.push('<div class="pa-fe-l' + (fi === S.hitLine ? ' hit' : '') + (isId ? ' pa-l-id' : '') + '">' + html + '</div>');
     }
     hlEl.innerHTML = out.join('');
     syncScroll();
@@ -968,7 +982,10 @@
     var openKeys = [];
     for (var ok in S.hl.byOpen) openKeys.push(ok);
     openKeys.sort();
-    var sigParts = [S.view.length, foldKeys.join('.'), openKeys.join('.')];
+    var idKeys = [];
+    for (var ik in (S.hl.ids || {})) idKeys.push(ik);
+    idKeys.sort();
+    var sigParts = [S.view.length, foldKeys.join('.'), openKeys.join('.'), idKeys.join('.')];
     for (var z = 0; z < reqs.length; z++) sigParts.push(reqs[z].line + ':' + (S.lastRun[reqs[z].line] || ''));
     var sig = sigParts.join('|');
     if (sig === S.gutterSig) { syncScroll(); return; }
@@ -996,7 +1013,9 @@
           esc(reqName(reqs[ri])) + '">▶</div>');
       }
       if (showNo) {
-        out.push('<div class="pa-fe-ln' + (ri !== undefined ? ' on' : '') + '" style="top:' + top + 'px">' + ln + '</div>');
+        var isId = S.hl.ids && S.hl.ids[fi];
+        out.push('<div class="pa-fe-ln' + (ri !== undefined ? ' on' : '') + (isId ? ' idln' : '') +
+          '" style="top:' + top + 'px" title="' + (isId ? '文件身份行' : '') + '">' + ln + '</div>');
       }
     }
     ginner.innerHTML = out.join('');
@@ -1246,8 +1265,12 @@
 
     /* 5) 元数据注释 # @name / 普通注释 */
     if (/^#\s*@/.test(T)) {
-      ctx.kinds[ctx.idx] = 'meta';
       var mm = /^#\s*(@[\w.\-]+)\s*(.*)$/.exec(T);
+      /* S3.3：只认这两个键。@name / @baseUrl / @timeout 这类仍是普通元数据，
+       * 涂成身份色会让“哪些行是文件身份”这件事失去辨识度。 */
+      var isId = mm[1] === '@file_id' || mm[1] === '@interface_id';
+      ctx.kinds[ctx.idx] = isId ? 'idline' : 'meta';
+      if (isId) ctx.ids[ctx.idx] = 1;
       var mo = (lead ? esc(lead) : '') + sp('t-com', '#') + ' ' + sp('t-meta', mm[1]);
       if (mm[2]) mo += ' ' + hiVal(mm[2], 't-metav');
       return mo;
@@ -1338,11 +1361,12 @@
     var i;
     if (n > MAX_HL_LINES) {
       for (i = 0; i < n; i++) html[i] = esc(lines[i]);
-      return { html: html, folds: [], byOpen: {}, plain: true };
+      return { html: html, folds: [], byOpen: {}, ids: {}, plain: true };
     }
     var ctx = {
       idx: 0, mode: 'idle', body: '', ctJson: false,
-      stack: [], folds: [], kinds: [], script: false
+      stack: [], folds: [], kinds: [], script: false,
+      ids: {}          /* S3.3：身份行（@file_id / @interface_id）的行号 → 1 */
     };
     /* 整篇就是一个 JSON（.json 文件 / 纯 body）：直接按 JSON 上色 */
     var looksJson = /^\s*[\[{]/.test(text) &&
@@ -1370,7 +1394,7 @@
       var f = ctx.folds[i];
       if (!(f.open in byOpen) || f.close > byOpen[f.open]) byOpen[f.open] = f.close;
     }
-    return { html: html, folds: ctx.folds, byOpen: byOpen, plain: false };
+    return { html: html, folds: ctx.folds, byOpen: byOpen, ids: ctx.ids, plain: false };
   }
 
   /* ===================== 接口一览 ===================== */

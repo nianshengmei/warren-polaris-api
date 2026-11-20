@@ -9,9 +9,9 @@
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1（文件真源）+ M2（双视图）已完成**，`S2.5a/b/c/d + S2.6 + S3.1 + S3.2` 全绿，
-**下一步是 M3 交互的 S3.3 身份行配色**，之后是 M4 → M5 → M6 → M7。
-S3.2 于 2026-11-20 收官：字号 12–28px 可调，textarea / 高亮层 / 行号三层同源不错位。
+1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）已完成**，`S2.5a/b/c/d + S2.6 + S3.1/2/3` 全绿，
+**下一步是 M4 身份与历史的 S4.1 `HttpIdentity`**，之后是 S4.2 → S4.3 → M5 → M6 → M7。
+S3.3 于 2026-11-20 收官：`@file_id` / `@interface_id` 四层标记，与普通注释一眼可分。
 
 ---
 
@@ -49,7 +49,7 @@ node dev/dev-server.mjs
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
 **新会话开场白建议直接说**：
-> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M3 的 S3.3 开始。口径不许改。
+> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M4 的 S4.1 开始。口径不许改。
 
 ---
 
@@ -82,26 +82,31 @@ node dev/dev-server.mjs
 | S2.5b 侧栏文件夹树 | ✅ | `renderSidebarMapped / renderFolderNode / renderMapFile` |
 | S2.5c 浮层去文件树 | ✅ | 浮层只剩「接口一览 + 源码」，顶栏「≡ 接口一览」是唯一开关 |
 | S2.5d 归位与排序 | ✅ | 文件行拖拽：文件夹头归入 / 上下半区插前后 / 根区退回根，全走 `POLARIS_MAP.moveTo` + `saveWorkspaceMap()`，只改映射不动文件；请求级同文件调序 = 整段搬移（`store.moveSegment`），跨文件仍留 1.0.1。`verify-ui/check-s25d.mjs` 23 项 |
+| S3.3 身份行配色 | ✅ | `# @file_id` / `# @interface_id` 四层标记：紫淡底 + 左 2px 竖线 + 键斜体加粗 + 行号栏紫圆点；**白名单只认这两个键**，`@name`（正体紫）与 `@baseUrl`（文件变量）都不动。大文件纯文本分支补 `ids: {}`，行号签名纳入身份行位置。`verify-ui/check-s33.mjs` 24 项 |
 | S3.2 字号缩放 | ✅ | `--pa-fs`/`--pa-lh` 挂在 `.pa-fe`，textarea / 高亮层 / 行号 / 折叠箭头 / ▶ 同源；`LINE_H` 常量换成 `lineH(fs)`；Ctrl+滚轮 12–28px、Ctrl+0 复位、`fontSize` 落偏好。**踩到真坑**：`app.css` 的 `.pa-root textarea{font-size:inherit}` 特异性 (0,1,1) 压过单类 `.pa-fe-text`，textarea 一直 12.5px、高亮层却变大 —— 规则改 `.pa-fe .pa-fe-text` 才压住。`verify-ui/check-s32.mjs` 25 项 |
 | S3.1 浮层拖拽 | ✅ | 标题条拖动 → `--fe-dx/--fe-dy` 位移（不改 left/top，宽度不会被压变形），rAF 合帧 + `setPointerCapture`；整块夹在 `.work` 内，双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，scrollLeft 被顶偏 26px 导致浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S2.6 示例自动挂载 | ✅ | 含 `POLARIS_MAP.save` 并发写修复（tmp 名唯一 + 串行） |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → 11 文件全绿（`verify.mjs` 51 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项等）
-- `verify-ui/` 十个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25
+- `node tools/all.mjs` → 11 文件全绿（`verify.mjs` 52 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项等）
+- `verify-ui/` 十一个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24
 
 ---
 
-## 4. 下一步：M3 交互 · S3.3 身份行配色
+## 4. 下一步：M4 身份与历史 · S4.1 `HttpIdentity`
 
-> 目标：`@file_id` / `@interface_id` 行紫色斜体加粗 + 淡底 + 左竖线 + 行号栏锚点，与普通注释一眼可分。
-> 验收：截图对比 —— 同屏同时有普通注释、`@name`、`@interface_id` 三种，颜色层级正确。
+> 目标：生成、插入、去重、指纹四件事各自独立可测。
+> 验收：`tools/identity.test.mjs` 9 项 —— 含「插完再解析能读回同一个 id」「插 file_id 后请求数不变」「两段同 id 时第二个被换掉」。
 
-改动落点：`ui/http-editor.js` 的 `highlight()`（按行判定身份行）+ `injectCss` 加 `.pa-line-id`；
-行号栏锚点要在 `renderGutter()` 里给对应行加标记（`S.hl.byOpen` 那套行号映射可以直接用）。
-注意别把 `@baseUrl = ...` 这种普通变量行也涂成身份色 —— 只认 `@file_id` / `@interface_id`。
+改动落点：**新建** `ui/http-identity.js`（纯函数，不碰 DOM、不读宿主），四个能力：
+`newId()` 8 位 base36；`insertFileId(text)` 插到第一个 `###` 之前（空文件即第 1 行）；
+`insertInterfaceId(text, req)` 插到该 `###` 的紧下一行；`dedupe(doc)` 同文件重复 id 后一个换新；
+`fingerprint(req)` = `METHOD + 归一化 URL`（**变量保留原文，不展开** —— 展开会让同一接口换环境就变指纹）。
 
-之后按 `docs/plan-v1.0.0.md` 顺序：**M4 身份与历史 → M5 示例与文档 → M6 取消 → M7 冻结发版**。
+写插入时注意：S3.3 刚给身份行做的高亮是按 `# @file_id` 认的，插进去的行必须带上 `# ` 前缀，
+否则颜色不生效；插入位置算错会让「请求数不变」这条验收红掉。
+
+之后按 `docs/plan-v1.0.0.md` 顺序：**S4.2 赋予时机 → S4.3 调用历史 → M5 示例与文档 → M6 取消 → M7 冻结发版**。
 
 ---
 
