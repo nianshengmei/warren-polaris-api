@@ -141,7 +141,8 @@ async function initDocs(){
 
 /* 侧栏映射（wpa-workspace.json，S2.5a）。它只决定「哪些文件、挂哪个文件夹、什么顺序」，
  * 内容真源仍是 .http 文件本身。
- * 首启把资源目录里已有的 .http 全量登记一次；之后只做增量补缺，
+ * **只有第一次**（映射不存在，或刚被重建）才把目录里已有的 .http 全量登记；
+ * 之后新增的文件要走底部「发现 N 个未登记」由用户点，否则「映射为权威」就退化成扫目录。
  * 已有 folders 的名字/顺序/折叠态一律不动（测试见 tools/map.test.mjs）。
  * 手改坏的映射先留一份 .broken.json 再重建，绝不让一个坏 JSON 卡死侧栏。 */
 async function loadWorkspaceMap(){
@@ -149,6 +150,7 @@ async function loadWorkspaceMap(){
   if(!DOCS.enabled||!M||!DOCS.store) return null;
   try{
     const r=await M.load(DOCS.store.host,DOCS.dir);
+    const firstRun=!r.exists||!!r.error;
     DOCS.mapError=r.error||null;
     if(r.error){
       const bak=r.path.replace(/\.json$/i,'.broken.json');
@@ -156,14 +158,22 @@ async function loadWorkspaceMap(){
       toast('侧栏映射解析失败，已留档 '+STORE.baseName(bak)+' 并重建');
     }
     DOCS.map=r.map;
-    const reg=await M.ensureRegistered(DOCS.store.host,DOCS.dir,DOCS.map);
-    DOCS.map=reg.map;
-    if(reg.changed){
-      const w=await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
-      if(!w.ok) setStatus('写侧栏映射失败：'+(w.reason||'未知'),'warn');
-      else if(!r.exists) setStatus('已登记 '+reg.added.length+' 个 .http 到侧栏映射','ok');
+    if(firstRun){
+      const reg=await M.ensureRegistered(DOCS.store.host,DOCS.dir,DOCS.map);
+      DOCS.map=reg.map;
+      if(reg.added.length||!r.exists){
+        const w=await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
+        if(!w.ok) setStatus('写侧栏映射失败：'+(w.reason||'未知'),'warn');
+        else if(reg.added.length) setStatus('已登记 '+reg.added.length+' 个 .http 到侧栏映射','ok');
+      }
     }
     DOCS.mapLoaded=true;
+    /* 启动期已经建好的文件（比如 http-editor 种的 examples.http）在这里补登记 */
+    if(DOCS.pendingRegister&&DOCS.pendingRegister.length){
+      const queued=DOCS.pendingRegister.slice();
+      DOCS.pendingRegister=[];
+      for(const p of queued) await registerDocFile(p);
+    }
     return DOCS.map;
   }catch(e){
     DOCS.mapError=String((e&&e.message)||e);
@@ -172,10 +182,12 @@ async function loadWorkspaceMap(){
   }
 }
 
-/* 新建文件后立刻登记，否则「映射为权威」的侧栏会把它当成不存在（S2.5b 起生效） */
+/* 新建文件后立刻登记，否则「映射为权威」的侧栏会把它当成不存在（S2.5b 起生效）。
+ * 映射还没读出来时先排队，等 loadWorkspaceMap 完成后补登记（启动期 http-editor 种示例就是这种时序）。 */
 async function registerDocFile(path){
   const M=window.POLARIS_MAP;
-  if(!DOCS.map||!M||!path) return;
+  if(!M||!path) return;
+  if(!DOCS.map){ DOCS.pendingRegister=DOCS.pendingRegister||[]; DOCS.pendingRegister.push(path); return; }
   try{
     const e=M.toEntry(DOCS.dir,path);
     if(M.entries(DOCS.map).some(x=>M.pathKey(x)===M.pathKey(e))) return;
@@ -184,13 +196,50 @@ async function registerDocFile(path){
   }catch(err){ /* 登记失败不影响文件本身，下次启动会补 */ }
 }
 
+/* 扫目录 + 把「映射里登记、但住在资源目录外」的文件一并读进来。
+ * 侧栏只按映射显示，可外部文件的 exists 没法靠扫目录判断，只能真读一次：
+ * 读得到就是存在，读不到（被移走/删掉/没权限）就交给 resolve 标成「找不到」。 */
+async function collectDocsList(){
+  const list=await DOCS.store.list();
+  const M=window.POLARIS_MAP;
+  if(!M||!DOCS.map) return list;
+  const seen={};
+  list.forEach(x=>{ seen[M.pathKey(x.path)]=1; });
+  for(const entry of M.entries(DOCS.map)){
+    const abs=M.toAbs(DOCS.dir,entry);
+    if(M.relOf(DOCS.dir,abs)!=null) continue;      // 目录内的已在 list 里
+    if(seen[M.pathKey(abs)]) continue;
+    seen[M.pathKey(abs)]=1;
+    try{
+      const rd=await DOCS.store.read(abs);
+      list.push({
+        name: STORE.baseName(abs).replace(/\.(http|rest)$/i,''),
+        fileName: STORE.baseName(abs),
+        path: abs,
+        mtime: rd.mtime,
+        size: (rd.text||'').length,
+        requests: rd.parsed.requests,
+        warnings: rd.parsed.warnings,
+        fileId: rd.parsed.fileId,
+        fileVars: rd.parsed.fileVars,
+        error: null,
+        outside: true
+      });
+    }catch(e){
+      /* 读不到就不放进 list：resolve 拿不到这个路径，自然标成「找不到」 */
+    }
+  }
+  list.sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh-Hans-CN'));
+  return list;
+}
+
 /* 扫目录 → 投影成 state.collections。busy 期间的重入直接忽略（保存后连刷两次很常见）。 */
 async function refreshDocs(quiet){
   if(!DOCS.enabled) return false;
   if(DOCS.busy) return false;
   DOCS.busy=true;
   try{
-    const list=await DOCS.store.list();
+    const list=await collectDocsList();
     DOCS.files=list; DOCS.lastScan=Date.now();
     applyDocs(list);
     rebindTabs();
@@ -603,18 +652,106 @@ function bindTopEvents(){
 }
 
 /* ===================== 侧栏 ===================== */
+/* 映射模式下的路径比对：统一分隔符、Windows 形态不分大小写（与 POLARIS_MAP.pathKey 一致） */
+function sidebarKey(p){ return window.POLARIS_MAP?window.POLARIS_MAP.pathKey(p):String(p||'').replace(/\\/g,'/').toLowerCase(); }
+function groupOfPath(path){ const k=sidebarKey(path); return state.collections.find(g=>g.path&&sidebarKey(g.path)===k)||null; }
+
 function renderSidebar(){
   const tree=$('#tree');
   const prevScroll=tree.scrollTop;   // 重建会重置 scrollTop，先记录
   tree.innerHTML='';
   const q=($('#search').value||'').toLowerCase().trim();
-  let total=0, shown=0;
-  if(!state.collections.length) tree.appendChild(el('div','tree-empty','还没有任何分组。<br>点击右上角 ＋ 新建一个。'));
-  state.collections.forEach(g=>{
+  const stat={ total:0, shown:0 };
+  if(DOCS.enabled && DOCS.map && window.POLARIS_MAP){
+    renderSidebarMapped(tree,q,stat);
+  }else{
+    if(!state.collections.length) tree.appendChild(el('div','tree-empty','还没有任何分组。<br>点击右上角 ＋ 新建一个。'));
+    state.collections.forEach(g=>{ const node=renderFileGroup(g,q,stat); if(node) tree.appendChild(node); });
+    if(q && stat.shown===0) tree.appendChild(el('div','tree-empty','没有匹配「'+esc(q)+'」的请求。'));
+  }
+  if(prevScroll) tree.scrollTop=prevScroll;   // 恢复滚动位置（搜索/点击重建不打断浏览）
+  $('#stSaved').textContent=stat.total;
+}
+
+/* 映射模式：文件夹 → 文件 → 请求。顺序与归属全来自 wpa-workspace.json（S2.5b）。 */
+function renderSidebarMapped(tree,q,stat){
+  const M=window.POLARIS_MAP;
+  const view=M.resolve(DOCS.map,DOCS.dir,(DOCS.files||[]).map(f=>f.path));
+  view.folders.forEach(f=>{ const sec=renderFolderNode(f,q,stat); if(sec) tree.appendChild(sec); });
+  view.unfiled.forEach(node=>{ const n=renderMapFile(node,q,stat); if(n) tree.appendChild(n); });
+  if(!view.folders.length && !view.unfiled.length){
+    tree.appendChild(el('div','tree-empty','侧栏里还没有登记任何文件。<br>点右上角 ＋ 新建，或把 .http 放进资源目录后点 ↻。'));
+  }else if(q && stat.shown===0){
+    tree.appendChild(el('div','tree-empty','没有匹配「'+esc(q)+'」的请求。'));
+  }
+  const pend=mapPending();
+  if(pend.length){
+    const b=el('button','pending-bar','发现 '+pend.length+' 个未登记文件 · 点这里加入');
+    b.title='磁盘上有、映射里没有的 .http。加入只写映射，不动文件内容。';
+    b.onclick=openPendingFiles;
+    tree.appendChild(b);
+  }
+  const nf=el('button','pending-bar ghost','＋ 新建文件夹');
+  nf.onclick=newFolderFlow;
+  tree.appendChild(nf);
+}
+
+function renderFolderNode(f,q,stat){
+  const M=window.POLARIS_MAP;
+  const body=el('div','folder-body');
+  let any=false;
+  f.files.forEach(node=>{ const n=renderMapFile(node,q,stat); if(n){ body.appendChild(n); any=true; } });
+  if(q && !any) return null;            // 搜索时整夹没有命中就不占地方
+  const sec=el('div','folder'+(f.collapsed&&!q?' collapsed':''));
+  const head=el('div','folder-head');
+  head.innerHTML=`<span class="caret">▼</span><span class="fname">${esc(f.name)}</span><span class="gcount">${f.files.length}</span>`;
+  head.title='文件夹 · 顺序与归属来自 wpa-workspace.json';
+  const act=el('span','gact');
+  const ren=el('button','x','✎'); ren.title='重命名文件夹'; ren.onclick=e=>{e.stopPropagation();renameFolderFlow(f);};
+  const del=el('button','x','🗑'); del.title='删除文件夹（文件退回根，不删文件）'; del.onclick=e=>{e.stopPropagation();removeFolderFlow(f);};
+  act.append(ren,del); head.appendChild(act);
+  head.onclick=()=>{
+    const r=M.setFolderCollapsed(DOCS.map,f.name,!f.collapsed);
+    if(r.ok){ DOCS.map=r.map; saveWorkspaceMap(); renderSidebar(); }
+  };
+  sec.append(head,body);
+  return sec;
+}
+
+/* 映射里的一个文件节点 → 一行文件分组；找不到的给灰色占位，绝不当成没登记 */
+function renderMapFile(node,q,stat){
+  if(node.dup) return null;             // 同一文件登记两次：只认第一条
+  const g=node.exists===false?null:groupOfPath(node.path);
+  if(!g){
+    if(q && node.name.toLowerCase().indexOf(q)<0) return null;
+    return renderMissingFile(node);
+  }
+  const fileEl=renderFileGroup(g,q,stat);
+  if(!fileEl) return null;
+  if(node.outside){
+    const tag=el('span','outside-tag','外部'); tag.title=node.path;
+    const cnt=fileEl.querySelector('.gcount');
+    if(cnt) cnt.insertAdjacentElement('beforebegin',tag);
+  }
+  return fileEl;
+}
+
+function renderMissingFile(node){
+  const item=el('div','miss-item');
+  item.innerHTML=`<span class="mb">?</span><span class="rn">${esc(node.name)}</span><span class="miss">找不到</span>`;
+  item.title=node.entry+'\n文件已不在原位置。可以重新定位；移除登记不会动文件本身。';
+  const loc=el('button','rx rr','↻'); loc.title='重新定位…'; loc.onclick=e=>{e.stopPropagation();relocateFlow(node);};
+  const rm=el('button','rx','✕'); rm.title='从侧栏移除登记（不删文件）'; rm.onclick=e=>{e.stopPropagation();unregisterFlow(node);};
+  item.append(loc,rm);
+  return item;
+}
+
+/* 一个文件分组（含请求行）。返回 null 表示被搜索过滤掉了。 */
+function renderFileGroup(g,q,stat){
     const matched=g.requests.filter(r=>!q||r.name.toLowerCase().includes(q)||r.url.toLowerCase().includes(q));
-    total+=g.requests.length;
-    if(q && !matched.length && !g.name.toLowerCase().includes(q)) return;
-    const list=q?matched:g.requests; shown+=list.length;
+    stat.total+=g.requests.length;
+    if(q && !matched.length && !g.name.toLowerCase().includes(q)) return null;
+    const list=q?matched:g.requests; stat.shown+=list.length;
     const gEl=el('div','group'+(g.collapsed&&!q?' collapsed':''));
     const head=el('div','group-head');
     head.innerHTML=`<span class="caret">▼</span><span class="gname">${esc(g.name)}</span><span class="gcount">${g.requests.length}</span>`;
@@ -660,11 +797,131 @@ function renderSidebar(){
       });
       reqs.appendChild(item);
     });
-    gEl.appendChild(reqs); tree.appendChild(gEl);
+  gEl.appendChild(reqs);
+  return gEl;
+}
+
+/* ---------- 映射写回 + 文件夹 / 未登记 / 重新定位 ---------- */
+
+async function saveWorkspaceMap(){
+  const M=window.POLARIS_MAP;
+  if(!M||!DOCS.map||!DOCS.store) return false;
+  try{
+    const w=await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
+    if(!w.ok){ setStatus('写侧栏映射失败：'+(w.reason||'未知'),'warn'); return false; }
+    return true;
+  }catch(e){ setStatus('写侧栏映射失败：'+((e&&e.message)||e),'warn'); return false; }
+}
+
+/* 磁盘上有、映射里没有的 .http（侧栏不显示它们，只给一个入口） */
+function mapPending(){
+  const M=window.POLARIS_MAP;
+  if(!DOCS.map||!M) return [];
+  const have={}; M.entries(DOCS.map).forEach(e=>{ have[M.pathKey(M.toAbs(DOCS.dir,e))]=1; });
+  return (DOCS.files||[]).filter(f=>!have[M.pathKey(f.path)]);
+}
+
+async function addPendingFiles(paths){
+  const M=window.POLARIS_MAP;
+  if(!M||!DOCS.map) return 0;
+  const have={}; M.entries(DOCS.map).forEach(e=>{ have[M.pathKey(M.toAbs(DOCS.dir,e))]=1; });
+  let n=0;
+  (paths||[]).forEach(p=>{
+    const entry=M.toEntry(DOCS.dir,p);
+    const k=M.pathKey(M.toAbs(DOCS.dir,entry));
+    if(have[k]) return;
+    have[k]=1; DOCS.map.unfiled.push(entry); n++;
   });
-  if(q && shown===0) tree.appendChild(el('div','tree-empty','没有匹配「'+esc(q)+'」的请求。'));
-  if(prevScroll) tree.scrollTop=prevScroll;   // 恢复滚动位置（搜索/点击重建不打断浏览）
-  $('#stSaved').textContent=total;
+  if(n){ await saveWorkspaceMap(); renderSidebar(); setStatus('已加入 '+n+' 个文件到侧栏','ok'); }
+  return n;
+}
+
+function openPendingFiles(){
+  const pend=mapPending();
+  if(!pend.length){ setStatus('没有未登记的文件','ok'); return; }
+  const bg=$('#modalBg'); const m=el('div','modal wide');
+  m.innerHTML=`<h3>未登记的文件</h3><div class="sub">这些 .http 在资源目录里，但侧栏映射没有登记。加入只写 wpa-workspace.json，文件本身不会被移动或改写。</div>`;
+  const list=el('div','pend-list');
+  pend.forEach(f=>{
+    const row=el('div','pend-row');
+    row.innerHTML=`<span class="pend-name">${esc(STORE.baseName(f.path))}</span><span class="pend-path">${esc(f.path)}</span>`;
+    const add=el('button','btn sm','加入');
+    add.onclick=async()=>{ add.disabled=true; add.textContent='已加入'; await addPendingFiles([f.path]); };
+    row.appendChild(add); list.appendChild(row);
+  });
+  m.appendChild(list);
+  const acts=el('div','acts'); const sp=el('div'); sp.style.flex='1';
+  const cancel=el('button','btn ghost','关闭'); cancel.onclick=close;
+  const all=el('button','btn primary','全部加入');
+  all.onclick=async()=>{ await addPendingFiles(pend.map(f=>f.path)); close(); };
+  acts.append(sp,cancel,all); m.appendChild(acts);
+  function close(){ bg.classList.remove('open'); bg.innerHTML=''; }
+  bg.innerHTML=''; bg.appendChild(m); bg.classList.add('open'); bg.onclick=e=>{ if(e.target===bg) close(); };
+}
+
+function newFolderFlow(){
+  PD.ask('新建文件夹',{label:'名称',value:'新文件夹',sub:'文件夹只有一层，文件直接挂在里面。排序与归属都写进 wpa-workspace.json。'},async n=>{
+    if(n==null) return;
+    const M=window.POLARIS_MAP;
+    const r=M.addFolder(DOCS.map,n);
+    if(!r.ok){ setStatus(r.reason==='EXISTS'?'已有同名文件夹':'文件夹名不能为空','err'); return; }
+    DOCS.map=r.map;
+    if(await saveWorkspaceMap()){ renderSidebar(); setStatus('已新建文件夹「'+String(n).trim()+'」','ok'); }
+  });
+}
+
+function renameFolderFlow(f){
+  PD.ask('重命名文件夹',{label:'名称',value:f.name},async n=>{
+    if(n==null) return;
+    const M=window.POLARIS_MAP;
+    const r=M.renameFolder(DOCS.map,f.name,n);
+    if(!r.ok){ setStatus(r.reason==='EXISTS'?'已有同名文件夹':(r.reason==='EMPTY_NAME'?'名称不能为空':'改不了这个文件夹'),'err'); return; }
+    DOCS.map=r.map;
+    if(await saveWorkspaceMap()){ renderSidebar(); setStatus('文件夹已重命名','ok'); }
+  });
+}
+
+function removeFolderFlow(f){
+  PD.confirm('删除文件夹「'+f.name+'」？\n里面的 '+f.files.length+' 个文件会退回根，文件本身不会被删除。',async ok=>{
+    if(!ok) return;
+    const M=window.POLARIS_MAP;
+    const r=M.removeFolder(DOCS.map,f.name);
+    if(!r.ok){ setStatus('删不掉这个文件夹','err'); return; }
+    DOCS.map=r.map;
+    if(await saveWorkspaceMap()){ renderSidebar(); setStatus('已删除文件夹，文件退回根','ok'); }
+  });
+}
+
+function relocateFlow(node){
+  const M=window.POLARIS_MAP;
+  const reg={}; M.entries(DOCS.map).forEach(e=>{ reg[M.pathKey(M.toAbs(DOCS.dir,e))]=1; });
+  const cands=(DOCS.files||[]).filter(f=>!reg[M.pathKey(f.path)]);
+  const hint=cands.length
+    ? ('目录里有 '+(cands.length)+' 个未登记文件可挑：'+cands.slice(0,3).map(f=>STORE.baseName(f.path)).join('、')+(cands.length>3?'…':''))
+    : '填绝对路径；资源目录内的文件也可以填相对路径。';
+  PD.ask('重新定位「'+node.name+'」',{label:'新路径',value:node.entry,sub:hint,okText:'定位'},async v=>{
+    if(v==null) return;
+    const raw=String(v).trim(); if(!raw) return;
+    const abs=M.toAbs(DOCS.dir,raw);
+    let st;
+    try{ st=await DOCS.store.host.stat(abs); }catch(e){ setStatus('检查路径失败：'+((e&&e.message)||e),'err'); return; }
+    if(!st||!st.exists){ setStatus('这个路径下没有文件：'+abs,'err'); return; }
+    const r=M.relocate(DOCS.map,node.entry,M.toEntry(DOCS.dir,abs));
+    if(!r.ok){ setStatus('映射里找不到这条登记','err'); return; }
+    DOCS.map=r.map;
+    if(await saveWorkspaceMap()){ await refreshDocs(true); renderSidebar(); setStatus('已重新定位到 '+STORE.baseName(abs),'ok'); }
+  });
+}
+
+function unregisterFlow(node){
+  PD.confirm('把「'+node.name+'」从侧栏移除登记？\n只删映射里这一条，文件本身不动；下次点「发现未登记」还能加回来。',async ok=>{
+    if(!ok) return;
+    const M=window.POLARIS_MAP;
+    const r=M.unregister(DOCS.map,node.entry);
+    if(!r.ok) return;
+    DOCS.map=r.map;
+    if(await saveWorkspaceMap()){ renderSidebar(); setStatus('已从侧栏移除登记','ok'); }
+  });
 }
 
 /* ===================== 环境切换 ===================== */
@@ -1620,6 +1877,8 @@ window.POLARIS_DOCS = {
   /* S2.5：侧栏映射（wpa-workspace.json）。S2.5b 的文件夹树直接吃这个对象 */
   map: function(){ return DOCS.map; },
   mapError: function(){ return DOCS.mapError; },
+  /* 新建/种出来的文件登记进侧栏（.http 面板种示例时用） */
+  register: function(path){ return registerDocFile(path); },
   /* S2.3：源码视图点「▭」→ 在表单里打开这一段 */
   openInForm: function(path,info){ return openInFormForDoc(path,info); },
   /* S2.3：表单右上角「</>」→ 在源码里定位这一段 */

@@ -1779,6 +1779,9 @@
       await invoke('http/writeFile', { path: attachPath, content: S0.attach || '', noClobber: true });
       var text = String(S0.http || '').replace(/__AUDIO_PATH__/g, attachPath);
       await invoke('http/writeFile', { path: target, content: text, noClobber: true });
+      /* 侧栏以映射为准：种出来的示例也要登记，否则它只在磁盘上、侧栏里看不见。
+       * 启动期映射可能还没读出来，register 会排队，等映射就绪后补登记。 */
+      try { if (window.POLARIS_DOCS && window.POLARIS_DOCS.register) window.POLARIS_DOCS.register(target); } catch (e) { }
       return target;
     } catch (e) {
       return '';

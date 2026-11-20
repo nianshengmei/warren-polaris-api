@@ -27,9 +27,10 @@
 | S2.3 双向跳转 | ✅ | 表单 → 源码：请求栏 `</>`（`openSourceForTab`，脏了先落盘）→ `POLARIS_EDITOR.openAt`（同一文件且磁盘变了会先 `ensureFresh` 重读）；源码 → 表单：gutter 请求行左侧 `▤` + 接口一览 `▤`（`openInForm` → `POLARIS_DOCS.openInForm`，按 id → 行号+方法 → 名称+方法 认段，切过去自动收起浮层）；`verify-ui/check-s23.mjs` 20 项 |
 | S2.4 变量统一 | ✅ | 表单侧 `resolveVars(str,t)` 不再自己实现一套，改走 `POLARIS_HTTP.resolveDeep`：文件级 `@var` → 环境 → 内置动态变量（`$guid/$timestamp/...`）→ 跨请求引用；`syncTabVars` 在打开/重绑/保存后对齐 `fileVars`；投影层透传 `fileVars`；跨请求引用正则改 `\p{L}`（`\w` 不认中文，也认空格）；**环境也以 `http-client.env.json` 为真源**（`loadEnvsFromFile` 启动读、`saveEnvsToFile` 改完写）；`vars.test.mjs` 19 项 + `verify-ui/check-s24.mjs` 10 项 |
 | S2.5a 映射层 | ✅ | `ui/workspace-map.js`（`POLARIS_MAP`）：读写 `wpa-workspace.json`（原子写）、目录内相对 / 目录外绝对路径归一、首启全量登记、未登记发现、`resolve()` 侧栏树（带 `exists`/`outside`）、`moveTo/relocate/unregister` 归位原语；`app.js` boot 调 `loadWorkspaceMap()`（坏 JSON 先留档 `.broken.json` 再重建，已有 folders 一律不动），新建/改名/删除文件时同步映射；`tools/map.test.mjs` 21 项 |
-| S2.5b 侧栏文件夹树 | ⬜ 下一步 | 见下方拆解 |
+| S2.5b 侧栏文件夹树 | ✅ | `renderSidebar` 拆成 `renderSidebarMapped / renderFolderNode / renderMapFile / renderFileGroup`：文件夹 → 文件 → 请求，顺序与归属全来自映射；折叠态写回 `collapsed`；外部文件带「外部」标；找不到的显示灰色占位（↻ 重新定位 / ✕ 移除登记）；底部「发现 N 个未登记」+「＋ 新建文件夹」，文件夹可改名/删除（文件退回根）。`collectDocsList()` 把目录外的登记文件也真读进来（扫目录扫不到外部文件，否则它们会全被误判成找不到）；`http-editor` 种示例后调 `POLARIS_DOCS.register` 补登记。`verify-ui/check-s25.mjs` 20 项 |
+| S2.5c 面板去文件树 | ⬜ 下一步 | 见下方拆解 |
 
-一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）。
+一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（20 项）。
 
 ### 本地浏览器调试（`dev/`）
 

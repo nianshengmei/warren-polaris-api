@@ -368,6 +368,41 @@
     return { ok: true, map: m };
   }
 
+  function renameFolder(map, oldName, newName) {
+    var m = normalize(map);
+    var n = str(newName).trim();
+    if (!n) return { ok: false, reason: 'EMPTY_NAME', map: m };
+    var hit = null;
+    for (var i = 0; i < m.folders.length; i++) if (m.folders[i].name === oldName) { hit = m.folders[i]; break; }
+    if (!hit) return { ok: false, reason: 'NO_FOLDER', map: m };
+    if (n === oldName) return { ok: true, map: m };
+    if (m.folders.some(function (f) { return f.name === n; })) return { ok: false, reason: 'EXISTS', map: m };
+    hit.name = n;
+    return { ok: true, map: m };
+  }
+
+  /* 删文件夹不删文件：里面的文件退回根（unfiled），顺序接在后面 */
+  function removeFolder(map, name) {
+    var m = normalize(map);
+    var hit = null;
+    m.folders = m.folders.filter(function (f) {
+      if (!hit && f.name === name) { hit = f; return false; }
+      return true;
+    });
+    if (!hit) return { ok: false, reason: 'NO_FOLDER', map: m };
+    m.unfiled = m.unfiled.concat(hit.files);
+    return { ok: true, map: m, moved: hit.files.length };
+  }
+
+  function setFolderCollapsed(map, name, collapsed) {
+    var m = normalize(map);
+    var hit = null;
+    for (var i = 0; i < m.folders.length; i++) if (m.folders[i].name === name) { hit = m.folders[i]; break; }
+    if (!hit) return { ok: false, reason: 'NO_FOLDER', map: m };
+    hit.collapsed = !!collapsed;
+    return { ok: true, map: m };
+  }
+
   var api = {
     FILE: FILE,
     VERSION: VERSION,
@@ -389,6 +424,9 @@
     unregister: unregister,
     relocate: relocate,
     addFolder: addFolder,
+    renameFolder: renameFolder,
+    removeFolder: removeFolder,
+    setFolderCollapsed: setFolderCollapsed,
     baseName: baseName,
     stripExt: stripExt
   };

@@ -129,6 +129,43 @@
 .pa-root .req-item.drop-after{box-shadow:inset 0 -2px 0 var(--brand)}
 .pa-root .reqs.drop-on,.pa-root .group-head.drop-on{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--brand);border-radius:var(--r-sm)}
 .pa-root .tree-empty{padding:24px 14px;text-align:center;color:var(--dimmer);font-size:11.5px;line-height:1.8}
+
+/* 侧栏文件夹（S2.5b）：文件夹只有一层，文件挂在里面；顺序与归属来自 wpa-workspace.json */
+.pa-root .folder{margin-bottom:3px}
+.pa-root .folder-head{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--r-sm);cursor:pointer;user-select:none;color:var(--dim)}
+.pa-root .folder-head:hover{background:var(--surface)}
+.pa-root .folder-head .caret{width:12px;font-size:9px;color:var(--dimmer);transition:transform .15s;flex:none;text-align:center}
+.pa-root .folder.collapsed .folder-head .caret{transform:rotate(-90deg)}
+.pa-root .folder.collapsed .folder-body{display:none}
+.pa-root .folder-head .fname{flex:1;font-size:11.5px;font-weight:600;color:var(--dim);letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pa-root .folder-head:hover .fname{color:var(--ink)}
+.pa-root .folder-head .gcount{font-size:10px;color:var(--dimmer);border-radius:20px;padding:1px 7px;background:var(--surface-2)}
+.pa-root .folder-head .gact{display:none;gap:2px}
+.pa-root .folder-head:hover .gact{display:flex}
+.pa-root .folder-head:hover .gcount{display:none}
+.pa-root .folder-body{margin-left:13px;padding-left:4px;border-left:1px solid var(--line)}
+/* 外部文件：目录之外、只记绝对路径的那种 */
+.pa-root .outside-tag{flex:none;font-size:9px;color:var(--dimmer);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+/* 登记了但文件找不到：灰色占位，可重新定位 / 移除登记 */
+.pa-root .miss-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r-sm);color:var(--dimmer);cursor:default}
+.pa-root .miss-item:hover{background:var(--surface)}
+.pa-root .miss-item .mb{flex:none;font-size:9px;font-weight:700;width:38px;text-align:right;color:var(--dimmer)}
+.pa-root .miss-item .rn{flex:1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pa-root .miss-item .miss{flex:none;font-size:9.5px;border:1px solid currentColor;border-radius:3px;padding:0 4px;opacity:.8}
+.pa-root .miss-item .rx{display:none;width:18px;height:18px;border-radius:4px;align-items:center;justify-content:center;color:var(--dimmer);font-size:12px}
+.pa-root .miss-item:hover .rx{display:inline-flex}
+.pa-root .miss-item .rx:hover{color:var(--brand);background:var(--surface-2)}
+/* 底部：发现未登记 / 新建文件夹 */
+.pa-root .pending-bar{display:block;width:calc(100% - 12px);margin:6px;padding:6px 8px;border:1px dashed var(--line-2);border-radius:var(--r-sm);background:none;color:var(--dim);font-size:11.5px;text-align:center;cursor:pointer;transition:.12s}
+.pa-root .pending-bar:hover{color:var(--brand);border-color:var(--brand);background:var(--surface)}
+.pa-root .pending-bar.ghost{opacity:.7}
+.pa-root .pending-bar.ghost:hover{opacity:1}
+/* 未登记文件清单（modal） */
+.pa-root .pend-list{max-height:320px;overflow:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r-sm)}
+.pa-root .pend-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12px}
+.pa-root .pend-row:last-child{border-bottom:0}
+.pa-root .pend-name{color:var(--ink);flex:none;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-root .pend-path{flex:1;color:var(--dimmer);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 .pa-root .m-GET{color:var(--m-get)} .m-POST{color:var(--m-post)} .m-PUT{color:var(--m-put)}
 .pa-root .m-PATCH{color:var(--m-patch)} .m-DELETE{color:var(--m-del)} .m-HEAD,.m-OPTIONS{color:var(--m-other)}
 
