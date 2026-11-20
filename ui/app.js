@@ -274,7 +274,8 @@ async function patchGroup(path){
     const rd=await DOCS.store.read(path);
     const name=STORE.baseName(path).replace(/\.(http|rest)$/i,'');
     const item={ name, fileName:STORE.baseName(path), path, mtime:rd.mtime, size:(rd.text||'').length,
-                 requests:rd.parsed.requests, warnings:rd.parsed.warnings, fileId:rd.parsed.fileId, error:null };
+                 requests:rd.parsed.requests, warnings:rd.parsed.warnings, fileId:rd.parsed.fileId,
+                 fileVars:rd.parsed.fileVars, error:null };
     const g=STORE.toLegacyCollections([item],{blankRow})[0];
     const i=state.collections.findIndex(x=>x.path===path);
     if(i>=0){ g.collapsed=state.collections[i].collapsed; state.collections[i]=g; }
@@ -1320,6 +1321,8 @@ async function send(){
     if(window.POLARIS_HTTP_WS && window.POLARIS_HTTP_WS.onResponse){
       try{ window.POLARIS_HTTP_WS.onResponse(t,resp,{method:method,url:url,headers:headers,body:body}); }catch(e){}
     }
+    /* S4.2：这次调用落身份 + 历史（异步，绝不挡主流程） */
+    recordHistory(t,resp,method,url);
     t.respPath=''; t.respFilter=''; t.tableSel=null; t.colW={}; t.treeOpen='auto'; t.hiddenCols={}; t.sort={};
     t.respView = resp.parsed!==undefined ? (Array.isArray(resp.parsed)?'table':'object') : /text\/html/i.test(resp.contentType)?'preview' : (resp.isBinary&&/^image\//i.test(resp.contentType))?'preview':'raw';
     renderResponse();
@@ -1337,6 +1340,56 @@ async function send(){
     const sb=$('#sendBtn'); if(sb){ sb.onclick=send; }
     if(t.abortCtl===abortCtl) t.abortCtl=null;
   }
+}
+
+/* ===================== 调用历史（S4.2） ===================== */
+
+/* 发送成功后落身份 + 历史。顺序由 POLARIS_HISTORY.record 保证：先把 id 写进文件、
+ * 写盘成功才追加 jsonl；身份写不进去就不记历史（历史里不能出现文件里没有的 id）。
+ *
+ * 三条边界：
+ *   1. 只记绑定了文件的请求 —— 未保存的请求没有段落可放 @interface_id；
+ *   2. 失败只在状态栏提示一次（tab 上打 histWarned），不弹窗、不影响请求结果；
+ *   3. 写入成功要把 baseMtime 对齐到写后的 mtime，否则用户接着保存会撞上
+ *      「文件已被别处修改」—— 而那个"别处"就是这次插身份的自己。 */
+function recordHistory(t,resp,method,url){
+  if(!DOCS.enabled||!DOCS.store||!window.POLARIS_HISTORY) return;
+  const ref=t.docRef||{};
+  if(!ref.file) return;
+  try{
+    if(!DOCS.history) DOCS.history=window.POLARIS_HISTORY.createHistory({store:DOCS.store,dir:DOCS.dir});
+    DOCS.history.record({
+      path:ref.file,
+      req:{ line:ref.line, method:method, url:t.url.trim(), name:ref.name, interfaceId:ref.interfaceId||null },
+      response:{ status:resp.status, ok:resp.ok, timeMs:resp.timeMs, size:resp.size },
+      url:url
+    }).then(r=>{
+      if(!r) return;
+      if(!r.ok){
+        if(r.reason==='READONLY'&&!t.histWarned){
+          t.histWarned=true;
+          setStatus('资源目录只读，本次调用没有记入历史','warn');
+        }
+        return;
+      }
+      if(r.interfaceId) ref.interfaceId=r.interfaceId;
+      if(r.fileId) ref.fileId=r.fileId;
+      if(r.mtime) state.tabs.forEach(x=>{ if(x.docRef&&x.docRef.file===ref.file) x.baseMtime=r.mtime; });
+      if(r.changed){
+        patchGroup(ref.file).then(g=>{ if(g) renderSidebar(); }).catch(()=>{});
+        /* 编辑器若正开着这个文件，让它下次聚焦时按 mtime 重读（不打断输入） */
+        const ed=window.POLARIS_EDITOR;
+        if(ed&&ed.ensureFresh&&ed.state&&ed.state.path===ref.file){
+          try{ ed.ensureFresh(ref.file); }catch(e){}
+        }
+      }
+      if(!r.historyWritten&&!t.histWarned){
+        t.histWarned=true;
+        const why=r.historyReason==='READONLY'?'目录只读':(r.historyReason||'写入失败');
+        setStatus('这次调用没能记进历史（'+why+'）','warn');
+      }
+    }).catch(()=>{});
+  }catch(e){ /* 记历史是旁路，任何异常都不该冒泡到发送流程 */ }
 }
 
 /* ===================== 路径下钻（响应态） ===================== */

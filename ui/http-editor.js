@@ -2686,6 +2686,7 @@
       openAt: openAt,             /* S2.3：表单 → 源码，定位到某一行 */
       openInForm: openInForm,     /* S2.3：源码 → 表单，把这一段开成请求 tab */
       openContent: openContent,
+      ensureFresh: ensureFresh,   /* S4.2：插身份行后让源码视图跟上磁盘（不脏才重读） */
       pickAndOpen: pickAndOpen,
       pickNative: pickNative,
       save: function () { return doSave(true); },
