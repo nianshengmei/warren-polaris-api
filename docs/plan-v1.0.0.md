@@ -24,9 +24,10 @@
 | S1.5 侧栏改文件源 | ✅ | `app.js` 新增 DOCS 层（`initDocs/refreshDocs/applyDocs/patchGroup/rebindTabs`）；保存走 `writeRequest`、新建走 `appendRequest`、删除走 `deleteRequest`、改名走 `writeRequest(title)`；`persist()` 不再写 collections；资源目录与 `.http` 面板共用（`POLARIS_DOCS.setDir`）；`verify-ui/check-s15.mjs` 17 项真机端到端（假宿主 + 真 fs） |
 | S2.1 字段隔离验收 | ✅ | `store.test.mjs` +4 项（只改 URL / 只改 header / 只改 body / 方法大小写；`<` `>` 行与 Tab 缩进逐字节保留）、`locateSegment` 方法比对统一大写；共 26 项 |
 | S2.2 反向刷新 + 冲突 | ✅ | `app.js` 的 `syncTabsWithDocs`（扫完目录对齐 tab）+ `baseMtime`（基线跟着 tab 走，不再用刚扫出的 mtime，否则外部改动会被静默覆盖）+ `#docConflict` 冲突栏（加载磁盘版本 / 保留我的并覆盖 / 稍后）+ tab ⚠ 标记；`http-editor.js` 记 `mtime` + `loadedText`，保存前比对、冲突停手，底部「用本地覆盖 / 载入磁盘版本」；`verify-ui/check-s22.mjs` 26 项真机端到端（表单侧 + 编辑器侧） |
-| S2.3 双向跳转 | ⬜ 下一步 | — |
+| S2.3 双向跳转 | ✅ | 表单 → 源码：请求栏 `</>`（`openSourceForTab`，脏了先落盘）→ `POLARIS_EDITOR.openAt`（同一文件且磁盘变了会先 `ensureFresh` 重读）；源码 → 表单：gutter 请求行左侧 `▤` + 接口一览 `▤`（`openInForm` → `POLARIS_DOCS.openInForm`，按 id → 行号+方法 → 名称+方法 认段，切过去自动收起浮层）；`verify-ui/check-s23.mjs` 20 项 |
+| S2.4 变量统一 | ⬜ 下一步 | — |
 
-一键自测：`node tools/all.mjs`（9 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `node verify-ui/check-s22.mjs`（26 项）。
+一键自测：`node tools/all.mjs`（9 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）。
 
 **S1.5 留下的三件事**（不影响往下走，记着别忘）：
 1. **拖拽移动暂停**：文件真源下跨文件搬段要保住段落原文，`moveSaved()` 现在直接提示"暂不支持"，`item.draggable=!DOCS.enabled`。要做就得写「原文搬段」（读 src 段行 → 删 → 插到 dst），留 1.0.1。
@@ -137,6 +138,10 @@
 - **验收**：外部改 URL → 切回有提示；选"重载"后表单是新值。
 
 ### S2.3 双向跳转
+
+> **已落地**：`</>` 在请求栏（表单 → 源码），`▤` 在 gutter 与接口一览（源码 → 表单）。
+> 关键坑：同一个文件被表单写回后，编辑器手里还是旧快照 —— `openAt` 发现「同一路径 + 不脏 + mtime 变了」必须重读，
+> 否则跳过去看到的是旧 URL。反过来，编辑器脏着的时候不重读，那是用户正在写的东西。
 
 - **目标**：api → 源码滚到该段并选中；源码 → api 定位到对应请求 tab。
 - **改动**：`ui/http-editor.js`（`scrollToLine` 已有基础）、请求 tab 右上角 `</>`、▶ 旁「表单」图标。

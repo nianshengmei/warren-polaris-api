@@ -454,4 +454,36 @@ ok('S2.2 编辑器：保存前比对 mtime，冲突停手', () => {
   assert(/S\.conflict\)\s*\{[\s\S]{0,120}return false/.test(ed), '有冲突时自动保存必须停手');
 });
 
+/* ---------- v0.9.0 / S2.3：双向跳转 ---------- */
+
+ok('S2.3 表单 → 源码：请求栏「</>」+ 编辑器 openAt', () => {
+  assert(/id="srcBtn"/.test(read('ui/index.html')), '请求栏缺少 </> 按钮');
+  const s = read('ui/app.js');
+  ['openSourceForTab', 'openInFormForDoc', 'locateDocRequest'].forEach((k) => {
+    assert(s.indexOf('function ' + k) > 0, 'app.js 缺少 ' + k);
+  });
+  assert(/'#srcBtn'/.test(s), '</> 按钮未绑定');
+  assert(/POLARIS_EDITOR\.openAt\(/.test(s), '要调编辑器的 openAt');
+  assert(/openInSource/.test(s), 'POLARIS_DOCS 要暴露 openInSource');
+  const ed = read('ui/http-editor.js');
+  ['openAt', 'openInForm', 'ensureFresh'].forEach((k) => {
+    assert(ed.indexOf('function ' + k) > 0, 'http-editor.js 缺少 ' + k);
+  });
+  assert(/openAt: openAt/.test(ed), '编辑器要暴露 openAt');
+  /* 同一文件被表单改过：不脏就必须重读，否则跳过去看到的是旧 URL */
+  assert(/ensureFresh\(path\)/.test(ed), '同文件跳转前要校验磁盘版本');
+});
+
+ok('S2.3 源码 → 表单：gutter ▤ + 接口一览 ▤', () => {
+  const ed = read('ui/http-editor.js');
+  assert(/pa-fe-form/.test(ed), 'gutter 缺少 ▤ 入口');
+  assert(/pa-fe-oif/.test(ed), '接口一览缺少 ▤ 入口');
+  assert(/openInForm\(fr\)/.test(ed) && /openInForm\(ifr\)/.test(ed), '▤ 点击未接到 openInForm');
+  assert(/openInForm: function/.test(read('ui/app.js')), 'POLARIS_DOCS 要暴露 openInForm');
+  /* 认段顺序必须是 id → 行号+方法 → 名称+方法（唯一），不许靠 URL 猜 */
+  const s = read('ui/app.js');
+  assert(/function locateDocRequest[\s\S]{0,400}interfaceId[\s\S]{0,300}line[\s\S]{0,300}name/.test(s),
+    'locateDocRequest 的认段顺序应为 id → 行号 → 名称');
+});
+
 console.log('\n' + pass + ' checks passed');

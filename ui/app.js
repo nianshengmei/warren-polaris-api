@@ -381,6 +381,59 @@ function scheduleDocsRefresh(delay){
   _docsTimer=setTimeout(()=>{ refreshDocs(true); }, delay||300);
 }
 
+/* ===================== 双向跳转（S2.3） =====================
+ * api → 源码：把当前 tab 那一段在浮层里滚出来并选中（脏了先落盘，否则源码看到的还是旧 URL）。
+ * 源码 → api：按 interfaceId / 行号 / 名称 在同一次快照里认出那一段，开成请求 tab。
+ * 两侧都不猜：认不出就明说，绝不落到「看起来像」的别的段上。 */
+function locateDocRequest(g,info){
+  if(!g||!info) return null;
+  const rs=g.requests||[];
+  if(info.interfaceId){ const h=rs.find(x=>x.interfaceId===info.interfaceId); if(h) return h; }
+  if(info.line!=null){
+    const ln=Number(info.line);
+    const h=rs.find(x=>x.httpSource&&x.httpSource.line===ln&&(!info.method||x.method===info.method));
+    if(h) return h;
+  }
+  if(info.name){
+    const same=rs.filter(x=>x.name===info.name&&(!info.method||x.method===info.method));
+    if(same.length===1) return same[0];
+  }
+  return null;
+}
+
+async function openInFormForDoc(path,info){
+  info=info||{};
+  if(!path){ setStatus('这段还没绑定文件','warn'); return false; }
+  let g=state.collections.find(x=>x.path===path);
+  if(!g){ await refreshDocs(true); g=state.collections.find(x=>x.path===path); }
+  let r=locateDocRequest(g,info);
+  if(!r){                                    /* 快照旧了（刚在源码里改过）→ 只重读这一个文件再认一次 */
+    const gg=await patchGroup(path);
+    if(gg){ g=gg; r=locateDocRequest(g,info); }
+  }
+  if(!r){ setStatus('文件里找不到这一段（可能刚被改动），先点 ↻ 重扫再看','warn'); return false; }
+  openSaved(r);
+  setStatus('已切到表单：'+r.name,'ok');
+  return true;
+}
+
+async function openSourceForTab(){
+  const t=activeTab(); if(!t) return false;
+  const ref=t.docRef;
+  if(!ref||!ref.file){ setStatus('这个请求还没落到 .http 文件，先在表单里保存一次','warn'); return false; }
+  if(!window.POLARIS_EDITOR||!window.POLARIS_EDITOR.openAt){ setStatus('.http 源码视图暂不可用','warn'); return false; }
+  if(t.dirty){                               /* 先把表单里的改动写回那一段，再跳，否则源码里看不到刚改的 URL */
+    const ok=await saveCurrent();
+    if(ok===false) return false;
+    const fresh=findSaved(t.savedId);
+    if(fresh&&fresh.r.httpSource) ref.line=fresh.r.httpSource.line;
+  }
+  const done=await window.POLARIS_EDITOR.openAt(ref.file, ref.line);
+  if(done) setStatus('已在源码中定位到第 '+(ref.line||'?')+' 行','ok');
+  else setStatus('打开 .http 源码失败：文件可能已被移动','warn');
+  return done;
+}
+
 /* ===================== 变量解析 ===================== */
 function curEnv(){ return state.envs.find(e=>e.id===state.activeEnv); }
 function resolveVars(str){
@@ -1216,6 +1269,7 @@ function downloadResp(){ const t=activeTab(); const r=t.response; if(!r||r.error
 function bindEvents(){
   const sb=$('#sendBtn'); if(sb) sb.onclick=send;
   const sv=$('#saveBtn'); if(sv) sv.onclick=saveCurrent;
+  const srcb=$('#srcBtn'); if(srcb) srcb.onclick=()=>openSourceForTab();
   const cb=$('#curlBtn'); if(cb) cb.onclick=()=>copy(toCurl(activeTab(), resolveVars),'cURL 已复制');
   const ci=$('#curlImportBtn'); if(ci) ci.onclick=openCurlImport;
   const cr=$('#copyResBtn'); if(cr) cr.onclick=()=>{ const t=activeTab(); const d=getDrilled(t); if(!t.response||t.response.error)return; copy(d.hasJSON?JSON.stringify(d.data,null,2):(t.response.text||''),'已复制'); };
@@ -1396,6 +1450,10 @@ window.POLARIS_DOCS = {
   enabled: function(){ return DOCS.enabled; },
   dir: function(){ return DOCS.dir; },
   refresh: function(quiet){ return refreshDocs(quiet !== false); },
+  /* S2.3：源码视图点「▭」→ 在表单里打开这一段 */
+  openInForm: function(path,info){ return openInFormForDoc(path,info); },
+  /* S2.3：表单右上角「</>」→ 在源码里定位这一段 */
+  openInSource: function(){ return openSourceForTab(); },
   setDir: async function(dir){
     dir=String(dir||'').trim();
     if(!DOCS.enabled||!dir||dir===DOCS.dir) return false;

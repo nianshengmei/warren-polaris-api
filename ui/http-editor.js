@@ -359,6 +359,10 @@
       '.pa-fe-oi.on{background:var(--surface-3,#2c2f3a);box-shadow:inset 2px 0 0 var(--brand,#ff7a59)}',
       '.pa-fe-mb{flex:none;font-size:9px;font-weight:700;letter-spacing:.03em;width:38px;text-align:right;font-family:var(--mono,Consolas,monospace)}',
       '.pa-fe-oin{flex:1;font-size:11.5px;color:var(--ink,#d8dae2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.pa-fe-oif{flex:none;font-size:9px;color:var(--dimmer,#6e7282);padding:0 3px;opacity:0;transition:.12s}',
+      '.pa-fe-oi:hover .pa-fe-oif{opacity:1}',
+      '.pa-fe-oif:hover{color:var(--brand,#ff7a59)}',
+      '.pa-fe-oi.on .pa-fe-oif{opacity:.55}',
       '.pa-fe-oi.on .pa-fe-oin{color:var(--brand,#ff7a59)}',
       '.pa-fe-ost{flex:none;width:5px;height:5px;border-radius:50%;background:var(--dimmer,#6e7282)}',
       '.pa-fe-ost.ok{background:var(--ok,#3fb950)}',
@@ -409,6 +413,9 @@
       '.pa-fe-ln{position:absolute;right:6px;height:20px;line-height:20px;font-family:var(--mono,Consolas,monospace);font-size:10.5px;color:var(--dimmer,#6e7282);text-align:right;pointer-events:none;user-select:none}',
       '.pa-fe-ln.on{color:var(--brand,#ff7a59);font-weight:700}',
       '.pa-fe-run{position:absolute;left:20px;width:16px;height:20px;line-height:19px;text-align:center;font-size:9px;color:var(--ok,#3fb950);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;transition:.12s}',
+      /* 双向跳转：请求行左侧「在表单里打开」 */
+      '.pa-fe-form{position:absolute;left:3px;width:15px;height:20px;line-height:19px;text-align:center;font-size:10px;color:var(--dim,#a8acba);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;transition:.12s}',
+      '.pa-fe-form:hover{background:var(--brand,#ff7a59);color:#1a0d08;transform:scale(1.12)}',
       '.pa-fe-fold{position:absolute;left:3px;width:14px;height:20px;line-height:19px;text-align:center;font-size:9px;color:var(--dimmer,#6e7282);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;opacity:.5;transition:.12s}',
       '.pa-fe-fold:hover{opacity:1;color:var(--brand,#ff7a59);background:var(--surface-2,#252830)}',
       '.pa-fe-fold.on{opacity:.95;color:var(--brand,#ff7a59)}',
@@ -812,6 +819,8 @@
       var ri = byLine[ln];
       if (ri !== undefined) {
         var st = S.lastRun[ln] || '';
+        out.push('<div class="pa-fe-form" style="top:' + top + 'px" data-ri="' + ri + '" title="在表单里打开：' +
+          esc(reqName(reqs[ri])) + '">▤</div>');
         out.push('<div class="pa-fe-run ' + st + '" style="top:' + top + 'px" data-ri="' + ri + '" title="运行：' +
           esc(reqName(reqs[ri])) + '">▶</div>');
       }
@@ -1235,6 +1244,7 @@
         '" data-ri="' + i + '" data-line="' + r.line + '" title="' + esc(r.method + ' ' + r.url) + '">' +
         '<span class="pa-fe-mb t-m-' + String(r.method || 'get').toLowerCase() + '">' + esc(r.method) + '</span>' +
         '<span class="pa-fe-oin">' + esc(nm) + '</span>' +
+        '<span class="pa-fe-oif" data-ri="' + i + '" title="在表单里打开">▤</span>' +
         (st ? '<i class="pa-fe-ost ' + st + '"></i>' : '') +
         '</button>');
     }
@@ -1637,6 +1647,65 @@
     clearTimeout(parseTimer);
     parseTimer = setTimeout(reparse, 200);
     scheduleSave();
+  }
+
+  /* ===================== 双向跳转（S2.3） ===================== */
+  /* 同一文件被表单写回后，编辑器里还是旧快照。不脏就重读一次（脏了以编辑器为准，
+   * 那是用户正在写的东西，不能替他丢掉）。这跟 S2.2 的保存前比对是一对：一个防覆盖别人，一个防看到旧内容。 */
+  async function ensureFresh(path) {
+    if (S.dirty || S.mtime == null) return false;
+    var cur = null;
+    try {
+      var st = await invoke('http/statFile', { path: path });
+      cur = st && st.exists ? Math.round(st.modified || 0) : null;
+    } catch (e) { return false; }
+    if (cur == null || cur === Math.round(S.mtime)) return false;
+    try { await openPath(path); return true; } catch (e) { return false; }
+  }
+
+  /* 表单 → 源码：打开（或复用）这个文件，把浮层张开来，滚到第 line 行并选中。
+   * 文件已经打开时不再重读 —— 否则会把这边的未保存改动丢掉。 */
+  async function openAt(path, line, opts) {
+    opts = opts || {};
+    if (!path) return false;
+    if (S.path !== path) {
+      try { await openPath(path); } catch (e) { toast('打开失败：' + esc(e.message || e)); return false; }
+    } else {
+      await ensureFresh(path);                  /* 同一文件：表单刚写过就重读，否则看到的是旧 URL */
+    }
+    open();                                     /* 收起状态也一并张开 */
+    var li = line == null ? null : Number(line);
+    var ri = null;
+    if (li) {
+      var reqs = (S.parsed && S.parsed.requests) || [];
+      for (var i = 0; i < reqs.length; i++) if (reqs[i].line === li) { ri = i; break; }
+    }
+    var jump = function () { if (li) gotoLine(li, ri); };
+    jump();                                     /* 先跳一次：此时解析已完成，选中立刻生效 */
+    setTimeout(jump, 90);                       /* 布局刚张开时高度还没算好，再补一次滚动 */
+    setTimeout(function () { if (!opts.keepFocus) return; if (ta) ta.focus(); }, 120);
+    setTimeout(function () { if (window.POLARIS_DOCS && window.POLARIS_DOCS.refresh) window.POLARIS_DOCS.refresh(true); }, 300);
+    return true;
+  }
+
+  /* 源码 → 表单：点请求行左侧的 ▭，按 id / 行号 / 名称 认出那一段，交给 app.js 开成 tab */
+  async function openInForm(ri) {
+    var reqs = (S.parsed && S.parsed.requests) || [];
+    var r = reqs[ri];
+    if (!r) return false;
+    if (S.dirty) {                              /* 先把源码改动落盘，否则表单读到的是旧内容 */
+      var ok = await doSave(false);
+      if (!ok && S.conflict) { toast('先把磁盘冲突处理掉，再切表单'); return false; }
+      reqs = (S.parsed && S.parsed.requests) || [];
+      r = reqs[ri] || r;
+    }
+    var bridge = window.POLARIS_DOCS;
+    if (!bridge || !bridge.openInForm) { toast('表单视图不可用（缺少文件真源桥）'); return false; }
+    var done = await bridge.openInForm(S.path, {
+      line: r.line, interfaceId: r.interfaceId || null, name: reqName(r), method: r.method
+    });
+    if (done) collapse(true);                   /* 浮层盖着的正是表单那块，切过去就收起来 */
+    return done;
   }
 
   /* ===================== 打开 / 文件列表 ===================== */
@@ -2306,6 +2375,14 @@
     }
     if (E.olist) {
       E.olist.addEventListener('click', function (e) {
+        var fi2 = e.target && e.target.closest ? e.target.closest('.pa-fe-oif') : null;
+        if (fi2) {                              /* ▭：直接去表单，不再只是滚动 */
+          e.preventDefault();
+          e.stopPropagation();
+          var ifr = Number(fi2.getAttribute('data-ri'));
+          if (isFinite(ifr)) openInForm(ifr);
+          return;
+        }
         var b = e.target && e.target.closest ? e.target.closest('.pa-fe-oi') : null;
         if (!b) return;
         var line = Number(b.getAttribute('data-line'));
@@ -2339,6 +2416,14 @@
         e.preventDefault();
         e.stopPropagation();
         toggleFold(Number(fb.getAttribute('data-fold')));
+        return;
+      }
+      var fb0 = t.closest('.pa-fe-form');
+      if (fb0) {
+        e.preventDefault();
+        e.stopPropagation();
+        var fr = Number(fb0.getAttribute('data-ri'));
+        if (isFinite(fr)) openInForm(fr);
         return;
       }
       var b = t.closest('.pa-fe-run');
@@ -2456,6 +2541,8 @@
       close: exitMode,
       state: S,
       openPath: openPath,
+      openAt: openAt,             /* S2.3：表单 → 源码，定位到某一行 */
+      openInForm: openInForm,     /* S2.3：源码 → 表单，把这一段开成请求 tab */
       openContent: openContent,
       pickAndOpen: pickAndOpen,
       pickNative: pickNative,
