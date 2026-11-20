@@ -64,7 +64,7 @@ node dev/dev-server.mjs
 > **⚠ 仓库里没有的东西**：`verify-ui/`（二十个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
-> - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261121-r12.zip` 里
+> - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261121-r13.zip` 里
 >   取 `verify-ui/` 和 `dev-workspace/`，放到与 `warren-polaris-api` 同级。
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
@@ -247,7 +247,7 @@ cd warren-polaris-api && git log --oneline -1   # 应能看到 a500446 及其后
 **B. 迁移包（离线备份 / 补 verify-ui 用）**
 
 ```
-polaris-handoff-20261121-r12.zip   （7.6 MB，685 条目，已校验 UTF-8 文件名 + testzip）
+polaris-handoff-20261121-r13.zip   （7.6 MB，685 条目，已校验 UTF-8 文件名 + testzip）
 ├── warren-polaris-api/     完整项目，含 .git（已解压实测过：git status 干净、14/14 全绿）
 ├── verify-ui/              端到端脚本 20 个（不含 node_modules，Mac 上 npm i playwright-core）
 ├── dev-workspace/          调试目录（含 wpa-workspace.json 与两个 .http）
