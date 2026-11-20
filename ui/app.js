@@ -146,7 +146,14 @@ async function refreshDocs(quiet){
     DOCS.files=list; DOCS.lastScan=Date.now();
     applyDocs(list);
     rebindTabs();
+    const sync=syncTabsWithDocs();
     renderSidebar();
+    if(sync.reloaded){
+      renderTabs();
+      if(sync.reloadedIds.indexOf(state.activeTab)>=0){ renderReqEditor(); renderRequestBar(); }
+      setStatus('磁盘内容已更新，已重新载入 '+sync.reloaded+' 个请求','ok');
+    }
+    if(sync.conflicts){ renderTabs(); renderConflictBar(); }
     const head=$('.side-head .t'); if(head) head.title=DOCS.dir;
     return true;
   }catch(e){
@@ -203,10 +210,108 @@ function rebindTabs(){
     }else{ t.savedId=null; t.docRef=null; }
   });
 }
-function setTabDocRef(t,path,req){
+/* baseMtime = 这个 tab 的内容「读到的是哪一版」。写回时拿它当基线，磁盘变了就 CONFLICT，
+ * 不能拿刚扫出来的 g.mtime —— 那样外部改动会被静默覆盖。 */
+function setTabDocRef(t,path,req,mtime){
   t.savedId=req.id;
   t.docRef={ file:path, line:req.httpSource?req.httpSource.line:null,
              interfaceId:req.interfaceId||null, name:req.name, method:req.method };
+  if(mtime!=null) t.baseMtime=Math.round(mtime);
+  else if(req.httpSource&&req.httpSource.mtime) t.baseMtime=Math.round(req.httpSource.mtime);
+  t.docConflict=null;
+}
+
+/* 把磁盘上的那一段灌回 tab（清掉草稿状态）。字段一一对应，别漏 bodyType/formBody：
+ * 漏一个就会出现「表单看着是新的、发出去还是旧的」。 */
+function applyRequestToTab(t,r){
+  if(!r) return false;
+  t.name=r.name; t.method=r.method; t.url=r.url||'';
+  t.headers=JSON.parse(JSON.stringify(r.headers&&r.headers.length?r.headers:[blankRow()]));
+  t.params=[blankRow()];
+  t.formBody=JSON.parse(JSON.stringify(r.formBody&&r.formBody.length?r.formBody:[blankRow()]));
+  t.bodyType=r.bodyType||'none'; t.body=r.body||'';
+  t.dirty=false;
+  return true;
+}
+
+/* 扫完目录后对齐 tab：干净的直接换成磁盘内容（外部改了 URL，切回来就能看到）；
+ * 有草稿的不动内容，只挂冲突标记，让用户自己选哪一份。 */
+function syncTabsWithDocs(){
+  let reloaded=0, conflicts=0; const reloadedIds=[];
+  state.tabs.forEach(t=>{
+    if(!t.docRef||!t.docRef.file) return;
+    const g=state.collections.find(x=>x.path===t.docRef.file);
+    if(!g){
+      if(!t.docConflict){ t.docConflict={ file:t.docRef.file, missing:true, name:STORE.baseName(t.docRef.file) }; conflicts++; }
+      return;
+    }
+    const r=g.requests.find(x=>x.id===t.savedId)||
+            (t.docRef.interfaceId?g.requests.find(x=>x.interfaceId===t.docRef.interfaceId):null)||
+            null;
+    if(!r) return;
+    if(t.baseMtime==null){ t.baseMtime=Math.round(g.mtime||0); return; }   // 0.6.x 遗留下来的 tab：先认当前版本
+    if(Math.round(g.mtime||0)===Math.round(t.baseMtime)) return;
+    if(t.dirty){
+      if(!t.docConflict){ t.docConflict={ file:g.path, mtime:Math.round(g.mtime||0), name:g.name }; conflicts++; }
+    }else{
+      applyRequestToTab(t,r);
+      setTabDocRef(t,g.path,r,g.mtime);
+      reloaded++; reloadedIds.push(t.id);
+    }
+  });
+  return { reloaded, reloadedIds, conflicts };
+}
+
+/* 冲突栏：只在「当前 tab 有冲突」时出现，两个按钮直接决定谁赢，不做隐式覆盖 */
+function renderConflictBar(){
+  const bar=$('#docConflict'); if(!bar) return;
+  const t=activeTab();
+  const c=t&&t.docConflict;
+  if(!c||c.dismissed){ bar.style.display='none'; bar.innerHTML=''; return; }
+  bar.style.display='flex';
+  bar.innerHTML=
+    '<span class="dc-ico">⚠</span>'+
+    '<span class="dc-msg">'+(c.missing
+      ? ('文件 <b>'+esc(c.name||'')+'</b> 已不在磁盘上，当前内容还在这个 tab 里')
+      : ('磁盘上的 <b>'+esc(c.name||'')+'</b> 已被外部修改（IDE 保存 / git 切换），你这边也有未保存的改动'))+
+    '</span>'+
+    '<span class="dc-acts">'+
+      (c.missing?'':'<button class="dc-btn primary" data-act="reload">加载磁盘版本</button>')+
+      '<button class="dc-btn" data-act="mine">保留我的'+(c.missing?'':'并覆盖')+'</button>'+
+      '<button class="dc-btn ghost" data-act="later" title="先不改，点 tab 上的 ⚠ 可再打开这条">稍后</button>'+
+    '</span>';
+  const btn=act=>bar.querySelector('[data-act="'+act+'"]');
+  const on=btn('reload'); if(on) on.onclick=()=>resolveConflict(t,'reload');
+  const om=btn('mine');   if(om) om.onclick=()=>resolveConflict(t,'mine');
+  const ol=btn('later');  if(ol) ol.onclick=()=>{ c.dismissed=true; renderConflictBar(); };
+}
+
+async function resolveConflict(t,how){
+  if(!t) return;
+  if(how==='reload'){
+    const g=state.collections.find(x=>x.path===(t.docRef&&t.docRef.file));
+    const r=g&&(g.requests.find(x=>x.id===t.savedId)||
+                (t.docRef.interfaceId?g.requests.find(x=>x.interfaceId===t.docRef.interfaceId):null));
+    if(!g||!r){ setStatus('磁盘上已经找不到这一段了，保留当前内容','warn'); t.docConflict=null; renderAll(); return; }
+    applyRequestToTab(t,r);
+    setTabDocRef(t,g.path,r,g.mtime);
+    renderAll(); persist();
+    setStatus('已载入磁盘版本','ok');
+    return;
+  }
+  /* 保留我的：先把基线抬到磁盘当前版本（否则写回又会被判冲突），再立刻覆盖 */
+  const g=state.collections.find(x=>x.path===(t.docRef&&t.docRef.file));
+  const r=g&&(g.requests.find(x=>x.id===t.savedId)||
+              (t.docRef.interfaceId?g.requests.find(x=>x.interfaceId===t.docRef.interfaceId):null));
+  if(!g||!r){
+    t.docConflict=null; t.savedId=null; t.docRef=null;
+    renderAll(); persist();
+    setStatus('文件已不在磁盘上，这段内容保留为未保存的 tab','warn');
+    return;
+  }
+  t.baseMtime=Math.round(g.mtime||0); t.docConflict=null;
+  renderConflictBar();
+  await saveToDoc(t,{g,r});
 }
 
 /* tab → 文件里那一段要写的内容。URL 保持 {{var}} 原文（变量只在发送时展开）。 */
@@ -235,7 +340,7 @@ async function saveToDoc(t,f){
       line:f.r.httpSource.line, method:t.method, url:req.url,
       headers:req.headers, body:req.body, bodyType:req.bodyType,
       interfaceId:f.r.httpSource.interfaceId||(t.docRef&&t.docRef.interfaceId)||null
-    },{ baseMtime:f.g.mtime });
+    },{ baseMtime:t.baseMtime!=null?t.baseMtime:f.g.mtime });
   }catch(e){
     setStatus('保存失败：'+(e.message||e),'err'); return false;
   }
@@ -245,17 +350,23 @@ async function saveToDoc(t,f){
     const g=await patchGroup(f.r.httpSource.file);
     if(g&&g.requests[res.segment]){
       const nr=g.requests[res.segment];
-      setTabDocRef(t,f.r.httpSource.file,nr);
+      setTabDocRef(t,f.r.httpSource.file,nr,g.mtime);
       if(nr.name!==t.name){ t.name=nr.name; renderTabs(); }   // tab 标题跟随文件里的 ###，避免两边两套名字
     }
-    renderTabs(); renderSidebar();
+    renderTabs(); renderSidebar(); renderConflictBar();
     setStatus('已写入「'+f.g.name+'」','ok');
     toast('已更新「'+esc(t.name)+'」 <b>✓</b>');
     return true;
   }
   if(res.reason==='CONFLICT'){
+    /* 不静默覆盖：先把磁盘版本拉回来（干净 tab 会自动同步，脏 tab 挂冲突标记），
+     * 然后让用户在「加载磁盘版本 / 保留我的」之间明确选一次。 */
     await refreshDocs(true);
-    setStatus('文件已被别处修改，已重新载入；请确认内容后再保存','warn');
+    if(!t.docConflict) t.docConflict={ file:f.r.httpSource.file, mtime:res.current||0, name:f.g.name };
+    t.docConflict.dismissed=false;   /* 用户点过保存就重新亮出来，不能因为先前「稍后」而静默 */
+    renderConflictBar();
+    setStatus('文件已在别处被修改，请选择保留哪一份','warn');
+    toast('「'+esc(t.name)+'」在磁盘上被改过 <b>⚠</b>');
     return false;
   }
   setStatus('保存失败：'+(res.reason||'写入被拒')+(res.error?(' · '+res.error):''),'err');
@@ -460,6 +571,12 @@ function renderTabs(){
   state.tabs.forEach(t=>{
     const tab=el('div','rtab'+(t.id===state.activeTab?' active':''));
     tab.innerHTML=`<span class="tm ${methodColor(t.method)}">${t.method}</span><span class="tn">${esc(t.name)}</span>`;
+    if(t.docConflict){
+      const w=el('span','conflict','⚠');
+      w.title='磁盘上的这一段被外部改过，点这里处理';
+      w.onclick=e=>{ e.stopPropagation(); state.activeTab=t.id; if(t.docConflict) t.docConflict.dismissed=false; renderAll(); persist(); };
+      tab.appendChild(w);
+    }
     if(t.dirty) tab.appendChild(el('span','dirty'));
     const x=el('button','tx','×'); x.title='关闭'; x.onclick=e=>{e.stopPropagation();closeTab(t);}; tab.appendChild(x);
     tab.onclick=()=>{ state.activeTab=t.id; renderAll(); persist(); };
@@ -885,7 +1002,7 @@ async function appendToDoc(t,path,newFileName,name){
   if(!res.ok){ setStatus('写入失败：'+(res.reason||'')+(res.error?(' · '+res.error):''),'err'); return; }
   t.name=name; t.dirty=false;
   const g=await patchGroup(target);
-  if(g&&g.requests[res.index]) setTabDocRef(t,target,g.requests[res.index]);
+  if(g&&g.requests[res.index]) setTabDocRef(t,target,g.requests[res.index],g.mtime);
   renderTabs(); renderSidebar();
   setStatus('已写入「'+(g?g.name:STORE.baseName(target))+'」','ok');
   toast('已保存「'+esc(name)+'」 <b>✓</b>');
@@ -895,7 +1012,10 @@ function openSaved(r){
   const exist=state.tabs.find(t=>t.savedId===r.id); if(exist){ state.activeTab=exist.id; renderAll(); return; }
   const t=newTab({ name:r.name,savedId:r.id,method:r.method,url:r.url, params:JSON.parse(JSON.stringify(r.params||[blankRow()])), headers:JSON.parse(JSON.stringify(r.headers||[blankRow()])), bodyType:r.bodyType||'none',body:r.body||'',formBody:JSON.parse(JSON.stringify(r.formBody||[blankRow()])) });
   if(!t.params.length)t.params=[blankRow()]; if(!t.headers.length)t.headers=[blankRow()]; if(!t.formBody.length)t.formBody=[blankRow()];
-  if(r.httpSource) t.docRef={ file:r.httpSource.file, line:r.httpSource.line, interfaceId:r.interfaceId||null, name:r.name, method:r.method };
+  if(r.httpSource){
+    t.docRef={ file:r.httpSource.file, line:r.httpSource.line, interfaceId:r.interfaceId||null, name:r.name, method:r.method };
+    if(r.httpSource.mtime) t.baseMtime=Math.round(r.httpSource.mtime);
+  }
   state.tabs.unshift(t); state.activeTab=t.id; renderAll(); persist(); setStatus('已载入「'+r.name+'」');
 }
 
@@ -941,11 +1061,14 @@ function renameSaved(g,r){
         line:r.httpSource.line, method:r.method, title:name, name:name,
         interfaceId:r.httpSource.interfaceId||null
       },{ baseMtime:g.mtime });
-      if(!res.ok){ setStatus('改名失败：'+(res.reason||''),'err'); return; }
+      if(!res.ok){
+        if(res.reason==='CONFLICT'){ await refreshDocs(true); setStatus('文件已被别处修改，已重新载入；确认后再改名','warn'); return; }
+        setStatus('改名失败：'+(res.reason||''),'err'); return;
+      }
       const ng=await patchGroup(g.path);
       if(ng&&ng.requests[res.segment]){
         const nr=ng.requests[res.segment];
-        state.tabs.forEach(t=>{ if(t.savedId===r.id){ t.savedId=nr.id; t.name=name; setTabDocRef(t,g.path,nr); } });
+        state.tabs.forEach(t=>{ if(t.savedId===r.id){ t.savedId=nr.id; t.name=name; setTabDocRef(t,g.path,nr,ng.mtime); } });
       }
       renderSidebar(); renderTabs();
       setStatus('已重命名为「'+name+'」','ok');
@@ -1169,7 +1292,7 @@ function bindCellTooltip(){
 function applyLayout(){ const split=$('#split'); if(!split)return; split.classList.toggle('h',ui.layout==='h'); const defH=240, defW=520; split.style.setProperty('--reqH',(ui.reqH||defH)+'px'); split.style.setProperty('--reqW',(ui.reqW||defW)+'px'); const lb=$('#layoutBtn'); if(lb) lb.innerHTML = ui.layout==='h'?'⇅ 上下':'⇄ 左右'; }
 
 /* ===================== 总渲染 + 初始化 ===================== */
-function renderAll(){ renderTabs(); renderRequestBar(); renderReqEditor(); renderResponse(); renderSidebar(); renderEnv(); }
+function renderAll(){ renderTabs(); renderRequestBar(); renderReqEditor(); renderResponse(); renderSidebar(); renderEnv(); renderConflictBar(); }
 async function initApi(){
   // 先绑定所有 DOM 事件（DOM 必须已就绪）
   bindMethodMenu();

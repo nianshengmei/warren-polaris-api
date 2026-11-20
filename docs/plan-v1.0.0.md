@@ -23,9 +23,10 @@
 | S1.4 旧数据迁移 | ✅ | `migrateFromStorage` / `mirrorRequest`；`migrate.test.mjs` 9 项 |
 | S1.5 侧栏改文件源 | ✅ | `app.js` 新增 DOCS 层（`initDocs/refreshDocs/applyDocs/patchGroup/rebindTabs`）；保存走 `writeRequest`、新建走 `appendRequest`、删除走 `deleteRequest`、改名走 `writeRequest(title)`；`persist()` 不再写 collections；资源目录与 `.http` 面板共用（`POLARIS_DOCS.setDir`）；`verify-ui/check-s15.mjs` 17 项真机端到端（假宿主 + 真 fs） |
 | S2.1 字段隔离验收 | ✅ | `store.test.mjs` +4 项（只改 URL / 只改 header / 只改 body / 方法大小写；`<` `>` 行与 Tab 缩进逐字节保留）、`locateSegment` 方法比对统一大写；共 26 项 |
-| S2.2 起 | ⬜ 下一步 | 反向刷新 + CONFLICT 二选一 |
+| S2.2 反向刷新 + 冲突 | ✅ | `app.js` 的 `syncTabsWithDocs`（扫完目录对齐 tab）+ `baseMtime`（基线跟着 tab 走，不再用刚扫出的 mtime，否则外部改动会被静默覆盖）+ `#docConflict` 冲突栏（加载磁盘版本 / 保留我的并覆盖 / 稍后）+ tab ⚠ 标记；`http-editor.js` 记 `mtime` + `loadedText`，保存前比对、冲突停手，底部「用本地覆盖 / 载入磁盘版本」；`verify-ui/check-s22.mjs` 26 项真机端到端（表单侧 + 编辑器侧） |
+| S2.3 双向跳转 | ⬜ 下一步 | — |
 
-一键自测：`node tools/all.mjs`（9 个文件 189 项全绿）+ `node verify-ui/check-s15.mjs`（17 项，假宿主 + 真 fs 端到端）。
+一键自测：`node tools/all.mjs`（9 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `node verify-ui/check-s22.mjs`（26 项）。
 
 **S1.5 留下的三件事**（不影响往下走，记着别忘）：
 1. **拖拽移动暂停**：文件真源下跨文件搬段要保住段落原文，`moveSaved()` 现在直接提示"暂不支持"，`item.draggable=!DOCS.enabled`。要做就得写「原文搬段」（读 src 段行 → 删 → 插到 dst），留 1.0.1。
@@ -127,6 +128,9 @@
 - **风险**：这是最容易写坏用户文件的点。先写测试再改实现；先在 fixtures 上跑通，再开 UI。
 
 ### S2.2 反向刷新 + 冲突
+
+> **已落地**：干净 tab 静默同步；脏 tab 挂 `docConflict`，由 `#docConflict` 栏三选一（加载磁盘版本 / 保留我的并覆盖 / 稍后）。
+> 关键坑：写回基线必须用 `t.baseMtime`（打开/上次写回时的那一版），**不能用刚扫出来的 `g.mtime`** —— 后者一刷新就等于「承认外部改动」，保存会静默覆盖别人的内容。编辑器同理，用 `S.loadedText` 排除「mtime 变了但内容一样」的假冲突。
 
 - **目标**：文件被外部改了（IDEA 保存），切回插件时表单显示新内容，且**不静默覆盖**用户正在编辑的草稿。
 - **改动**：`ui/http-editor.js` 打开时记 mtime；`ui/app.js` 收到 `CONFLICT` 时弹「已重载 / 保留我的」二选一。

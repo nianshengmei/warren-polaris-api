@@ -76,7 +76,12 @@
     saveCount: 0,      /* 本次打开后成功保存的次数（UI 上显示 ×N，证明「点多次都能存」） */
     lastOpenAt: 0,     /* 防抖：HTML5 drop 与宿主 onDrop 同时到达 */
     picking: false,    /* 系统文件对话框互斥，避免叠两个框 */
-    pickError: ''      /* 原生对话框不可用时的原因，降级时提示用 */
+    pickError: '',     /* 原生对话框不可用时的原因，降级时提示用 */
+    /* v0.9.0 S2.2：磁盘版本基线。loadedText = 我们读进来（或刚写出去）的那一版文字，
+     * 外部改动时用它判断「磁盘变了但内容其实一样」这种假冲突（touch / git checkout）。 */
+    mtime: null,
+    loadedText: '',
+    conflict: null     /* { diskText, mtime } —— 有值时不自动保存，等用户选覆盖还是载入 */
   };
 
   var pane = null, edge = null, ta = null, ginner = null, hlEl = null, E = {};
@@ -302,6 +307,12 @@
       '.pa-fe-save.ok{color:var(--ok,#3fb950)}',
       '.pa-fe-save.err{color:var(--err,#f85149)}',
       '.pa-fe-save.busy{color:var(--warn,#d29922)}',
+      '.pa-fe-save.conflict{color:var(--warn,#d29922);font-weight:600}',
+      '.pa-fe-cf{display:flex;align-items:center;gap:7px;color:var(--warn,#d29922);font-size:10.5px}',
+      '.pa-fe-cf[hidden]{display:none}',
+      '.pa-fe-cf-btn{height:19px;padding:0 8px;border-radius:4px;border:1px solid rgba(210,153,34,.45);background:transparent;color:var(--ink,#e6e8ee);font-size:10.5px;line-height:1}',
+      '.pa-fe-cf-btn:hover{background:rgba(210,153,34,.16)}',
+      '.pa-fe-cf-btn.primary{border-color:var(--warn,#d29922);color:var(--warn,#d29922);font-weight:600}',
       '.pa-fe-btn{font:inherit;font-size:11.5px;padding:4px 9px;border-radius:5px;border:1px solid var(--line-2,rgba(255,255,255,.18));background:transparent;color:var(--ink,#d8dae2);cursor:pointer;white-space:nowrap;transition:.12s}',
       '.pa-fe-btn:hover{border-color:var(--brand,#ff7a59);color:var(--brand,#ff7a59)}',
       '.pa-fe-btn.on{background:var(--brand,#ff7a59);border-color:transparent;color:#fff}',
@@ -491,7 +502,7 @@
       '    <div class="pa-fe-idle" id="paFeIdle"><div style="font-size:13px;font-weight:600;color:var(--dim,#a8acba)">打开本地 .http 文件</div><div>点上方 <b>📂 打开</b>（或顶栏「▤ 打开 .http」）弹出系统文件对话框选择文件；<br>也可以直接把文件<b>从资源管理器拖进来</b>。</div><div style="font-size:11.5px">打开后可直接编辑，<b>自动保存</b>写回原文件、「保存」可反复点；每个请求左侧 ▶ 一点即发，结果显示在下方响应框。</div></div>',
       '  </div>',
       '</div>',
-      '<div class="pa-fe-foot"><span id="paFeFoot">—</span><span class="sp"></span><span>▶ 运行该请求 · Ctrl+S 保存 · Tab 缩进</span></div>'
+      '<div class="pa-fe-foot"><span id="paFeFoot">—</span><span class="pa-fe-cf" id="paFeConflict" hidden></span><span class="sp"></span><span>▶ 运行该请求 · Ctrl+S 保存 · Tab 缩进</span></div>'
     ].join('\n');
     host.appendChild(d);
 
@@ -1309,8 +1320,86 @@
     else if (kind === 'err') {
       E.saveState.className = 'pa-fe-save err';
       E.saveState.textContent = '✕ 保存失败' + (info && info.message ? '：' + String(info.message).slice(0, 36) : '');
-    } else { E.saveState.className = 'pa-fe-save'; E.saveState.textContent = '—'; }
+    }
+    else if (kind === 'conflict') {
+      E.saveState.className = 'pa-fe-save conflict';
+      E.saveState.textContent = '⚠ 磁盘已被外部修改';
+      E.saveState.title = '磁盘上的文件在你打开之后被改过（IDE 保存 / git 切换）。点底部的「覆盖」或「载入」决定保留哪一份。';
+      return;   /* 冲突态的 title 自己给，不走下面统一的「磁盘：路径」 */
+    }
+    else { E.saveState.className = 'pa-fe-save'; E.saveState.textContent = '—'; }
     if (E.saveState) E.saveState.title = S.path ? ('磁盘：' + S.path) : '尚未绑定磁盘路径（保存时会弹出另存为）';
+  }
+
+  /* ===================== 磁盘版本基线（S2.2） =====================
+   * 内外同时编辑同一个文件是这个插件最常见的误伤场景：IDE 里改了、插件里自动保存又把
+   * IDE 的改动盖掉（或反过来）。所以保存前先看 mtime，变了再比对内容，真的不一样就停下来问。 */
+  async function markDiskVersion() {
+    if (!S.path) { S.mtime = null; return null; }
+    try {
+      var st = await invoke('http/statFile', { path: S.path });
+      S.mtime = st && st.exists ? Math.round(st.modified || 0) : null;
+    } catch (e) { S.mtime = null; }   /* 宿主不支持 stat 就退化成「不检测」，不能因此保存不了 */
+    return S.mtime;
+  }
+
+  /* 磁盘确实变了：返回 true 表示「可以继续写」，false 表示要用户决定 */
+  async function diskChanged() {
+    if (!S.path || S.mtime == null) return false;
+    var st;
+    try { st = await invoke('http/statFile', { path: S.path }); } catch (e) { return false; }
+    if (!st || !st.exists) { S.mtime = null; return false; }   /* 文件被删了：照旧写，等同于新建 */
+    var cur = Math.round(st.modified || 0);
+    if (cur === Math.round(S.mtime)) return false;
+    var diskText = null;
+    try { var rd = await invoke('http/readFile', { path: S.path }); diskText = String((rd && rd.content) || '').replace(/\r\n?/g, '\n'); } catch (e) { }
+    if (diskText != null && (diskText === S.loadedText || diskText === docText())) {
+      S.mtime = cur;            /* 只是 mtime 变了（touch / 同一内容重写），不算冲突 */
+      return false;
+    }
+    S.conflict = { diskText: diskText, mtime: cur };
+    setSaveState('conflict');
+    renderConflictHint();
+    return true;
+  }
+
+  /* 冲突提示条：编辑器底部一行，两个按钮把选择权交还用户，不做隐式覆盖 */
+  function renderConflictHint() {
+    var box = byId('paFeConflict');
+    if (!box) return;
+    if (!S.conflict) { box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    box.innerHTML = '<span class="pa-fe-cf-msg">磁盘上的文件被外部改过</span>' +
+      '<button class="pa-fe-cf-btn primary" data-cf="overwrite">用本地覆盖</button>' +
+      '<button class="pa-fe-cf-btn" data-cf="reload">载入磁盘版本</button>';
+    var o = box.querySelector('[data-cf="overwrite"]');
+    var r = box.querySelector('[data-cf="reload"]');
+    if (o) o.onclick = function () { resolveConflict('overwrite'); };
+    if (r) r.onclick = function () { resolveConflict('reload'); };
+  }
+
+  async function resolveConflict(how) {
+    if (!S.conflict) return false;
+    if (how === 'reload') {
+      var disk = S.conflict.diskText;
+      if (disk == null) { toast('读不到磁盘内容，无法载入'); return false; }
+      S.conflict = null;
+      setDoc(disk);
+      S.loadedText = S.text;
+      S.dirty = false;
+      S.savedAt = Date.now();
+      await markDiskVersion();
+      reparse();
+      setSaveState('ok');
+      renderConflictHint();
+      setStatus('已载入磁盘版本：' + S.path, 'ok');
+      return true;
+    }
+    /* 覆盖：把基线抬到磁盘当前版本，再走一次正常保存 */
+    S.mtime = S.conflict.mtime;
+    S.conflict = null;
+    renderConflictHint();
+    return await doSave(true);
   }
 
   /* ===================== 原生文件对话框 ===================== */
@@ -1424,13 +1513,21 @@
       try {
         var np = await writeCopy(dir0, ensureHttpExt(pick.name || S.name || 'new.http'), docText());
         await bindPath(np, dir0);
+        S.loadedText = S.text; S.conflict = null;
+        await markDiskVersion();
+        renderConflictHint();
         return afterSave(true);
       } catch (e) { setSaveState('err', e); toast('另存为失败：' + esc(e.message || e)); return false; }
     }
     var path = ensureHttpExt(pick.path);
     try {
-      var r = await invoke('http/writeFile', { path: path, content: docText() });
+      var content = docText();
+      var r = await invoke('http/writeFile', { path: path, content: content });
       await bindPath((r && r.path) || path, pick.dir || dirOf(path));
+      S.loadedText = content;
+      S.conflict = null;
+      await markDiskVersion();
+      renderConflictHint();
       toast('已另存为 <b>' + esc(fileNameOf(path)) + '</b> ✓');
       return afterSave(true) && true;
     } catch (e) {
@@ -1481,13 +1578,25 @@
       if (manual) return await saveAs();
       return false;
     }
+    /* 外部改过就停手：自动保存绝不覆盖别人的改动，手动保存也先让用户选（见 resolveConflict） */
+    if (S.conflict) {
+      if (manual) { setSaveState('conflict'); renderConflictHint(); }
+      return false;
+    }
     var content = docText();
+    if (await diskChanged()) {
+      if (manual) toast('磁盘上的文件已被外部修改：用底部「覆盖 / 载入」决定保留哪一份');
+      return false;
+    }
     var rev = ++S.rev;
     setSaveState('busy');
     try {
       var r = await invoke('http/writeFile', { path: S.path, content: content });
       if (rev !== S.rev) return false;   /* 保存期间又改过：等下一轮 */
+      S.loadedText = content;
+      await markDiskVersion();           /* 自己写完，基线跟着抬到新版本 */
       afterSave(manual);
+      renderConflictHint();
       if (manual) toast('已保存到 <b>' + esc(S.name || fileNameOf(S.path)) + '</b> ✓（第 ' + S.saveCount + ' 次）');
       savePrefs();
       if (r && r.size >= 0 && E.foot) updateFoot();
@@ -1552,9 +1661,14 @@
       if (E.idle) E.idle.hidden = true;
       if (E.dir) E.dir.value = S.dir;
       S.saveCount = 0;
+      S.loadedText = S.text;
+      S.conflict = null;
+      S.mtime = null;
+      await markDiskVersion();     /* 记下这一版的 mtime，之后保存前拿它比对 */
       await loadEnvs(S.dir);
       reparse();
       setSaveState('ok');
+      renderConflictHint();
       savePrefs();
       if (opts.restore) {
         /* 恢复：只留入口。目录不扫（用户下次展开时才扫），也不聚焦。 */

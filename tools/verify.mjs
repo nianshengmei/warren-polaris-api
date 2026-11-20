@@ -165,7 +165,7 @@ ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
   assert(/font-variant-ligatures:none/.test(ed), '高亮层需禁用连字，否则与 textarea 错位');
   /* 折叠：文档权威 + 折叠时保存必须写全文 */
   assert(ed.includes('function docText()'), '缺少 docText()');
-  assert(/doSave[\s\S]{0,300}docText\(\)/.test(ed), 'doSave 必须用 docText()（折叠时不能写投影）');
+  assert(/doSave[\s\S]{0,900}docText\(\)/.test(ed), 'doSave 必须用 docText()（折叠时不能写投影）');
   ['paFeGinner', 'toggleFold', 'buildView', 'expandFoldsForEdit']
     .forEach(k => assert(ed.includes(k), '缺少 ' + k));
   assert(!/var content = ta\.value/.test(ed), '落盘内容不能直接取 ta.value');
@@ -413,6 +413,45 @@ ok('侧栏提供手动重扫入口（外部改动可见）', () => {
   const s = read('ui/app.js');
   assert(/'#refreshDocs'/.test(s), '按钮未绑定');
   assert(/addEventListener\('focus'/.test(s), '切回窗口时要自动重扫');
+});
+
+/* ---------- v0.9.0 / S2.2：反向刷新 + 冲突 ---------- */
+
+ok('S2.2 反向刷新：干净 tab 同步磁盘，脏 tab 挂冲突', () => {
+  const s = read('ui/app.js');
+  ['syncTabsWithDocs', 'applyRequestToTab', 'renderConflictBar', 'resolveConflict'].forEach((k) => {
+    assert(s.indexOf('function ' + k) > 0, 'app.js 缺少 ' + k);
+  });
+  assert(/syncTabsWithDocs\(\);/.test(s), 'refreshDocs 里要调 syncTabsWithDocs');
+  assert(/if\(t\.dirty\)/.test(s) && /t\.docConflict=\{/.test(s), '脏 tab 必须挂冲突标记而不是覆盖');
+});
+
+ok('S2.2 写回基线跟着 tab 走（不能拿刚扫出的 mtime）', () => {
+  const s = read('ui/app.js');
+  assert(/t\.baseMtime/.test(s), '缺少 tab 级 baseMtime');
+  assert(/baseMtime:\s*t\.baseMtime!=null\?t\.baseMtime:f\.g\.mtime/.test(s),
+    'saveToDoc 的 baseMtime 必须优先用 tab 基线');
+  assert(/function setTabDocRef\(t,path,req,mtime\)/.test(s), 'setTabDocRef 要接收 mtime');
+  assert(/CONFLICT/.test(s), '缺少 CONFLICT 分支');
+});
+
+ok('S2.2 冲突栏 UI：三选一，不做隐式覆盖', () => {
+  assert(/id="docConflict"/.test(read('ui/index.html')), 'index.html 缺少冲突栏容器');
+  const s = read('ui/app.js');
+  ['加载磁盘版本', '保留我的', '稍后'].forEach((k) => assert(s.indexOf(k) > 0, '冲突栏缺少按钮 ' + k));
+  const css = read('ui/app.css');
+  assert(/\.doc-conflict/.test(css) && /\.rtab \.conflict/.test(css), '缺少冲突栏 / tab 标记样式');
+});
+
+ok('S2.2 编辑器：保存前比对 mtime，冲突停手', () => {
+  const ed = read('ui/http-editor.js');
+  ['markDiskVersion', 'diskChanged', 'renderConflictHint', 'resolveConflict'].forEach((k) => {
+    assert(ed.indexOf('function ' + k) > 0, 'http-editor.js 缺少 ' + k);
+  });
+  assert(/await diskChanged\(\)/.test(ed), 'doSave 必须先比对磁盘版本');
+  assert(/S\.loadedText/.test(ed), '需要 loadedText 排除假冲突（mtime 变了但内容一样）');
+  assert(/paFeConflict/.test(ed), '缺少编辑器冲突提示条');
+  assert(/S\.conflict\)\s*\{[\s\S]{0,120}return false/.test(ed), '有冲突时自动保存必须停手');
 });
 
 console.log('\n' + pass + ' checks passed');
