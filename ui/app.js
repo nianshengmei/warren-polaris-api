@@ -100,14 +100,15 @@ function seed(){
   }
 }
 
-/* ===================== 资源目录：文件真源（v0.9.0） =====================
- * 一个 .http 文件 = 一个 collection。侧栏、保存、删除全部以磁盘为准；
- * storage 只留 tab / 环境 / 偏好。旧 storage 集合在首次启动时一次性搬成文件。
- * 数据形状不开新路：HttpStore.toLegacyCollections() 把解析结果投影成旧形状，
- * 下面的渲染与编辑代码一行不用改。
+/* ===================== 文件真源 + 映射为权威（v0.9.0） =====================
+ * 一个 .http 文件 = 一个 collection，内容以磁盘为准；
+ * 侧栏里出现哪些文件，**完全由 wpa-workspace.json 决定**，不扫目录。
+ * 打开一个 .http 就是把它挂进映射（S2.5）。
+ * storage 只留 tab / 环境 / 偏好；旧 storage 集合在首次启动时一次性搬成文件。
+ * 数据形状不开新路：HttpStore.toLegacyCollections() 把解析结果投影成旧形状。
  */
-const DOCS_KEY='warren-polaris-api.httpws.v1';   // 与 http-workspace.js 共用（资源目录 / 结果目录）
-const DOCS={ enabled:false, dir:'', store:null, files:[], busy:false, lastScan:0,
+const DOCS_KEY='warren-polaris-api.httpws.v1';   // 与 http-workspace.js 共用（映射所在目录 / 结果目录）
+const DOCS={ enabled:false, dir:'', store:null, files:[], busy:false, again:false, lastScan:0,
              map:null, mapError:null, mapLoaded:false };
 const STORE=window.POLARIS_STORE;
 
@@ -130,6 +131,8 @@ async function initDocs(){
     try{
       const out=await STORE.migrateFromStorage(DOCS.store,state.collections,{});
       ui.migratedAt=Date.now(); persist();
+      /* 迁出来的文件也要挂上侧栏 —— 与「打开即挂载」同一条路径（映射未就绪时排队） */
+      for(const p of (out.created||[])) await registerDocFile(p,{noRefresh:true});
       if(out.created.length) setStatus('已把 '+out.created.length+' 个旧分组写成 .http 文件 · '+dir,'ok');
       if(out.skipped.length) toast('有 '+out.skipped.length+' 个同名文件已存在，旧数据留档在 .warren-migrate/');
     }catch(e){ setStatus('迁移旧分组失败：'+(e.message||e),'warn'); }
@@ -139,10 +142,9 @@ async function initDocs(){
   await refreshDocs(true);
 }
 
-/* 侧栏映射（wpa-workspace.json，S2.5a）。它只决定「哪些文件、挂哪个文件夹、什么顺序」，
- * 内容真源仍是 .http 文件本身。
- * **只有第一次**（映射不存在，或刚被重建）才把目录里已有的 .http 全量登记；
- * 之后新增的文件要走底部「发现 N 个未登记」由用户点，否则「映射为权威」就退化成扫目录。
+/* 侧栏映射（wpa-workspace.json）。它是侧栏的**唯一数据源**：
+ * 目录树 = 映射文件的渲染，登记了哪些文件就显示哪些，一个目录都不扫。
+ * 「打开 .http」这个动作本身就是挂载 —— openPath 成功后把它追加进映射。
  * 已有 folders 的名字/顺序/折叠态一律不动（测试见 tools/map.test.mjs）。
  * 手改坏的映射先留一份 .broken.json 再重建，绝不让一个坏 JSON 卡死侧栏。 */
 async function loadWorkspaceMap(){
@@ -150,7 +152,6 @@ async function loadWorkspaceMap(){
   if(!DOCS.enabled||!M||!DOCS.store) return null;
   try{
     const r=await M.load(DOCS.store.host,DOCS.dir);
-    const firstRun=!r.exists||!!r.error;
     DOCS.mapError=r.error||null;
     if(r.error){
       const bak=r.path.replace(/\.json$/i,'.broken.json');
@@ -158,21 +159,26 @@ async function loadWorkspaceMap(){
       toast('侧栏映射解析失败，已留档 '+STORE.baseName(bak)+' 并重建');
     }
     DOCS.map=r.map;
-    if(firstRun){
-      const reg=await M.ensureRegistered(DOCS.store.host,DOCS.dir,DOCS.map);
-      DOCS.map=reg.map;
-      if(reg.added.length||!r.exists){
-        const w=await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
-        if(!w.ok) setStatus('写侧栏映射失败：'+(w.reason||'未知'),'warn');
-        else if(reg.added.length) setStatus('已登记 '+reg.added.length+' 个 .http 到侧栏映射','ok');
-      }
+    /* 首次：映射里只放「自带示例」这一条，别的文件不替用户猜。
+     * 侧栏第一帧就有能点的东西，而不是空树 +「＋ 挂载」。 */
+    if(!r.exists){
+      const sample=M.toAbs(DOCS.dir,'examples.http');
+      try{
+        const st=await DOCS.store.host.stat(sample);
+        if(st&&st.exists){
+          const rg=M.register(DOCS.map,DOCS.dir,sample);
+          if(rg.added) DOCS.map=rg.map;
+        }
+      }catch(e){ /* 示例还没种出来：http-editor 启动后会登记 */ }
+      const w=await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
+      if(!w.ok) setStatus('写侧栏映射失败：'+(w.reason||'未知'),'warn');
     }
     DOCS.mapLoaded=true;
     /* 启动期已经建好的文件（比如 http-editor 种的 examples.http）在这里补登记 */
     if(DOCS.pendingRegister&&DOCS.pendingRegister.length){
       const queued=DOCS.pendingRegister.slice();
       DOCS.pendingRegister=[];
-      for(const p of queued) await registerDocFile(p);
+      for(const p of queued) await registerDocFile(p,{noRefresh:true});
     }
     return DOCS.map;
   }catch(e){
@@ -182,61 +188,53 @@ async function loadWorkspaceMap(){
   }
 }
 
-/* 新建文件后立刻登记，否则「映射为权威」的侧栏会把它当成不存在（S2.5b 起生效）。
- * 映射还没读出来时先排队，等 loadWorkspaceMap 完成后补登记（启动期 http-editor 种示例就是这种时序）。 */
-async function registerDocFile(path){
+/* 把文件挂到侧栏 = 往映射里追加一条登记。
+ * 这是「打开 .http」的副作用：openPath 读成功后调这里，所以**打开即挂载**。
+ * 新建 .http 同理。映射还没读出来时先排队，等 loadWorkspaceMap 完成后补登记。 */
+async function registerDocFile(path, opts){
   const M=window.POLARIS_MAP;
-  if(!M||!path) return;
-  if(!DOCS.map){ DOCS.pendingRegister=DOCS.pendingRegister||[]; DOCS.pendingRegister.push(path); return; }
+  if(!M||!path) return false;
+  if(!DOCS.map){ DOCS.pendingRegister=DOCS.pendingRegister||[]; DOCS.pendingRegister.push(path); return false; }
   try{
     const e=M.toEntry(DOCS.dir,path);
-    if(M.entries(DOCS.map).some(x=>M.pathKey(x)===M.pathKey(e))) return;
+    if(M.entries(DOCS.map).some(x=>M.pathKey(x)===M.pathKey(e))){
+      /* 已登记也要保证侧栏数据里读到过它：启动期补登记（noRefresh）之后
+       * 如果没人再刷一次，它会显示成「找不到」。 */
+      if(!(opts&&opts.noRefresh)) await refreshDocs(true);
+      return false;
+    }
     DOCS.map.unfiled.push(e);
-    await M.save(DOCS.store.host,DOCS.dir,DOCS.map);
-  }catch(err){ /* 登记失败不影响文件本身，下次启动会补 */ }
+    if(!await M.save(DOCS.store.host,DOCS.dir,DOCS.map)) return false;
+    /* 挂载后侧栏要立刻看见它：按映射重读一遍（不是扫目录） */
+    if(!(opts&&opts.noRefresh)) await refreshDocs(true);
+    return true;
+  }catch(err){ /* 登记失败不影响文件本身 */ return false; }
 }
 
-/* 扫目录 + 把「映射里登记、但住在资源目录外」的文件一并读进来。
- * 侧栏只按映射显示，可外部文件的 exists 没法靠扫目录判断，只能真读一次：
- * 读得到就是存在，读不到（被移走/删掉/没权限）就交给 resolve 标成「找不到」。 */
+/* 侧栏数据**只从映射来**：映射登记了哪些文件就读哪些，一个目录都不扫。
+ * 所以「磁盘上有但没登记」的文件天然不会出现在树里 —— 想让它出现就打开它（= 挂载）。
+ * 读不到的不放进 list，交给 resolve 标成「找不到」，绝不自动删登记。 */
 async function collectDocsList(){
-  const list=await DOCS.store.list();
   const M=window.POLARIS_MAP;
-  if(!M||!DOCS.map) return list;
-  const seen={};
-  list.forEach(x=>{ seen[M.pathKey(x.path)]=1; });
+  if(!M||!DOCS.map) return [];
+  const out=[];
   for(const entry of M.entries(DOCS.map)){
     const abs=M.toAbs(DOCS.dir,entry);
-    if(M.relOf(DOCS.dir,abs)!=null) continue;      // 目录内的已在 list 里
-    if(seen[M.pathKey(abs)]) continue;
-    seen[M.pathKey(abs)]=1;
     try{
-      const rd=await DOCS.store.read(abs);
-      list.push({
-        name: STORE.baseName(abs).replace(/\.(http|rest)$/i,''),
-        fileName: STORE.baseName(abs),
-        path: abs,
-        mtime: rd.mtime,
-        size: (rd.text||'').length,
-        requests: rd.parsed.requests,
-        warnings: rd.parsed.warnings,
-        fileId: rd.parsed.fileId,
-        fileVars: rd.parsed.fileVars,
-        error: null,
-        outside: true
-      });
-    }catch(e){
-      /* 读不到就不放进 list：resolve 拿不到这个路径，自然标成「找不到」 */
-    }
+      const item=await DOCS.store.readOne(abs);
+      item.outside=M.relOf(DOCS.dir,abs)==null;   // 打印 / tooltip 用：住不住在映射文件旁边
+      out.push(item);
+    }catch(e){ /* 读不到 → resolve 看不到这个路径，自然标「找不到」 */ }
   }
-  list.sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh-Hans-CN'));
-  return list;
+  return out;
 }
 
-/* 扫目录 → 投影成 state.collections。busy 期间的重入直接忽略（保存后连刷两次很常见）。 */
+/* 按映射重读一遍 → 投影成 state.collections。busy 期间的重入直接忽略（保存后连刷两次很常见）。 */
 async function refreshDocs(quiet){
   if(!DOCS.enabled) return false;
-  if(DOCS.busy) return false;
+  /* 正在刷时不要并发，也不要丢掉这次请求：记一笔，跑完再补一次。
+   * 否则「打开文件 → 挂载 → 刷新」很容易撞上启动期那次刷新而被静默丢弃。 */
+  if(DOCS.busy){ DOCS.again=true; return false; }
   DOCS.busy=true;
   try{
     const list=await collectDocsList();
@@ -254,9 +252,12 @@ async function refreshDocs(quiet){
     const head=$('.side-head .t'); if(head) head.title=DOCS.dir;
     return true;
   }catch(e){
-    if(!quiet) setStatus('读取资源目录失败：'+(e.message||e),'warn');
+    if(!quiet) setStatus('读取侧栏文件失败：'+(e.message||e),'warn');
     return false;
-  }finally{ DOCS.busy=false; }
+  }finally{
+    DOCS.busy=false;
+    if(DOCS.again){ DOCS.again=false; setTimeout(()=>refreshDocs(true),0); }
+  }
 }
 
 function applyDocs(list){
@@ -673,27 +674,24 @@ function renderSidebar(){
   $('#stSaved').textContent=stat.total;
 }
 
-/* 映射模式：文件夹 → 文件 → 请求。顺序与归属全来自 wpa-workspace.json（S2.5b）。 */
+/* 映射模式：文件夹 → 文件 → 请求。顺序与归属全来自 wpa-workspace.json，
+ * 磁盘上有但没登记的文件不会出现（想加就打开它）。 */
 function renderSidebarMapped(tree,q,stat){
   const M=window.POLARIS_MAP;
   const view=M.resolve(DOCS.map,DOCS.dir,(DOCS.files||[]).map(f=>f.path));
   view.folders.forEach(f=>{ const sec=renderFolderNode(f,q,stat); if(sec) tree.appendChild(sec); });
   view.unfiled.forEach(node=>{ const n=renderMapFile(node,q,stat); if(n) tree.appendChild(n); });
   if(!view.folders.length && !view.unfiled.length){
-    tree.appendChild(el('div','tree-empty','侧栏里还没有登记任何文件。<br>点右上角 ＋ 新建，或把 .http 放进资源目录后点 ↻。'));
+    tree.appendChild(el('div','tree-empty','侧栏是空的。<br>点「＋ 挂载 .http」选一个文件，它就挂到这里。'));
   }else if(q && stat.shown===0){
     tree.appendChild(el('div','tree-empty','没有匹配「'+esc(q)+'」的请求。'));
   }
-  const pend=mapPending();
-  if(pend.length){
-    const b=el('button','pending-bar','发现 '+pend.length+' 个未登记文件 · 点这里加入');
-    b.title='磁盘上有、映射里没有的 .http。加入只写映射，不动文件内容。';
-    b.onclick=openPendingFiles;
-    tree.appendChild(b);
-  }
+  const mount=el('button','pending-bar','＋ 挂载 .http');
+  mount.title='打开一个 .http / .rest 文件，同时把它挂到侧栏（只写映射，不动文件内容）';
+  mount.onclick=mountFlow;
   const nf=el('button','pending-bar ghost','＋ 新建文件夹');
   nf.onclick=newFolderFlow;
-  tree.appendChild(nf);
+  tree.append(mount,nf);
 }
 
 function renderFolderNode(f,q,stat){
@@ -801,7 +799,7 @@ function renderFileGroup(g,q,stat){
   return gEl;
 }
 
-/* ---------- 映射写回 + 文件夹 / 未登记 / 重新定位 ---------- */
+/* ---------- 映射写回 + 挂载 / 文件夹 / 重新定位 ---------- */
 
 async function saveWorkspaceMap(){
   const M=window.POLARIS_MAP;
@@ -813,50 +811,11 @@ async function saveWorkspaceMap(){
   }catch(e){ setStatus('写侧栏映射失败：'+((e&&e.message)||e),'warn'); return false; }
 }
 
-/* 磁盘上有、映射里没有的 .http（侧栏不显示它们，只给一个入口） */
-function mapPending(){
-  const M=window.POLARIS_MAP;
-  if(!DOCS.map||!M) return [];
-  const have={}; M.entries(DOCS.map).forEach(e=>{ have[M.pathKey(M.toAbs(DOCS.dir,e))]=1; });
-  return (DOCS.files||[]).filter(f=>!have[M.pathKey(f.path)]);
-}
-
-async function addPendingFiles(paths){
-  const M=window.POLARIS_MAP;
-  if(!M||!DOCS.map) return 0;
-  const have={}; M.entries(DOCS.map).forEach(e=>{ have[M.pathKey(M.toAbs(DOCS.dir,e))]=1; });
-  let n=0;
-  (paths||[]).forEach(p=>{
-    const entry=M.toEntry(DOCS.dir,p);
-    const k=M.pathKey(M.toAbs(DOCS.dir,entry));
-    if(have[k]) return;
-    have[k]=1; DOCS.map.unfiled.push(entry); n++;
-  });
-  if(n){ await saveWorkspaceMap(); renderSidebar(); setStatus('已加入 '+n+' 个文件到侧栏','ok'); }
-  return n;
-}
-
-function openPendingFiles(){
-  const pend=mapPending();
-  if(!pend.length){ setStatus('没有未登记的文件','ok'); return; }
-  const bg=$('#modalBg'); const m=el('div','modal wide');
-  m.innerHTML=`<h3>未登记的文件</h3><div class="sub">这些 .http 在资源目录里，但侧栏映射没有登记。加入只写 wpa-workspace.json，文件本身不会被移动或改写。</div>`;
-  const list=el('div','pend-list');
-  pend.forEach(f=>{
-    const row=el('div','pend-row');
-    row.innerHTML=`<span class="pend-name">${esc(STORE.baseName(f.path))}</span><span class="pend-path">${esc(f.path)}</span>`;
-    const add=el('button','btn sm','加入');
-    add.onclick=async()=>{ add.disabled=true; add.textContent='已加入'; await addPendingFiles([f.path]); };
-    row.appendChild(add); list.appendChild(row);
-  });
-  m.appendChild(list);
-  const acts=el('div','acts'); const sp=el('div'); sp.style.flex='1';
-  const cancel=el('button','btn ghost','关闭'); cancel.onclick=close;
-  const all=el('button','btn primary','全部加入');
-  all.onclick=async()=>{ await addPendingFiles(pend.map(f=>f.path)); close(); };
-  acts.append(sp,cancel,all); m.appendChild(acts);
-  function close(){ bg.classList.remove('open'); bg.innerHTML=''; }
-  bg.innerHTML=''; bg.appendChild(m); bg.classList.add('open'); bg.onclick=e=>{ if(e.target===bg) close(); };
+/* 挂载 = 打开一个 .http。openPath 成功后会把路径写进映射，侧栏随即多一行。 */
+async function mountFlow(){
+  const E=window.POLARIS_EDITOR;
+  if(!E||!E.pickAndOpen){ setStatus('当前环境没有可用的文件选择器','warn'); return; }
+  await E.pickAndOpen();
 }
 
 function newFolderFlow(){
@@ -892,29 +851,44 @@ function removeFolderFlow(f){
   });
 }
 
-function relocateFlow(node){
+/* 重新定位：直接弹系统文件选择器选那个文件（选完只改映射里的这一条，位置不变）。
+ * 拿不到文件路径的环境退回手填。 */
+async function relocateFlow(node){
   const M=window.POLARIS_MAP;
-  const reg={}; M.entries(DOCS.map).forEach(e=>{ reg[M.pathKey(M.toAbs(DOCS.dir,e))]=1; });
-  const cands=(DOCS.files||[]).filter(f=>!reg[M.pathKey(f.path)]);
-  const hint=cands.length
-    ? ('目录里有 '+(cands.length)+' 个未登记文件可挑：'+cands.slice(0,3).map(f=>STORE.baseName(f.path)).join('、')+(cands.length>3?'…':''))
-    : '填绝对路径；资源目录内的文件也可以填相对路径。';
-  PD.ask('重新定位「'+node.name+'」',{label:'新路径',value:node.entry,sub:hint,okText:'定位'},async v=>{
+  const E=window.POLARIS_EDITOR;
+  let abs=null;
+  if(E&&E.pickNative){
+    let pick=null;
+    try{ pick=await E.pickNative('open'); }catch(e){ setStatus('打开文件选择器失败：'+((e&&e.message)||e),'err'); return; }
+    if(!pick||pick.cancelled) return;
+    abs=pick.path||null;
+  }
+  if(!abs){ askRelocatePath(node); return; }
+  applyRelocate(node,abs);
+}
+
+function askRelocatePath(node){
+  const M=window.POLARIS_MAP;
+  PD.ask('重新定位「'+node.name+'」',{label:'新路径',value:node.entry,sub:'填绝对路径，或相对映射文件所在目录的路径。',okText:'定位'},v=>{
     if(v==null) return;
     const raw=String(v).trim(); if(!raw) return;
-    const abs=M.toAbs(DOCS.dir,raw);
-    let st;
-    try{ st=await DOCS.store.host.stat(abs); }catch(e){ setStatus('检查路径失败：'+((e&&e.message)||e),'err'); return; }
-    if(!st||!st.exists){ setStatus('这个路径下没有文件：'+abs,'err'); return; }
-    const r=M.relocate(DOCS.map,node.entry,M.toEntry(DOCS.dir,abs));
-    if(!r.ok){ setStatus('映射里找不到这条登记','err'); return; }
-    DOCS.map=r.map;
-    if(await saveWorkspaceMap()){ await refreshDocs(true); renderSidebar(); setStatus('已重新定位到 '+STORE.baseName(abs),'ok'); }
+    applyRelocate(node,M.toAbs(DOCS.dir,raw));
   });
 }
 
+async function applyRelocate(node,abs){
+  const M=window.POLARIS_MAP;
+  let st;
+  try{ st=await DOCS.store.host.stat(abs); }catch(e){ setStatus('检查路径失败：'+((e&&e.message)||e),'err'); return; }
+  if(!st||!st.exists){ setStatus('这个路径下没有文件：'+abs,'err'); return; }
+  const r=M.relocate(DOCS.map,node.entry,M.toEntry(DOCS.dir,abs));
+  if(!r.ok){ setStatus('映射里找不到这条登记','err'); return; }
+  DOCS.map=r.map;
+  if(await saveWorkspaceMap()){ await refreshDocs(true); renderSidebar(); setStatus('已重新定位到 '+STORE.baseName(abs),'ok'); }
+}
+
 function unregisterFlow(node){
-  PD.confirm('把「'+node.name+'」从侧栏移除登记？\n只删映射里这一条，文件本身不动；下次点「发现未登记」还能加回来。',async ok=>{
+  PD.confirm('把「'+node.name+'」从侧栏移除登记？\n只删映射里这一条，文件本身不动；下次打开这个文件会重新挂载。',async ok=>{
     if(!ok) return;
     const M=window.POLARIS_MAP;
     const r=M.unregister(DOCS.map,node.entry);
@@ -1723,9 +1697,9 @@ function bindEvents(){
     state.collections.push({id:uid(),name:n.trim(),collapsed:false,requests:[]}); persist(); renderSidebar();
   }); };
   const rf=$('#refreshDocs'); if(rf) rf.onclick=async()=>{
-    if(!DOCS.enabled){ setStatus('资源目录不可用（未连接宿主）','warn'); return; }
+    if(!DOCS.enabled){ setStatus('文件宿主不可用（未连接）','warn'); return; }
     const ok=await refreshDocs(false);
-    if(ok) setStatus('已重新扫描 · '+DOCS.dir,'ok');
+    if(ok) setStatus('已按映射重读 · '+DOCS.dir,'ok');
   };
   /* 从 IDEA / 记事本切回来时重扫，外部改动立即可见 */
   window.addEventListener('focus',()=>scheduleDocsRefresh(250));
@@ -1868,16 +1842,16 @@ window.POLARIS_API = {
   }
 };
 
-/* ===================== v0.9.0：文件真源给 .http 面板用的两个接口 =====================
- * 两处必须认同一个「资源目录」，否则 .http 面板扫 A 目录、侧栏扫 B 目录，用户会看到两套集合。 */
+/* ===================== v0.9.0：侧栏与 .http 面板之间的接口 =====================
+ * 映射文件只有一个位置（DOCS.dir），两边都认它，否则会出现两套集合。 */
 window.POLARIS_DOCS = {
   enabled: function(){ return DOCS.enabled; },
   dir: function(){ return DOCS.dir; },
   refresh: function(quiet){ return refreshDocs(quiet !== false); },
-  /* S2.5：侧栏映射（wpa-workspace.json）。S2.5b 的文件夹树直接吃这个对象 */
+  /* S2.5：侧栏映射（wpa-workspace.json），侧栏的唯一数据源 */
   map: function(){ return DOCS.map; },
   mapError: function(){ return DOCS.mapError; },
-  /* 新建/种出来的文件登记进侧栏（.http 面板种示例时用） */
+  /* 挂载：打开 / 新建 .http 后把它登记进侧栏映射 */
   register: function(path){ return registerDocFile(path); },
   /* S2.3：源码视图点「▭」→ 在表单里打开这一段 */
   openInForm: function(path,info){ return openInFormForDoc(path,info); },
@@ -1887,7 +1861,7 @@ window.POLARIS_DOCS = {
     dir=String(dir||'').trim();
     if(!DOCS.enabled||!dir||dir===DOCS.dir) return false;
     DOCS.dir=dir; DOCS.store.setDir(dir);
-    /* 映射跟着资源目录走：换了目录就得读新目录里的 wpa-workspace.json */
+    /* 映射文件跟着目录走：换了目录就得读新目录里的 wpa-workspace.json */
     DOCS.map=null; DOCS.mapLoaded=false; DOCS.mapError=null;
     await loadWorkspaceMap();
     return refreshDocs(true);

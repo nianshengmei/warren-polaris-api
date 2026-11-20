@@ -1,16 +1,17 @@
 /* workspace-map.js — 侧栏映射 `wpa-workspace.json` 的读写与归一（S2.5a）
  *
- * 这份映射**只回答一个问题**：资源目录里的哪些文件、挂在侧栏的哪个文件夹、什么顺序。
+ * 这份映射**就是侧栏本身**：登记了哪些文件、挂在哪个文件夹、什么顺序，侧栏就长什么样。
  * 它不记请求、不记名字、不记内容 —— 内容真源永远是 `.http` 文件本身。
- * 因此它丢了最坏后果只是「外部文件从侧栏消失」，文件与内容毫发无损。
+ * 因此它丢了最坏后果只是「文件从侧栏消失」，文件与内容毫发无损；再打开一次就重新挂上。
+ *
+ * **没有任何扫目录函数**：不猜、不发现、不自动登记。加文件只有一条路 —— 打开它（= 挂载）。
  *
  * 路径约定：
- *   - 资源目录**内**的文件写相对路径（`orders.http`、`sub/x.http`），跟着仓库走；
- *   - 资源目录**外**的一律写绝对路径（`D:\work\pay.http`），UI 上标「外部」。
+ *   - 映射文件同目录**内**的文件写相对路径（`orders.http`、`sub/x.http`），跟着仓库走；
+ *   - 其它位置一律写绝对路径（`D:\work\pay.http`），UI 上标「外部」。
  * 归一化只做展示与比对用，写回映射时保持调用方给的形态，不乱改写用户的绝对路径。
  *
  * 宿主访问与 http-store.js 一致，全部走注入的 host，方便在 Node 里用 fs 跑单测：
- *   host.list(dir) -> { files: [{ path, name, size, modified }] }
  *   host.read(p)   -> { content }
  *   host.stat(p)   -> { exists, modified }
  *   host.write(p, content)
@@ -187,11 +188,26 @@
     return JSON.stringify(out, null, 2) + '\n';
   }
 
-  /* 原子写：tmp → rename 覆盖。失败时清掉 tmp，不留垃圾 */
-  async function save(host, dir, map) {
+  /* 原子写：tmp → rename 覆盖。失败时清掉 tmp，不留垃圾。
+   *
+   * 并发保护（2026-11-20）：启动期「首启写空映射」和「示例挂载」会几乎同时写同一个文件。
+   * 两个写共用同一个 tmp 名时，后一个 rename 会撞上已被移走的 tmp —— Windows 上
+   * 常见实现是「先删目标再 rename」，于是映射文件被删掉、更新丢失。
+   * 所以：① tmp 名唯一；② 同一个映射文件的写操作串行排队。 */
+  var saveChain = Promise.resolve();
+  var seq = 0;
+
+  function save(host, dir, map) {
     var p = toAbs(dir, FILE);
-    var text = stringify(map);
-    var tmp = p + '.tmp';
+    var text = stringify(map);          /* 先把快照序列化，排队期间调用方再改 map 也不影响这次写 */
+    var job = saveChain.then(function () { return writeNow(host, p, text); });
+    saveChain = job.then(function () { }, function () { });   /* 前一次失败不堵后面的 */
+    return job;
+  }
+
+  async function writeNow(host, p, text) {
+    seq += 1;
+    var tmp = p + '.' + seq + '-' + Date.now().toString(36) + '.tmp';
     try {
       await host.write(tmp, text);
     } catch (e) {
@@ -206,7 +222,9 @@
     return { ok: true, path: p };
   }
 
-  /* ---------- 登记 / 发现 ---------- */
+  /* ---------- 登记 ----------
+   * 只做「读映射 / 改映射」，**没有任何扫目录函数**：
+   * 侧栏看到什么完全等于映射里写了什么。加文件只有一条路 —— 打开它（挂载）。 */
 
   function entries(map) {
     var out = [];
@@ -215,48 +233,15 @@
     return out;
   }
 
-  async function httpFiles(host, dir) {
-    var res = await host.list(dir);
-    var files = (res && res.files) || [];
-    var out = [];
-    for (var i = 0; i < files.length; i++) {
-      var f = files[i] || {};
-      var name = f.name || baseName(f.path);
-      if (!/\.(http|rest)$/i.test(name)) continue;
-      if (String(name).toLowerCase() === FILE) continue;
-      out.push({ path: f.path || toAbs(dir, name), name: name, size: f.size || 0, modified: Math.round(f.modified || 0) });
-    }
-    out.sort(function (a, b) { return a.name.localeCompare(b.name, 'zh-Hans-CN'); });
-    return out;
-  }
-
-  /* 未登记清单：磁盘上有、映射里没有 */
-  async function discover(host, dir, map) {
-    var files = await httpFiles(host, dir);
-    var have = Object.create(null);
-    entries(map).forEach(function (e) { have[pathKey(toAbs(dir, e))] = 1; });
-    return files.filter(function (f) { return !have[pathKey(f.path)]; });
-  }
-
-  /* 首启全量登记 + 增量补登记。
-   * 规则：**只往 unfiled 追加**，绝不动已有 folders 的名字、顺序、折叠态与文件顺序。
-   * 幂等：跑第二次 added 为空、文本不变。 */
-  async function ensureRegistered(host, dir, map) {
+  /* 登记一个文件（打开 / 新建时调用）。只往 unfiled 追加，同一路径不重复登记。 */
+  function register(map, dir, absPath) {
     var m = normalize(map);
-    var files = await httpFiles(host, dir);
-    var have = Object.create(null);
-    entries(m).forEach(function (e) { have[pathKey(toAbs(dir, e))] = 1; });
-
-    var added = [];
-    files.forEach(function (f) {
-      var k = pathKey(f.path);
-      if (have[k]) return;
-      have[k] = 1;
-      var entry = toEntry(dir, f.path);
-      m.unfiled.push(entry);
-      added.push(entry);
-    });
-    return { map: m, added: added, changed: added.length > 0, scanned: files.length };
+    var entry = toEntry(dir, absPath);
+    var k = pathKey(toAbs(dir, entry));
+    var dup = entries(m).some(function (e) { return pathKey(toAbs(dir, e)) === k; });
+    if (dup) return { map: m, added: false };
+    m.unfiled.push(entry);
+    return { map: m, added: true, entry: entry };
   }
 
   /* ---------- 侧栏树（S2.5b 渲染用） ----------
@@ -417,8 +402,7 @@
     isAbs: isAbs,
     pathKey: pathKey,
     entries: entries,
-    discover: discover,
-    ensureRegistered: ensureRegistered,
+    register: register,
     resolve: resolve,
     moveTo: moveTo,
     unregister: unregister,

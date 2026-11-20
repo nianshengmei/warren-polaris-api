@@ -233,6 +233,36 @@
         };
       },
 
+      /* 只读一个文件，返回与 list() 元素同构的 item。
+       * 侧栏用它：映射登记了什么就读什么，**一个目录都不扫**。 */
+      readOne: async function (path) {
+        var H = requireFile();
+        var rd = await host.read(path);
+        var st = await host.stat(path);
+        var text = String(rd.content == null ? '' : rd.content);
+        var fileName = baseName(path);
+        var item = {
+          name: stripExt(fileName),
+          fileName: fileName,
+          path: path,
+          mtime: Math.round((st && st.modified) || 0),
+          size: text.length,
+          requests: [],
+          warnings: [],
+          error: null
+        };
+        try {
+          var parsed = H.parseHttpFile(text, { fileName: fileName });
+          item.requests = parsed.requests;
+          item.warnings = parsed.warnings;
+          item.fileId = parsed.fileId;
+          item.fileVars = parsed.fileVars;
+        } catch (e) {
+          item.error = String((e && e.message) || e);
+        }
+        return item;
+      },
+
       /* 原子写：先 tmp 再 rename。baseMtime 给了就先比对，不一致直接 CONFLICT，不写任何东西。 */
       writeText: async function (path, text, o) {
         o = o || {};

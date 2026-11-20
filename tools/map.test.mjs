@@ -2,8 +2,9 @@
  *
  * 核心承诺：
  *   1. 映射只记「路径 → 文件夹」，读写它不许碰任何 .http；
- *   2. 首启登记是全量补齐，**绝不覆盖**用户已经排好的 folders；
- *   3. 目录外用绝对路径、目录内用相对路径，来回转换不丢信息。
+ *   2. **没有任何扫目录函数**：加文件只有 register() 一条路（打开即挂载），
+ *      磁盘上有但没登记的不会进树，也绝不覆盖用户已经排好的 folders；
+ *   3. 映射文件同目录内用相对路径、其它位置用绝对路径，来回转换不丢信息。
  */
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -110,24 +111,31 @@ async function main() {
     fs.rmSync(p);
   });
 
-  /* ---------- 首启登记 ---------- */
+  /* ---------- 挂载（唯一加文件的路径） ---------- */
   seed(dir, ['orders.http', 'users.http', 'examples.http', 'notes.txt']);
   fs.writeFileSync(path.join(dir, M.FILE), '{}\n', 'utf8');
 
-  await ok('首启全量登记：目录里 4 个 .http 进 unfiled，按名排序，.txt 与映射文件自己不算', async () => {
+  await ok('register 挂一个文件：只加一条到 unfiled 末尾，磁盘上其它文件一概不管', async () => {
     const { map } = await M.load(host, dir);
-    const r = await M.ensureRegistered(host, dir, map);
-    assert.equal(r.changed, true);
-    assert.deepEqual(r.added.slice().sort(), ['examples.http', 'orders.http', 'users.http'],
-      '目录里只有 3 个 http 文件');
-    assert.deepEqual(r.map.unfiled, ['examples.http', 'orders.http', 'users.http']);
+    const r = M.register(map, dir, path.join(dir, 'orders.http'));
+    assert.equal(r.added, true);
+    assert.deepEqual(r.map.unfiled, ['orders.http'], '目录里的 users/examples 不会自动出现');
     assert.deepEqual(r.map.folders, []);
-    assert.equal(r.scanned, 3);
+    assert.equal(r.entry, 'orders.http');
   });
 
-  await ok('登记结果落盘后能原样读回（version/folders/unfiled 都在）', async () => {
+  await ok('重复挂同一个文件：added=false，映射文本一字不变（幂等）', async () => {
     const { map } = await M.load(host, dir);
-    const r = await M.ensureRegistered(host, dir, map);
+    const r1 = M.register(map, dir, path.join(dir, 'orders.http'));
+    const r2 = M.register(r1.map, dir, path.join(dir, 'orders.http'));
+    assert.equal(r2.added, false);
+    assert.equal(r2.map.unfiled.length, 1);
+    assert.equal(M.stringify(r2.map), M.stringify(r1.map), '第二次挂载连文本都不该变');
+  });
+
+  await ok('挂载结果落盘后能原样读回（version/folders/unfiled 都在）', async () => {
+    const { map } = await M.load(host, dir);
+    const r = M.register(map, dir, path.join(dir, 'orders.http'));
     const w = await M.save(host, dir, r.map);
     assert.equal(w.ok, true, JSON.stringify(w));
 
@@ -137,20 +145,21 @@ async function main() {
 
     const again = await M.load(host, dir);
     assert.equal(again.error, null);
-    assert.deepEqual(again.map.unfiled, ['examples.http', 'orders.http', 'users.http']);
+    assert.deepEqual(again.map.unfiled, ['orders.http']);
   });
 
-  await ok('幂等：同一份目录再登记一次，added 为空且文本一字不变', async () => {
-    const before = fs.readFileSync(path.join(dir, M.FILE), 'utf8');
-    const { map } = await M.load(host, dir);
-    const r = await M.ensureRegistered(host, dir, map);
-    assert.deepEqual(r.added, []);
-    assert.equal(r.changed, false);
-    assert.equal(M.stringify(r.map), before);
+  /* ---------- 映射之外的文件不进侧栏 ---------- */
+  await ok('磁盘上有、映射里没有的文件 → resolve 里根本不出现（侧栏只认映射，不扫目录）', async () => {
+    const map = { version: 1, folders: [], unfiled: ['orders.http'] };
+    const existing = ['orders.http', 'users.http', 'examples.http'].map((n) => path.join(dir, n));
+    const tree = M.resolve(map, dir, existing);
+    assert.deepEqual(tree.unfiled.map((n) => n.entry), ['orders.http']);
+    assert.equal(tree.missing, 0);
+    assert.equal(tree.unfiled.length, 1, 'tree 里只有登记过的那一条');
   });
 
   /* ---------- 不覆盖已有 folders ---------- */
-  await ok('已有 folders 不被覆盖：只往 unfiled 补缺，名字/顺序/折叠/文件顺序全保留', async () => {
+  await ok('挂载不改动已有 folders：名字/顺序/折叠/文件顺序全保留，只往 unfiled 追一条', async () => {
     const preset = {
       version: 1,
       folders: [
@@ -159,17 +168,17 @@ async function main() {
       ],
       unfiled: ['examples.http'],
     };
-    const r = await M.ensureRegistered(host, dir, preset);
-    assert.deepEqual(r.added, ['users.http'], '只补没登记的那一个');
+    const r = M.register(preset, dir, path.join(dir, 'users.http'));
+    assert.equal(r.added, true);
     assert.deepEqual(r.map.folders.map((f) => f.name), ['订单服务', '用户中心']);
     assert.equal(r.map.folders[0].collapsed, true);
     assert.deepEqual(r.map.folders[0].files, ['orders.http'], '已排好的顺序不能动');
     assert.deepEqual(r.map.unfiled, ['examples.http', 'users.http']);
   });
 
-  await ok('外部文件登记后仍是绝对路径，resolve 能标出 outside', async () => {
-    const preset = { version: 1, folders: [], unfiled: [M.toEntry(dir, outside)] };
-    let r = await M.ensureRegistered(host, dir, preset);
+  await ok('外部文件挂进来仍是绝对路径，resolve 能标出 outside', async () => {
+    const preset = { version: 1, folders: [], unfiled: [] };
+    let r = M.register(preset, dir, outside);
     assert.equal(r.map.unfiled[0], outside, '绝对路径不许被改写成相对');
 
     await M.save(host, dir, r.map);
@@ -181,15 +190,6 @@ async function main() {
     assert.equal(node.outside, true);
     assert.equal(node.exists, true);
     assert.equal(node.name, 'pay');
-  });
-
-  /* ---------- 未登记发现 ---------- */
-  await ok('discover 只报磁盘上有、映射里没有的 .http', async () => {
-    const { map } = await M.load(host, dir);
-    seed(dir, ['newone.http']);
-    const miss = await M.discover(host, dir, map);
-    assert.deepEqual(miss.map((f) => f.name), ['newone.http']);
-    fs.rmSync(path.join(dir, 'newone.http'));
   });
 
   /* ---------- 丢失文件 ---------- */
@@ -274,6 +274,19 @@ async function main() {
     assert.equal(r.ok, true);
     assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), []);
     assert.equal(fs.readFileSync(path.join(dir, 'orders.http'), 'utf8'), before);
+  });
+
+  /* 启动期「首启写空映射」与「示例挂载」会几乎同时写；共用 tmp 名会互相踩掉。
+   * 真实宿主 rename 到已存在目标在 Windows 上要先删 —— 撞车就丢整个映射文件。 */
+  await ok('并发 save 不互相踩：最后落盘的一定是后提交的那份，文件不消失、不留 tmp', async () => {
+    const a = M.save(host, dir, { folders: [], unfiled: ['a.http'] });
+    const b = M.save(host, dir, { folders: [], unfiled: ['b.http'] });
+    const c = M.save(host, dir, { folders: [], unfiled: ['c.http'] });
+    const rs = await Promise.all([a, b, c]);
+    assert.deepEqual(rs.map((r) => r.ok), [true, true, true]);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dir, M.FILE), 'utf8'));
+    assert.deepEqual(onDisk.unfiled, ['c.http'], '最后提交的赢');
+    assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), []);
   });
 
   await ok('stringify 固定键顺序：version → folders → unfiled，折叠态是布尔', () => {

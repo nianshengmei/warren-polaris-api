@@ -1739,6 +1739,9 @@
       setSaveState('ok');
       renderConflictHint();
       savePrefs();
+      /* 打开 = 挂载：侧栏只认 wpa-workspace.json，读成功的文件立刻登记进去。
+       * 已登记过就是 no-op（registerDocFile 去重），不会打乱现有文件夹与顺序。 */
+      try { if (window.POLARIS_DOCS && window.POLARIS_DOCS.register) window.POLARIS_DOCS.register(S.path); } catch (e) { }
       if (opts.restore) {
         /* 恢复：只留入口。目录不扫（用户下次展开时才扫），也不聚焦。 */
         renderFiles(true);
@@ -1760,8 +1763,9 @@
     }
   }
 
-  /* 首次使用：在默认工作目录（~/warren-polaris-api）放一份示例 .http。
-   * 已存在就原样用，绝不覆盖用户改过的内容；附件用 noClobber 同理。 */
+  /* 自带示例：**每次启动都保证它挂在侧栏上**，一次都不用用户手动打开。
+   * 文件已存在就原样用（绝不覆盖用户改过的内容），只是补一次登记；
+   * 不存在才种一份。登记走 POLARIS_DOCS.register —— 与「打开即挂载」同一条路径。 */
   async function ensureDefaultSample() {
     var S0 = window.POLARIS_SAMPLE;
     if (!S0 || !hostOk()) return '';
@@ -1770,18 +1774,21 @@
     var dir = String((dd && dd.workDir) || (dd && dd.homeDir) || '').trim();
     if (!dir) return '';
     var target = pathJoin(dir, 'examples.http');
+    var mount = function () {
+      try { if (window.POLARIS_DOCS && window.POLARIS_DOCS.register) window.POLARIS_DOCS.register(target); } catch (e) { }
+    };
     try {
       var r = await invoke('http/readFile', { path: target });
-      if (r && typeof r.content === 'string') return target;   /* 已存在：直接用 */
+      if (r && typeof r.content === 'string') { mount(); return target; }   /* 已存在：直接用 + 挂上 */
     } catch (e) { /* 不存在才写 */ }
     try {
       var attachPath = pathJoin(dir, S0.attachName || 'sample-upload.txt');
       await invoke('http/writeFile', { path: attachPath, content: S0.attach || '', noClobber: true });
       var text = String(S0.http || '').replace(/__AUDIO_PATH__/g, attachPath);
       await invoke('http/writeFile', { path: target, content: text, noClobber: true });
-      /* 侧栏以映射为准：种出来的示例也要登记，否则它只在磁盘上、侧栏里看不见。
+      /* 侧栏只认映射：种出来的示例也要登记，否则它只在磁盘上、侧栏里看不见。
        * 启动期映射可能还没读出来，register 会排队，等映射就绪后补登记。 */
-      try { if (window.POLARIS_DOCS && window.POLARIS_DOCS.register) window.POLARIS_DOCS.register(target); } catch (e) { }
+      mount();
       return target;
     } catch (e) {
       return '';
