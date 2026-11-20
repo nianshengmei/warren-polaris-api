@@ -3,17 +3,21 @@
 > 这份文档是给"另一台电脑上的新会话"看的。**它没有上一轮的对话记忆**，
 > 所有判断依据都在这里和 `docs/plan-v1.0.0.md` 里。读完这份就能接着干活。
 >
-> 生成时间：2026-11-20 16:10（Windows 侧中断点）
+> 生成时间：2026-11-21 00:20（M4 + M5 收官）
 
 ---
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）+ S4.1/4.2/4.3（身份与历史）已完成**，
-`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1/4.2/4.3` 全绿，**下一步是 M4 的 S4.4「接入发送链路收尾」**，
-之后是 S4.5 → S4.6 → M5 → M6 → M7。
-S4.3 于 2026-11-20 收官：**历史每个接口保留 10 条（用户拍板）**，超了就地轮转；
-二进制响应挪去 `_history/<collection>/<id>-<at>.bin`，jsonl 只留 `bodyRef`。
+1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）+ M4（身份与历史）+ M5（示例与文档）全部完成**，
+`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1–4.6 + S5.1–5.4` 全绿，**下一步是 M6「取消」（S6.1–S6.3）**，之后 M7 发版。
+S4/S5 于 2026-11-21 收官：历史每接口 10 条自动轮转、二进制外置 `.bin`、历史子页 10 条倒序、
+删了 id 行会**问一句**再决定要不要接回；示例扩到 9 节并讲清了两行身份注释的来历。
+
+> ⚠ 这批里挖出一个**躺了很久的真 bug**并修了：`ui/dbx-bridge.js` 用 `Object.assign` 搬访问器，
+> 导致 `readyOk` 永远是 `false`，`http-workspace` 的 `hostAvailable()` 恒假 ——
+> 「结果保存到 `_results/`」和「目录扫描」整条链路其实一直是死的（演示站跑了几十次请求，`_results/` 是空的）。
+> 现在改成 `Object.defineProperties`。**如果哪天有人把这段改回去，`verify.mjs` 会红。**
 
 ---
 
@@ -29,9 +33,9 @@ node -v        # 需要 >= 18，建议 22
 #    再把 .workbuddy/memory/ 解压到该工作区的 .workbuddy/ 下
 #    （Mac 上双击用「归档实用工具」解压即可；包内中文文件名的 UTF-8 标志已校验过）
 
-# 3) 自检：应当全绿，且 git 历史完整（40 个提交，最新一条是 S4.3）
+# 3) 自检：应当全绿，且 git 历史完整（43 个提交，最新一条是 M5）
 cd warren-polaris-api
-git log --oneline | head -3      # 最新一条应是 S4.3 调用历史本体
+git log --oneline | head -3      # 最新一条应是 M5 示例与文档
 git status --short               # 应为空（或只有 HANDOFF.md）
 node tools/all.mjs               # 13 个文件全绿
 
@@ -43,7 +47,7 @@ node dev/dev-server.mjs
 `verify-ui/check-*.mjs` 里写的是 `path.resolve(..., '..', 'warren-polaris-api')`，
 靠的是相对位置，不是绝对路径。
 
-> **⚠ 仓库里没有的东西**：`verify-ui/`（十三个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
+> **⚠ 仓库里没有的东西**：`verify-ui/`（十七个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
 > - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261120.zip` 里
@@ -51,7 +55,7 @@ node dev/dev-server.mjs
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
 **新会话开场白建议直接说**：
-> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M4 的 S4.4 开始。口径不许改。
+> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M6 的 S6.1 开始。口径不许改。
 
 ---
 
@@ -88,38 +92,42 @@ node dev/dev-server.mjs
 | S3.2 字号缩放 | ✅ | `--pa-fs`/`--pa-lh` 挂在 `.pa-fe`，textarea / 高亮层 / 行号 / 折叠箭头 / ▶ 同源；`LINE_H` 常量换成 `lineH(fs)`；Ctrl+滚轮 12–28px、Ctrl+0 复位、`fontSize` 落偏好。**踩到真坑**：`app.css` 的 `.pa-root textarea{font-size:inherit}` 特异性 (0,1,1) 压过单类 `.pa-fe-text`，textarea 一直 12.5px、高亮层却变大 —— 规则改 `.pa-fe .pa-fe-text` 才压住。`verify-ui/check-s32.mjs` 25 项 |
 | S3.1 浮层拖拽 | ✅ | 标题条拖动 → `--fe-dx/--fe-dy` 位移（不改 left/top，宽度不会被压变形），rAF 合帧 + `setPointerCapture`；整块夹在 `.work` 内，双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，scrollLeft 被顶偏 26px 导致浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S2.6 示例自动挂载 | ✅ | 含 `POLARIS_MAP.save` 并发写修复（tmp 名唯一 + 串行） |
+| S5.4 校验收口 | ✅ | `verify.mjs` 52 → **58** checks，新增 6 组 v1.0.0 断言（含「桥接访问器要真生效」这一条，用来钉住上面那个 bug） |
+| S5.3 seed 退役 | ✅ | 删 `app.js` 的 `seed()`；`ensureDefaultSample` 顺带 noClobber 种 `http-client.env.json`（local/dev 只放 `envTag`），写完 `reloadEnvs()` 刷下拉 |
+| S5.2 README / NOTICE | ✅ | 新增「调用历史」与「代价」两节；许可与署名 + NOTICE 写「自 1.0.0 起不再同步上游」及理由 |
+| S5.1 示例 9 节 | ✅ | 头部与第 1 节讲身份注释；第 9 节用只写在 env 里的 `{{envTag}}` 演示「文件变量优先于 env」；示例不预置 id |
+| S4.6 询问式接回 | ✅ | `retagInterfaceId` + `.identities.jsonl` 索引（宿主列不出 `_history/`）+ `findByIdentity / mergeInto / reuse`；顶部 `#idReuse` 只提示不动手，点了才接 |
+| S4.5 历史面板 | ✅ | 响应区第 5 子页「历史」：10 条倒序、失败标红、页头写「最近 N 条 · X ms」；停在历史页时发送不顶走视图，历史写完再刷一次 |
+| S4.4 发送链路收尾 | ✅ | `_results`（旧）与 `_history`（新）并存不双写；4xx/5xx 也记、网络异常与停止不记；**修 `dbx-bridge` 的 `hostAvailable()` 恒假** |
 | S4.3 调用历史本体 | ✅ | `ui/http-history.js` 补四件事：① **轮转** —— `MAX_LINES = 10`（用户 2026-11-20 拍板），追加时超限就在同一次写里扔掉最旧的；同路径 read-modify-write 串成一条链（`serial`），连发不会互相踩（宿主共用 `<path>.tmp`）。② **读取** —— `parseJsonl` 坏行（截断 JSON / 不是对象）跳过并计 `bad`，一行坏不拖垮整份；文件不存在返回空数组。③ **二进制外置** —— `contentType` 命中 image/audio/video/font 或 `application/(octet-stream\|zip\|gzip\|pdf\|rar…)` 时，body 落 `_history/<collection>/<id>-<at>.bin`，jsonl 只留 `bodyRef` / `bodyEncoding` / `bodyBytes`；**宿主只有文本写**，所以 `.bin` 里是 base64（靠 `bodyEncoding` 标明），重名往后找序号不覆盖；上限是 `maxBodyBytes` 旋钮（**默认不设限，等拍板**），超了记 `bodyOmitted: TOO_LARGE`。④ **`.gitignore`** —— 只补一行 `_history/`，已有就不动、末尾缺换行也接得上。`app.js` 的 `recordHistory` 把 `contentType/isBinary/isBase64/bodyBase64` 传下去（只有真 base64 才外置）。`tools/history.test.mjs` 20 项 + `verify-ui/check-s43.mjs` 30 项 |
 | S4.2 赋予时机 | ✅ | 新增 `ui/http-history.js` 的 `record()`：原文上插身份 → `writeText(baseMtime)` 成功 → 才追加 `_history/<collection>/<interfaceId>.jsonl`。写身份失败（READONLY / 冲突重试 2 次 / NO_SEGMENT）一律不写历史。`send()` 里 `recordHistory()` 异步旁路调用，成功后回填 `docRef.interfaceId/fileId` 并对齐 `baseMtime`。**定位顺序**：先在原文本定位段、再插 file_id（反了行号就漂）。顺带修 `patchGroup` 丢 `fileVars` 的老 bug。`tools/history.test.mjs` 9 项 + `verify-ui/check-s42.mjs` 23 项 |
 | S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（`crypto` 优先、可注入 rnd）；`insertFileId` 落在第一个 `###` 之前并与 `###` 隔一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` / `index` 两种定位）；`dedupe` 同文件重复 id 后一个换新；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口/重复斜杠/末尾斜杠/fragment 抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接、不重序列化**，插入行沿用文件自己的行尾（CRLF 不掺裸 LF）。`tools/identity.test.mjs` 9 项 |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → 13 文件全绿（`verify.mjs` 52 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项、`identity.test.mjs` 9 项、`history.test.mjs` **20** 项等）
-- `verify-ui/` 十三个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30
+- `node tools/all.mjs` → 13 文件全绿（`verify.mjs` **58** 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项、`identity.test.mjs` **13** 项、`history.test.mjs` **23** 项、`sample.test.mjs` **46** 项等）
+- `verify-ui/` 十七个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15
 
 ---
 
-## 4. 下一步：M4 · S4.4「接入发送链路收尾」
+## 4. 下一步：M6「取消」（S6.1–S6.3）
 
-> 目标：每次**拿到响应**都落一条历史，且历史出问题绝不拖累请求本身。
-> 这一节大部分已经随 S4.2/S4.3 提前落地了，剩下的不是写新功能，是**把边界钉死并补验**：
->
-> 1. **两条路并存不打架**：`send()` 里 `POLARIS_HTTP_WS.onResponse`（旧，写 `_results/`）与
->    `recordHistory()`（新，写 `_history/`）同时被调用。两者写到不同目录，目前不冲突；
->    1.0.0 保持并存，**1.0.1 再删旧的**。别在这步手痒删 `onResponse`，`http-workspace.js` 还靠它。
-> 2. **非 2xx 记不记**：现在的实现是"拿到响应就记"（`4xx/5xx` 进历史，`status` 字段原样留着），
->    只有**网络异常 / 用户中途停止**才不记（那时没有响应可记）。这条写进 README 的行为说明。
-> 3. **连发 5 次 = 5 行**：`check-s43` 已经跑到 12 次，S4.4 只需要一个小 e2e 覆盖
->    「5 连发（含一次 500）→ 5 行、状态各异、文件只改一次（首次插身份）」。
-> 4. **只读只提示一次**：`check-s42` 已覆盖，别重复造轮子，跑一遍确认没退化即可。
+> 目标：下载大响应时不把整包读进内存，点「停止」两秒内真断。
+> **这一节要改 Rust（`backend/src/main.rs`），沙箱里没有 `cargo`，改完只能静态校验 + 等 CI / 本机编译。**
 
-现成零件（别重复造）：
-- `ui/http-history.js`：`createHistory({store, dir, max, maxBodyBytes})` → `record / read / rotate / ensureGitignore`；
-  模块级还有 `parseJsonl / rotateText / writeBody / isBinaryContentType / b64Bytes`。
+S6.1 后端分块读（`handle_request` 的普通分支）：
 
-之后按 `docs/plan-v1.0.0.md` 顺序：**S4.5 历史面板 → S4.6 询问式接回 → M5 示例与文档 → M6 → M7**。
+- 现在是 `to_vec()` 一次读完；改成 64 KB 一块循环读，每块前检查取消标志。
+- 取消标志的来源见 S6.2；SSE 分支已有循环，照着加同样检查。
+- 验收：本地起 `/big?mb=50`，中途写标志 → 2 秒内断开，日志打 `cancelled at N bytes`。
 
-> ⚠ S4.5 开工前先看这一条：历史文件里现在**没有正文**（只有 `size` 与二进制的 `bodyRef`），
-> 面板要显示"响应预览"得自己回读 `.bin` 或干脆不显示正文 —— 这是 S4.3 定下的取舍，别在面板里偷偷改回去。
+S6.2 UI 写标志：
+
+- 停止按钮写 `_cancel/<requestId>.flag`，请求结束删掉；路径由 `http-workspace.js` 提供。
+- 注意 `invoke` 是同步 RPC 无法中断，所以 UI 侧仍要保留 `sendSeq` 守卫丢迟到响应（现在的做法），标志只是让**后端**早点停手。
+
+S6.3 回归：SSE、multipart、超时三条不许退化（`verify-multipart` 21/21、784 KB wav SHA-256 一致、SSE 11 事件完整）。
+
+之后是 M7：数据格式冻结 + 发版。
 
 ---
 
@@ -127,7 +135,7 @@ node dev/dev-server.mjs
 
 1. `.pa-fe` 浮层偏矮，是否加「⤢ 铺满」按钮？
 2. ~~历史保留条数 3 / 10 / 30？~~ **已定：10 条**（2026-11-20 拍板，已落进 `MAX_LINES`）
-3. 二进制响应（`.bin`）单文件 5 MB 上限是否合适？
+3. 二进制响应（`.bin`）单文件 5 MB 上限是否合适？**现在 `maxBodyBytes` 默认不设限**，只留了旋钮，等你给数。
 4. 后端 4 个新命令**只在 Mac/Linux 侧编译验证过吗**——若是，需等 CI 或本机 `cargo` 跑一次。
    Windows 侧没有 `cargo`，产物一直靠 GitHub Actions 构建。
 
