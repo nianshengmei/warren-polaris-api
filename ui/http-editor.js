@@ -31,8 +31,11 @@
   var DBX = window.DBXBridge;
   var PD = window.PD;
 
-  var LINE_H = 20;      /* 必须与 CSS 的 .pa-fe-text / .pa-fe-ln line-height 一致 */
-  var PAD_TOP = 10;     /* 必须与 CSS 的 .pa-fe-text padding-top 一致 */
+  /* S3.2：字号能改，行高就不能是常量了。CSS 那边是同源的 --pa-fs / --pa-lh，
+   * 这里按同一比例算，两边的行高永远是同一个数（错位就出在这条链上）。 */
+  var FS_MIN = 12, FS_MAX = 28, FS_DEF = 12.5, LH_RATIO = 1.6;
+  var PAD_TOP = 10;     /* 必须与 CSS 的 --pa-pad-top 一致 */
+  function lineH(fs) { return Math.round((fs || S.fontSize || FS_DEF) * LH_RATIO); }
   var GUT_W = 74;       /* gutter 宽（折叠箭头 + ▶ + 行号）；文字左内边距 = GUT_W + 8 */
   var ST_KEY = 'warren-polaris-api.editor.v1';
   var TEXT_EXT = /\.(http|rest|txt|md|json|xml|yml|yaml|graphql|gql)$/i;
@@ -47,6 +50,7 @@
     edgeTop: 20,       /* 右缘箭头垂直位置（%.work 高度）；可拖动，记在这里 */
     feX: 0,            /* S3.1：浮层相对基础盒的位移（px），拖动标题条改这里，双击标题条归零 */
     feY: 0,
+    fontSize: FS_DEF,  /* S3.2：编辑器字号（px），Ctrl+滚轮改、Ctrl+0 复位 */
     dir: '',
     path: '',
     name: '',
@@ -87,6 +91,7 @@
 
   var pane = null, edge = null, ta = null, ginner = null, hlEl = null, E = {};
   var parseTimer = null, saveTimer = null, hitTimer = null, trackTimer = null;
+  var fsSaveTimer = null;   /* S3.2：字号连续滚动的落盘节流 */
   var refreshDocsTimer = null;   /* 保存后让侧栏重扫资源目录（合帧） */
 
   /* ===================== 小工具 ===================== */
@@ -302,7 +307,7 @@
       '.pa-root .work{position:relative}',
       /* S3.1：位置 = 基础盒（贴 .work 左/上/右/下） + --fe-dx/--fe-dy 位移。
        * 用位移而不是改 left/top：宽度高度还是由布局算出来，拖动不会把浮层拉变形。 */
-      '.pa-fe{--fe-dx:0px;--fe-dy:0px;position:absolute;left:0;right:0;top:79px;bottom:0;z-index:16;display:flex;flex-direction:column;background:var(--bg,#16181e);color:var(--ink,#d8dae2);font-size:12.5px;overflow:hidden;border-radius:10px 0 0 10px;box-shadow:-18px 0 46px -20px rgba(0,0,0,.62),inset 1px 0 0 var(--line,rgba(255,255,255,.1));transform:translate(var(--fe-dx),var(--fe-dy));opacity:1;visibility:visible;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s}',
+      '.pa-fe{--fe-dx:0px;--fe-dy:0px;--pa-fs:12.5px;--pa-lh:20px;--pa-pad-top:10px;position:absolute;left:0;right:0;top:79px;bottom:0;z-index:16;display:flex;flex-direction:column;background:var(--bg,#16181e);color:var(--ink,#d8dae2);font-size:12.5px;overflow:hidden;border-radius:10px 0 0 10px;box-shadow:-18px 0 46px -20px rgba(0,0,0,.62),inset 1px 0 0 var(--line,rgba(255,255,255,.1));transform:translate(var(--fe-dx),var(--fe-dy));opacity:1;visibility:visible;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s}',
       '.pa-fe.off{transform:translate(calc(var(--fe-dx) + var(--fe-slide,100%)),var(--fe-dy));opacity:0;pointer-events:none;visibility:hidden;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s .36s}',
       /* 拖动中不要过渡，否则浮层会追着光标慢慢飘 */
       '.pa-fe.dragging{transition:none;box-shadow:0 26px 64px -18px rgba(0,0,0,.74),inset 1px 0 0 var(--line,rgba(255,255,255,.1))}',
@@ -429,13 +434,13 @@
       '.pa-fe-edit{flex:1;position:relative;min-width:0;min-height:0;overflow:hidden}',
       '.pa-fe-gutter{position:absolute;left:0;top:0;width:74px;height:100%;overflow:hidden;border-right:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg-2,#1a1c24);z-index:2;pointer-events:none}',
       '.pa-fe-ginner{position:absolute;left:0;top:0;width:100%;will-change:transform}',
-      '.pa-fe-ln{position:absolute;right:6px;height:20px;line-height:20px;font-family:var(--mono,Consolas,monospace);font-size:10.5px;color:var(--dimmer,#6e7282);text-align:right;pointer-events:none;user-select:none}',
+      '.pa-fe-ln{position:absolute;right:6px;height:var(--pa-lh);line-height:var(--pa-lh);font-family:var(--mono,Consolas,monospace);font-size:10.5px;color:var(--dimmer,#6e7282);text-align:right;pointer-events:none;user-select:none}',
       '.pa-fe-ln.on{color:var(--brand,#ff7a59);font-weight:700}',
-      '.pa-fe-run{position:absolute;left:20px;width:16px;height:20px;line-height:19px;text-align:center;font-size:9px;color:var(--ok,#3fb950);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;transition:.12s}',
+      '.pa-fe-run{position:absolute;left:20px;width:16px;height:var(--pa-lh);line-height:calc(var(--pa-lh) - 1px);text-align:center;font-size:9px;color:var(--ok,#3fb950);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;transition:.12s}',
       /* 双向跳转：请求行左侧「在表单里打开」 */
-      '.pa-fe-form{position:absolute;left:3px;width:15px;height:20px;line-height:19px;text-align:center;font-size:10px;color:var(--dim,#a8acba);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;transition:.12s}',
+      '.pa-fe-form{position:absolute;left:3px;width:15px;height:var(--pa-lh);line-height:calc(var(--pa-lh) - 1px);text-align:center;font-size:10px;color:var(--dim,#a8acba);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;transition:.12s}',
       '.pa-fe-form:hover{background:var(--brand,#ff7a59);color:#1a0d08;transform:scale(1.12)}',
-      '.pa-fe-fold{position:absolute;left:3px;width:14px;height:20px;line-height:19px;text-align:center;font-size:9px;color:var(--dimmer,#6e7282);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;opacity:.5;transition:.12s}',
+      '.pa-fe-fold{position:absolute;left:3px;width:14px;height:var(--pa-lh);line-height:calc(var(--pa-lh) - 1px);text-align:center;font-size:9px;color:var(--dimmer,#6e7282);cursor:pointer;pointer-events:auto;border-radius:3px;user-select:none;opacity:.5;transition:.12s}',
       '.pa-fe-fold:hover{opacity:1;color:var(--brand,#ff7a59);background:var(--surface-2,#252830)}',
       '.pa-fe-fold.on{opacity:.95;color:var(--brand,#ff7a59)}',
       '.pa-fe-run:hover{background:var(--ok,#3fb950);color:#08170c;transform:scale(1.12)}',
@@ -446,11 +451,14 @@
       '@keyframes paFePulse{0%,100%{opacity:.3}50%{opacity:1}}',
       /* 代码层：高亮绘制在 textarea 背后（textarea 文字透明，只留光标/选区/滚动条） */
       '.pa-fe-code{position:absolute;inset:0;overflow:hidden;z-index:0}',
-      '.pa-fe-hl{position:absolute;left:0;top:0;min-width:100%;margin:0;padding:10px 14px 10px 82px;font-family:var(--mono,Consolas,monospace);font-size:12.5px;line-height:20px;white-space:pre;tab-size:2;letter-spacing:normal;font-variant-ligatures:none;pointer-events:none;user-select:none;color:var(--ink,#d8dae2);will-change:transform}',
-      '.pa-fe-l{height:20px;min-height:20px;white-space:pre;border-radius:2px}',
+      '.pa-fe-hl{position:absolute;left:0;top:0;min-width:100%;margin:0;padding:var(--pa-pad-top) 14px var(--pa-pad-top) 82px;font-family:var(--mono,Consolas,monospace);font-size:var(--pa-fs);line-height:var(--pa-lh);white-space:pre;tab-size:2;letter-spacing:normal;font-variant-ligatures:none;pointer-events:none;user-select:none;color:var(--ink,#d8dae2);will-change:transform}',
+      '.pa-fe-l{height:var(--pa-lh);min-height:var(--pa-lh);white-space:pre;border-radius:2px}',
       '.pa-fe-l.hit{background:rgba(255,122,89,.13);box-shadow:inset 0 0 0 1px rgba(255,122,89,.18)}',
       '.pa-fe-foldtag{margin-left:10px;padding:0 6px;border-radius:8px;background:var(--surface-3,#2c2f3a);color:var(--dimmer,#6e7282);font-size:10px;letter-spacing:.02em}',
-      '.pa-fe-text{position:absolute;inset:0;width:100%;height:100%;box-sizing:border-box;margin:0;border:none;outline:none;resize:none;background:transparent;color:var(--ink,#d8dae2);font-family:var(--mono,Consolas,monospace);font-size:12.5px;line-height:20px;padding:10px 14px 10px 82px;white-space:pre;overflow:auto;tab-size:2;z-index:1;caret-color:var(--brand,#ff7a59);letter-spacing:normal;font-variant-ligatures:none}',
+      /* 必须是 .pa-fe .pa-fe-text（两个类）：app.css 里 `.pa-root textarea` 的
+       * font-size:inherit 特异性是 (0,1,1)，单个类的 .pa-fe-text 压不住它，
+       * 结果 textarea 一直继承 12.5px、高亮层却跟着变量变 —— 三层就错位了。 */
+      '.pa-fe .pa-fe-text{position:absolute;inset:0;width:100%;height:100%;box-sizing:border-box;margin:0;border:none;outline:none;resize:none;background:transparent;color:var(--ink,#d8dae2);font-family:var(--mono,Consolas,monospace);font-size:var(--pa-fs);line-height:var(--pa-lh);padding:var(--pa-pad-top) 14px var(--pa-pad-top) 82px;white-space:pre;overflow:auto;tab-size:2;z-index:1;caret-color:var(--brand,#ff7a59);letter-spacing:normal;font-variant-ligatures:none}',
       '.pa-fe-edit.hl-on .pa-fe-text{color:transparent}',
       /* 高亮模式下选区只用淡色底，让底下的着色文字透出来（否则选中就全被盖成一种颜色） */
       '.pa-fe-edit.hl-on .pa-fe-text::selection{background:rgba(255,122,89,.30);color:transparent}',
@@ -924,6 +932,29 @@
   }
   function syncGutter() { syncScroll(); }
 
+  /* ===================== S3.2：字号缩放 =====================
+   * 三层（textarea / 行号 / 高亮代码层）同源吃 --pa-fs / --pa-lh，改字号只动这两个变量；
+   * 行号、折叠箭头、▶ 的 top 由 lineH() 重算 —— renderGutter 有签名缓存，必须清掉。
+   * 改之前记「顶行号」，改完按新行高还原滚动位置，否则一缩放视图就跳。 */
+  function applyFontSize(fs, opts) {
+    opts = opts || {};
+    var v = Number(fs);
+    if (!isFinite(v)) v = FS_DEF;
+    v = Math.max(FS_MIN, Math.min(FS_MAX, Math.round(v * 2) / 2));
+    var oldLH = lineH(S.fontSize);
+    var topLine = ta ? Math.max(0, Math.floor((ta.scrollTop - PAD_TOP) / oldLH)) : 0;
+    S.fontSize = v;
+    if (pane) {
+      pane.style.setProperty('--pa-fs', v + 'px');
+      pane.style.setProperty('--pa-lh', lineH(v) + 'px');
+    }
+    S.gutterSig = '';
+    renderGutter();
+    if (ta && topLine > 0) ta.scrollTop = PAD_TOP + topLine * lineH(v);
+    syncScroll();
+    if (opts.toast !== false) toast('字号 ' + (v % 1 ? v.toFixed(1) : v) + 'px');
+  }
+
   function renderGutter() {
     if (!ginner || !ta) return;
     var reqs = (S.parsed && S.parsed.requests) || [];
@@ -948,7 +979,7 @@
     for (var i = 0; i < S.view.length; i++) {
       var fi = S.view[i];
       var ln = fi + 1;
-      var top = PAD_TOP + i * LINE_H;
+      var top = PAD_TOP + i * lineH();
       var close = S.hl.byOpen[fi];
       if (close != null && close > fi) {
         var folded = !!S.folded[fi];
@@ -980,7 +1011,7 @@
     if (hid != null) { delete S.folded[hid]; rebuild(); }
     var vi = S.view.indexOf(fi);
     if (vi < 0) vi = Math.min(fi, Math.max(0, S.view.length - 1));
-    var top = PAD_TOP + vi * LINE_H;
+    var top = PAD_TOP + vi * lineH();
     var h = ta.clientHeight || 300;
     if (top < ta.scrollTop + 24 || top > ta.scrollTop + h - 40) {
       ta.scrollTop = Math.max(0, top - Math.round(h * 0.32));
@@ -1002,12 +1033,12 @@
 
   function toggleFold(fi) {
     if (!ta) return;
-    var topFull = S.view[Math.max(0, Math.floor((ta.scrollTop - PAD_TOP) / LINE_H))];
+    var topFull = S.view[Math.max(0, Math.floor((ta.scrollTop - PAD_TOP) / lineH()))];
     if (S.folded[fi]) delete S.folded[fi]; else S.folded[fi] = 1;
     rebuild();
     if (topFull != null) {
       var vi = S.view.indexOf(topFull);
-      if (vi >= 0) ta.scrollTop = PAD_TOP + vi * LINE_H;
+      if (vi >= 0) ta.scrollTop = PAD_TOP + vi * lineH();
     }
     syncScroll();
   }
@@ -2268,7 +2299,8 @@
     try {
       DBX.storage.set(ST_KEY, {
         dir: S.dir, autoSave: S.autoSave, activeEnv: S.activeEnv, lastPath: S.path,
-        edgeTop: S.edgeTop, feX: Math.round(S.feX), feY: Math.round(S.feY)
+        edgeTop: S.edgeTop, feX: Math.round(S.feX), feY: Math.round(S.feY),
+        fontSize: S.fontSize
       });
     } catch (e) { }
   }
@@ -2284,6 +2316,7 @@
       /* S3.1：上次拖到的位置；真正的夹取在布局量出来之后（见 init 里的 reclampFe） */
       if (isFinite(p.feX)) S.feX = Number(p.feX);
       if (isFinite(p.feY)) S.feY = Number(p.feY);
+      if (isFinite(p.fontSize)) S.fontSize = Math.max(FS_MIN, Math.min(FS_MAX, Number(p.fontSize)));
     }
     updateAutoBtn();
     if (!S.dir) {
@@ -2492,6 +2525,28 @@
     });
 
     /* 编辑器 */
+    /* S3.2：Ctrl/⌘ + 滚轮改字号（Mac 触控板 pinch 走的是同一条 ctrl+wheel）；
+     * 必须 passive:false 才能 preventDefault 拦住浏览器整页缩放。 */
+    if (E.edit) {
+      E.edit.addEventListener('wheel', function (e) {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        applyFontSize(S.fontSize + (e.deltaY > 0 ? -1 : 1));
+        clearTimeout(fsSaveTimer);
+        fsSaveTimer = setTimeout(savePrefs, 400);   /* 连续滚只落一次盘 */
+      }, { passive: false });
+    }
+    /* Ctrl+0 复位（Mac 上是 ⌘0）；只在这个浮层真的开着时接管 */
+    document.addEventListener('keydown', function (e) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.key !== '0' && e.code !== 'Digit0' && e.code !== 'Numpad0') return;
+      if (!S.open || S.collapsed || !pane) return;
+      e.preventDefault();
+      e.stopPropagation();
+      applyFontSize(FS_DEF);
+      savePrefs();
+    }, true);
+
     ta.addEventListener('input', onInput);
     ta.addEventListener('scroll', syncScroll, { passive: true });
     ta.addEventListener('click', trackCaret);
@@ -2575,6 +2630,8 @@
     renderEnvSel();
     updateFoot();
     if (edge) edge.style.top = S.edgeTop + '%';
+    /* S3.2：先把上次的字号贴上（行号 top 依赖 lineH，必须在渲染前生效） */
+    applyFontSize(S.fontSize, { toast: false });
     /* S3.1：先把上次的位置贴上；布局尺寸还没量准，稍后再夹一次 */
     applyFePos();
     setTimeout(reclampFe, 320);
@@ -2627,6 +2684,9 @@
       /* S3.1：浮层位置（拖动 / 复位），给自动化验证用 */
       pos: function () { return { x: S.feX, y: S.feY }; },
       resetPos: resetFePos,
+      /* S3.2：字号（Ctrl+滚轮 / Ctrl+0），给自动化验证用 */
+      fontSize: function () { return S.fontSize; },
+      setFontSize: function (v) { applyFontSize(v, { toast: false }); savePrefs(); },
       ensureSample: ensureDefaultSample
     };
 

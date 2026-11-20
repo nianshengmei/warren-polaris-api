@@ -82,7 +82,8 @@ ok('http-editor.js 关键实现就位', () => {
   /* 源码编辑 + gutter 运行按钮 + 自动保存 + 结果进原响应框 */
   ['pa-fe-run', 'data-ri', 'runOne', 'runRaw', 'writeFile', 'scheduleSave', 'parseHttpFile']
     .forEach(k => assert(s.includes(k), '缺少 ' + k));
-  assert(/LINE_H\s*=\s*20/.test(s), 'gutter 行高常量');
+  assert(/LH_RATIO\s*=\s*1\.6/.test(s), 'gutter 行高比例（字号 × 1.6）');
+  assert(/function lineH\(fs\)/.test(s), '行高必须按字号推导，不能是死常量');
   assert(/PAD_TOP\s*=\s*10/.test(s), 'gutter 顶部内边距');
   /* 绝不隐藏 .res-region —— 必须保留「原先下面的框」 */
   assert(!/res-region[\s\S]{0,40}display\s*=\s*['"]none/.test(s), '不得隐藏 .res-region');
@@ -218,6 +219,33 @@ ok('S3.1：浮层拖拽走位移，位置落偏好、双击复位', () => {
   assert(/setPointerCapture/.test(ed), '拖拽需 setPointerCapture');
   /* 收起态不许拖：off 时本来也点不到，但状态机要拦住 */
   assert(/pointerdown[\s\S]{0,200}S\.collapsed\) return/.test(ed), '收起态不应起拖');
+});
+
+ok('S3.2：字号缩放三层同源，行高随字号推导', () => {
+  const ed = read('ui/http-editor.js');
+  /* 变量只在 .pa-fe 上定义一处，三层都引用它 */
+  assert(/\.pa-fe\{--fe-dx[^}]*--pa-fs:12\.5px;--pa-lh:20px/.test(ed), '.pa-fe 需定义 --pa-fs/--pa-lh');
+  assert(/\.pa-fe-text\{[^}]*font-size:var\(--pa-fs\);line-height:var\(--pa-lh\)/.test(ed), 'textarea 字号/行高要走变量');
+  assert(/\.pa-fe-hl\{[^}]*font-size:var\(--pa-fs\);line-height:var\(--pa-lh\)/.test(ed), '高亮层字号/行高要走变量');
+  assert(/\.pa-fe-l\{height:var\(--pa-lh\);min-height:var\(--pa-lh\)/.test(ed), '高亮层每行高度要走变量');
+  assert(/\.pa-fe-ln\{[^}]*height:var\(--pa-lh\);line-height:var\(--pa-lh\)/.test(ed), '行号高度/行高要走变量');
+  ['pa-fe-run', 'pa-fe-form', 'pa-fe-fold'].forEach((c) => {
+    assert(new RegExp('\\.' + c + '\\{[^}]*height:var\\(--pa-lh\\)').test(ed), c + ' 高度要走变量');
+  });
+  /* 三层 padding 必须同源，否则首行就错开 */
+  assert(/\.pa-fe-text\{[^}]*padding:var\(--pa-pad-top\) 14px var\(--pa-pad-top\) 82px/.test(ed), 'textarea padding 要走变量');
+  assert(/\.pa-fe-hl\{[^}]*padding:var\(--pa-pad-top\) 14px var\(--pa-pad-top\) 82px/.test(ed), '高亮层 padding 要与 textarea 同源');
+
+  /* 交互：Ctrl+滚轮（passive:false）+ Ctrl+0 复位 + 12–28 夹取 */
+  assert(/addEventListener\('wheel'[\s\S]{0,400}passive: false/.test(ed), 'wheel 必须 passive:false 才能拦住整页缩放');
+  assert(/wheel[\s\S]{0,300}e\.ctrlKey \|\| e\.metaKey/.test(ed), '只在 Ctrl/⌘ + 滚轮时改字号');
+  assert(/Digit0/.test(ed) || /e\.key !== '0'/.test(ed), 'Ctrl+0 复位');
+  assert(/FS_MIN\s*=\s*12, FS_MAX\s*=\s*28/.test(ed), '字号范围应为 12–28');
+  assert(ed.includes('function applyFontSize'), '缺少 applyFontSize()');
+  assert(/applyFontSize[\s\S]{0,500}--pa-lh/.test(ed), 'applyFontSize 要同时改 --pa-fs 与 --pa-lh');
+  assert(/applyFontSize[\s\S]{0,700}S\.gutterSig = ''/.test(ed), '改字号必须让行号签名失效，否则行号不重排');
+  assert(/fontSize:\s*S\.fontSize/.test(ed), 'fontSize 需写进偏好');
+  assert(/isFinite\(p\.fontSize\)/.test(ed), '启动时需恢复字号');
 });
 
 ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
