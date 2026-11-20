@@ -103,6 +103,12 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 - **与「结果目录 `_results`」的关系**：两个并存、各写各的。`_results` 仍是完整快照（请求头、请求体、响应体全存），给「◷ 历史结果」面板用；`_history` 是轻量时间线（时间、状态、耗时、大小），给「历史」子页用。1.0.1 会考虑把两者合一。
 - **坏行不影响其余**：手改坏了某一行（截断的 JSON），读历史时跳过那一行并计数，不会让整份历史读不出来。
 
+**这两行身份注释的代价（写清楚，别事后才发现）**
+
+- 它**不是** IntelliJ `.http` 的标准语法，只是普通注释。IDEA 打开同一个文件不会报错，但也认不出这两行——换工具时它们只是两行无意义的注释。
+- 删掉它们不会损坏文件，只会**断掉历史归属**：那一段会被当成新接口，从零开始记。插件检测到"同一个指纹下还有旧 id"时会提示一句，点了才接回（`# @interface_id` 会被改回旧值，历史合并）。
+- 因此本 fork 从 1.0.0 起**不再跟随上游**：上游没有身份与历史这套东西，继续同步等于每次都要重新解冲突。上游的 Apache-2.0 署名与 NOTICE 照旧保留（见下）。
+
 
 ### 首次打开：默认目录里带一份示例
 
@@ -118,10 +124,12 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 | 6 | `GET {{sseDemo}}/sse?count=3` | 真 SSE 自测（`httpbingo.org`，每 2.5 s 一条、推 3 条收尾），用来确认流通道通不通 |
 | 7 | `GET …?fromLogin={{login.response.body.$.form.username}}` | 跨请求引用（body 字段 / 响应头） |
 | 8 | `GET …?guid={{$guid}}&ts={{$timestamp}}` | 内置动态变量 |
+| 9 | `GET {{baseUrl}}/get?env={{envTag}}` | 环境切换：`envTag` 只写在 `http-client.env.json` 里，右上角下拉换环境，URL 末尾跟着变 |
 
 - `examples.http` 默认指向 `https://httpbin.org`（6 号 SSE 自测单独用 `https://httpbingo.org`）：**能直接点 ▶ 跑通并回显请求**；要打自己的服务，只改文件顶部 `@baseUrl` / `@apiBase` 两行。
 - `sample-upload.txt` 是 4 号请求的示例附件；把 `@audioPath` 换成你自己的 `.wav` 就是真实音频上传。
-- 两个文件都用 `noClobber` 写入：**已存在就不动**（你改过的内容不会被覆盖），删掉才会重新生成。
+- `examples.http` / `sample-upload.txt` / `http-client.env.json` 三个文件都用 `noClobber` 写入：**已存在就不动**（你改过的内容不会被覆盖），删掉才会重新生成。
+- 环境（`http-client.env.json`）不再存进插件 storage —— 它在磁盘上、跟你走，换台机器复制目录即可。
 - 示例里没有任何真实凭据：域名、token、familyId 全是虚构占位值。
 
 ### 完整示例：`examples.http`
@@ -146,6 +154,14 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 #    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」
 #    {{$guid}} {{$timestamp}} {{$randomInt}} {{$datetimeIso}}   内置动态变量
 #
+#  关于 # @file_id / # @interface_id（v1.0.0 起）：
+#    第一次发送某个请求时，插件会自己往文件里补两行注释 ——
+#      文件顶部  # @file_id xxxxxxxx      这个文件的身份
+#      请求上面  # @interface_id xxxxxxxx  这个接口的身份
+#    它们是**调用历史的钥匙**：每次发送都会往 _history/ 里记一行，靠它归属到具体接口。
+#    别手动删这两行：删了就等于换了个身份，历史会断成两份（插件会提示"要接回吗"，点了才接）。
+#    示例里**故意一个 id 都没有** —— 你自己发一次，它就有了。
+#
 #  想指向自己的服务：只改下面 @baseUrl / @apiBase 两行（@sseDemo 只给 6 号自测用）
 # ============================================================================
 
@@ -159,6 +175,7 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 # @name listTasks
 # 最普通的只读接口：查询参数直接跟在 URL 后面，改个值再点 ▶ 就能复跑。
 # 有的网关只认裸 token（不加 "Bearer "），按你的服务改这一行即可。
+# 发送一次之后，这里会多出一行 # @interface_id —— 那是这个接口的身份，别删（见文件顶部说明）。
 GET {{baseUrl}}/get?familyId=1900000000000001&page=1&size=20&verbose=true
 Accept: application/json
 Authorization: Bearer {{token}}
@@ -269,6 +286,17 @@ Accept: application/json
 ### 8. 动态变量 · 每次发都是新的
 # 用来造请求 id、幂等键、时间戳，省得手改。
 GET {{baseUrl}}/get?guid={{$guid}}&ts={{$timestamp}}&at={{$datetimeIso}}&r={{$randomInt}}
+Accept: application/json
+
+### 9. 环境切换 · 变量放哪儿说了算
+# @name envSwitch
+# 优先级：文件里的 @xxx 最高，其次才是 http-client.env.json 里「当前环境」那一段。
+# 所以想按环境换地址，就别在这个文件里写死它 —— 把上面 @baseUrl 那行删掉，
+# 改成在 env 文件里给 local / dev 各写一份，右上角下拉一换就跟着变。
+# 想藏密钥就用 http-client.private.env.json（同目录，不进 git）。
+# 这一条用的是文件里没定义的 {{envTag}}：示例目录的 env 文件给了 local / dev 两个值，
+# 切一下环境，发出去就能看到 ?env= 后面变了。
+GET {{baseUrl}}/get?env={{envTag}}
 Accept: application/json
 
 # ----------------------------------------------------------------------------
@@ -391,6 +419,7 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 - 上游版权与许可声明全部保留，没有删除任何 notice；
 - 版本号是本 fork 自己的历史序列（0.3.0 起重写为 `.http` 编辑器），与原作的 0.2.0 不可比——商店里两者是不同插件，本插件专注 `.http` 文件的原位编辑；
 - 图标 `assets/plugin.svg` 为本 fork 自制，与原作图标无字节复用。
+- **自 1.0.0 起不再同步上游**：`.http` 身份注释与调用历史是上游没有的能力，逐版本 rebase 只会反复解同一批冲突；上游的署名、LICENSE 与 NOTICE 继续完整保留，改动清单见 `NOTICE`。
 
 ## 版本历史
 

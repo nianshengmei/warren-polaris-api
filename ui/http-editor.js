@@ -1965,13 +1965,32 @@
     };
     try {
       var r = await invoke('http/readFile', { path: target });
-      if (r && typeof r.content === 'string') { mount(); return target; }   /* 已存在：直接用 + 挂上 */
+      if (r && typeof r.content === 'string') {
+        mount();
+        /* 老目录里可能还没有 env 文件：补一份，失败不影响打开示例 */
+        try {
+          await invoke('http/writeFile', {
+            path: pathJoin(dir, 'http-client.env.json'), noClobber: true,
+            content: JSON.stringify({ local: { envTag: 'local' }, dev: { envTag: 'dev' } }, null, 2) + '\n'
+          });
+        } catch (e2) { }
+        return target;
+      }
     } catch (e) { /* 不存在才写 */ }
     try {
       var attachPath = pathJoin(dir, S0.attachName || 'sample-upload.txt');
       await invoke('http/writeFile', { path: attachPath, content: S0.attach || '', noClobber: true });
+      /* v1.0.0（S5.3）：环境不再存 storage，第一次就在目录里种一份 env 文件。
+       * 两套环境只放 `envTag` —— 文件里的 @baseUrl 优先级更高，写同名的等于白写。 */
+      var envPath = pathJoin(dir, 'http-client.env.json');
+      await invoke('http/writeFile', {
+        path: envPath, noClobber: true,
+        content: JSON.stringify({ local: { envTag: 'local' }, dev: { envTag: 'dev' } }, null, 2) + '\n'
+      });
       var text = String(S0.http || '').replace(/__AUDIO_PATH__/g, attachPath);
       await invoke('http/writeFile', { path: target, content: text, noClobber: true });
+      /* env 文件刚落地：让主界面重读一次，否则首启那一刻环境下拉还是「无环境」 */
+      try { if (window.POLARIS_API && window.POLARIS_API.reloadEnvs) await window.POLARIS_API.reloadEnvs(); } catch (e) { }
       /* 侧栏只认映射：种出来的示例也要登记，否则它只在磁盘上、侧栏里看不见。
        * 启动期映射可能还没读出来，register 会排队，等映射就绪后补登记。 */
       mount();

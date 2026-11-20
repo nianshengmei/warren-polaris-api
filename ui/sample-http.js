@@ -20,6 +20,14 @@
 #    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」
 #    {{$guid}} {{$timestamp}} {{$randomInt}} {{$datetimeIso}}   内置动态变量
 #
+#  关于 # @file_id / # @interface_id（v1.0.0 起）：
+#    第一次发送某个请求时，插件会自己往文件里补两行注释 ——
+#      文件顶部  # @file_id xxxxxxxx      这个文件的身份
+#      请求上面  # @interface_id xxxxxxxx  这个接口的身份
+#    它们是**调用历史的钥匙**：每次发送都会往 _history/ 里记一行，靠它归属到具体接口。
+#    别手动删这两行：删了就等于换了个身份，历史会断成两份（插件会提示"要接回吗"，点了才接）。
+#    示例里**故意一个 id 都没有** —— 你自己发一次，它就有了。
+#
 #  想指向自己的服务：只改下面 @baseUrl / @apiBase 两行（@sseDemo 只给 6 号自测用）
 # ============================================================================
 
@@ -33,6 +41,7 @@
 # @name listTasks
 # 最普通的只读接口：查询参数直接跟在 URL 后面，改个值再点 ▶ 就能复跑。
 # 有的网关只认裸 token（不加 "Bearer "），按你的服务改这一行即可。
+# 发送一次之后，这里会多出一行 # @interface_id —— 那是这个接口的身份，别删（见文件顶部说明）。
 GET {{baseUrl}}/get?familyId=1900000000000001&page=1&size=20&verbose=true
 Accept: application/json
 Authorization: Bearer {{token}}
@@ -143,6 +152,17 @@ Accept: application/json
 ### 8. 动态变量 · 每次发都是新的
 # 用来造请求 id、幂等键、时间戳，省得手改。
 GET {{baseUrl}}/get?guid={{$guid}}&ts={{$timestamp}}&at={{$datetimeIso}}&r={{$randomInt}}
+Accept: application/json
+
+### 9. 环境切换 · 变量放哪儿说了算
+# @name envSwitch
+# 优先级：文件里的 @xxx 最高，其次才是 http-client.env.json 里「当前环境」那一段。
+# 所以想按环境换地址，就别在这个文件里写死它 —— 把上面 @baseUrl 那行删掉，
+# 改成在 env 文件里给 local / dev 各写一份，右上角下拉一换就跟着变。
+# 想藏密钥就用 http-client.private.env.json（同目录，不进 git）。
+# 这一条用的是文件里没定义的 {{envTag}}：示例目录的 env 文件给了 local / dev 两个值，
+# 切一下环境，发出去就能看到 ?env= 后面变了。
+GET {{baseUrl}}/get?env={{envTag}}
 Accept: application/json
 
 # ----------------------------------------------------------------------------

@@ -376,7 +376,7 @@ ok('v0.6.2：自带示例 + SSE 流式', () => {
   assert(/sample-http\.js/.test(idx), 'index.html 需引入 sample-http.js');
   assert(idx.indexOf('sample-http.js') < idx.indexOf('http-editor.js'), '示例要在编辑器之前加载');
   const headings = (sm.match(/^### /gm) || []).length;
-  assert(headings === 8, '示例应有 8 节，实际 ' + headings);
+  assert(headings === 9, '示例应有 9 节，实际 ' + headings);
   ['GET ', 'POST ', 'multipart/form-data', 'text/event-stream', 'x-www-form-urlencoded',
    '@baseUrl', '@apiBase', 'data: [DONE]', '{{$guid}}', 'response.body.$.'
   ].forEach(k => assert(sm.includes(k), '示例缺少 ' + k));
@@ -653,6 +653,66 @@ ok('S2.4 跨请求引用认中文请求名', () => {
   assert(/\\p\{L\}/.test(h), 'response.body 的正则要用 \\p{L}，否则「登录」这种名字匹配不到');
   assert(/function resolveDeep/.test(h), '缺少 resolveDeep（变量值里套占位符要一次解到底）');
   assert(/resolveDeep:\s*resolveDeep/.test(h), 'resolveDeep 要导出');
+});
+
+
+/* ======================= v1.0.0：身份、历史与示例（M4 + M5） ======================= */
+ok('v1.0.0：身份纯函数的五个能力都在，且只在原文上插行', () => {
+  const id = read('ui/http-identity.js');
+  ['newId', 'insertFileId', 'insertInterfaceId', 'dedupe', 'fingerprint', 'retagInterfaceId'].forEach((k) => {
+    assert(id.indexOf('function ' + k) > 0, 'http-identity.js 缺少 ' + k);
+  });
+  assert(/insertFileId:\s*insertFileId/.test(id), 'insertFileId 要导出');
+  assert(/retagInterfaceId:\s*retagInterfaceId/.test(id), 'retagInterfaceId 要导出（S4.6 接回用）');
+  assert(/idLine\(kind, id, opts\)/.test(id), '身份行必须带 `# ` 前缀，否则 S3.3 的高亮不生效');
+});
+
+ok('v1.0.0：调用历史 10 条上限、轮转、二进制外置、坏行跳过', () => {
+  const h = read('ui/http-history.js');
+  assert(/MAX_LINES = 10/.test(h), '历史保留条数必须是 10（用户 2026-11-20 拍板）');
+  ['appendEntry', 'rotateText', 'rotateFile', 'parseJsonl', 'writeBody', 'ensureGitignore'].forEach((k) => {
+    assert(h.indexOf('function ' + k) > 0, 'http-history.js 缺少 ' + k);
+  });
+  assert(/bodyRef/.test(h) && /bodyEncoding/.test(h), '二进制要外置成 .bin 并记 bodyEncoding');
+  assert(/maxBodyBytes/.test(h), '二进制上限要留旋钮（5 MB 等拍板，不许写死）');
+  assert(/Object\.create\(null\)[\s\S]{0,120}chains/.test(h) || /var chains/.test(h), '同路径读改写要串行，否则连发会互相踩');
+  assert(/findByIdentity/.test(h) && /mergeInto/.test(h) && /reuse: reuse/.test(h), 'S4.6 的索引/合并/接回要齐');
+});
+
+ok('v1.0.0：发送链路接历史，且历史失败不拖累请求', () => {
+  const app = read('ui/app.js');
+  assert(/function recordHistory/.test(app), '缺少 recordHistory');
+  assert(/POLARIS_HISTORY\.createHistory/.test(app), 'recordHistory 要建 history');
+  assert(/historyWritten/.test(app), '要区分「历史写没写成」，失败只提示一次');
+  assert(/bodyBase64:/.test(app), '二进制要把 base64 传下去');
+  assert(/resp\.isBinary&&resp\.isBase64/.test(app), '只有真 base64 才外置，别把文本当 base64 写坏');
+});
+
+ok('v1.0.0：历史子页 + 接回提示条都挂在界面上', () => {
+  const idx = read('ui/index.html');
+  const app = read('ui/app.js');
+  assert(/data-rv="history"/.test(idx), 'index.html 缺少「历史」子页按钮');
+  assert(/id="bHist"/.test(idx), '历史子页要有条数角标');
+  assert(/id="idReuse"/.test(idx), '缺少接回提示条 #idReuse');
+  assert(/function viewHistory\(t\)/.test(app), '缺少 viewHistory');
+  assert(/function askIdReuse\(t,rec\)/.test(app) && /function applyIdReuse\(t\)/.test(app), '接回要「先问后做」两段都在');
+  assert(/t\.respView!=='history'/.test(app), '停在历史页时发送不许把视图顶走');
+});
+
+ok('v1.0.0：seed 退役，首启只靠磁盘上的示例与 env 文件', () => {
+  const app = read('ui/app.js');
+  const ed = read('ui/http-editor.js');
+  assert(!/function seed\(\)/.test(app), 'app.js 里不该再有 seed()（环境与集合都搬到磁盘）');
+  assert(!/示例 · DEMO/.test(app), '不该再有内置的 DEMO 集合（首启只放 examples.http）');
+  assert(!/state\.envs\.length\) seed\(\)/.test(app), '启动时不该再种 storage 集合/环境');
+  assert(/http-client\.env\.json/.test(ed), 'ensureDefaultSample 要顺带种一份 env 文件');
+  assert(/noClobber: true/.test(ed), '示例与 env 都必须 noClobber');
+});
+
+ok('v1.0.0：桥接的访问器要真生效（Object.assign 搬不动 getter）', () => {
+  const b = read('ui/dbx-bridge.js');
+  assert(/Object\.defineProperties\(bridge, Object\.getOwnPropertyDescriptors\(getters\)\)/.test(b),
+    'readyOk 等访问器必须用 defineProperties，否则 hostAvailable() 恒假、结果保存与扫描全静默失效');
 });
 
 console.log('\n' + pass + ' checks passed');

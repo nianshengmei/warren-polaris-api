@@ -77,29 +77,9 @@ async function load(){
   }
   // 超时容错：历史存储可能无 timeoutMs 或类型异常，统一回落默认 120s
   if(typeof ui.timeoutMs!=='number' || !Number.isFinite(ui.timeoutMs) || ui.timeoutMs<0) ui.timeoutMs=120000;
-  if(!state.collections.length || !state.envs.length) seed();
   if(!state.tabs.length){ const t=newTab(); state.tabs=[t]; state.activeTab=t.id; }
   if(!activeTab()) state.activeTab=state.tabs[0].id;
 }
-function sreq(name,method,url,extra){ return Object.assign({id:uid(),name,method,url,params:[blankRow()],headers:[blankRow()],bodyType:'none',body:'',formBody:[blankRow()]},extra||{}); }
-function seed(){
-  if(!state.envs.length){
-    const demo={id:uid(),name:'Demo · jsonplaceholder',baseUrl:'https://jsonplaceholder.typicode.com',vars:[{id:uid(),on:true,k:'token',v:'demo-token-123'}]};
-    state.envs=[demo]; state.activeEnv=demo.id;
-  }
-  if(!state.collections.length){
-    const g={ id:uid(), name:'示例 · DEMO', collapsed:false, requests:[
-      sreq('用户列表 {{baseUrl}}','GET','{{baseUrl}}/users'),
-      sreq('单个 Todo(对象)','GET','{{baseUrl}}/todos/1'),
-      sreq('用户 {{baseUrl}}/users/1','GET','{{baseUrl}}/users/1'),
-      sreq('相册(嵌套数据→表格)','GET','{{baseUrl}}/albums'),
-      sreq('新建 Post','POST','{{baseUrl}}/posts',{bodyType:'json',body:JSON.stringify({title:'polaris',body:'hello',userId:1},null,2),
-        headers:[{id:uid(),on:true,k:'Authorization',v:'Bearer {{token}}'},blankRow()]}),
-    ]};
-    state.collections=[g];
-  }
-}
-
 /* ===================== 文件真源 + 映射为权威（v0.9.0） =====================
  * 一个 .http 文件 = 一个 collection，内容以磁盘为准；
  * 侧栏里出现哪些文件，**完全由 wpa-workspace.json 决定**，不扫目录。
@@ -2127,6 +2107,15 @@ async function initApi(){
  * 只暴露必要能力，避免新模块直接改动闭包内 state。 */
 window.POLARIS_API = {
   uid: uid,
+  /* S5.3：示例种子会在编辑器里写一份 http-client.env.json，写完让这边重读一次，
+   * 否则首启那一刻环境下拉还是「无环境」，要等重启才看得见。 */
+  reloadEnvs: function(){
+    return loadEnvsFromFile().then(function(ok){
+      /* 读到了就顺手刷一次下拉：调用方（示例种子）是异步写的，刷新的时机只能在这儿 */
+      if(ok){ try{ renderEnv(); renderRequestBar(); }catch(e){} }
+      return ok;
+    });
+  },
   blankRow: blankRow,
   newTab: newTab,
   resolveVars: resolveVars,

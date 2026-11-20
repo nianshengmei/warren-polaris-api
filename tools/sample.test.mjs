@@ -1,4 +1,4 @@
-/* 示例 .http 的语法自检：能被解析器完整吃下、8 个请求齐全、multipart 分段正确。 */
+/* 示例 .http 的语法自检：能被解析器完整吃下、9 个请求齐全、multipart 分段正确、且不预置身份。 */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +17,7 @@ const text = SAMPLE.http.replace(/__AUDIO_PATH__/g, 'C:\\apis\\sample-upload.txt
 
 const doc = H.parseHttpFile(text, { fileName: 'examples.http' });
 const reqs = doc.requests || [];
-ok(reqs.length === 8, `解析出 8 个请求（实际 ${reqs.length}）`);
+ok(reqs.length === 9, `解析出 9 个请求（实际 ${reqs.length}）`);
 ok(doc.warnings.length === 0, '没有解析告警：' + JSON.stringify(doc.warnings));
 
 ok(doc.variables.baseUrl === 'https://httpbin.org', '@baseUrl 变量');
@@ -25,7 +25,7 @@ ok(doc.variables.apiBase === 'https://api.example.com', '@apiBase 变量');
 ok(/sample-upload\.txt$/.test(doc.variables.audioPath || ''), '@audioPath 指向示例附件');
 
 const methods = reqs.map(r => r.method);
-ok(JSON.stringify(methods) === JSON.stringify(['GET', 'POST', 'POST', 'POST', 'POST', 'GET', 'GET', 'GET']),
+ok(JSON.stringify(methods) === JSON.stringify(['GET', 'POST', 'POST', 'POST', 'POST', 'GET', 'GET', 'GET', 'GET']),
   '方法序列 ' + methods.join(','));
 
 const names = reqs.map(r => r.title || r.name);
@@ -72,6 +72,24 @@ ok(/\{\{listTasks\.response\.headers\.X-Amzn-Trace-Id\}\}/.test(reqs[6].url), '�
 
 /* 动态变量 */
 ok(/\{\{\$guid\}\}/.test(reqs[7].url) && /\{\{\$timestamp\}\}/.test(reqs[7].url) && /\{\{\$randomInt\}\}/.test(reqs[7].url), '动态变量齐全');
+
+/* 第 9 节：环境切换，不改文件就能换后端 */
+ok(reqs[8].title === '9. 环境切换 · 变量放哪儿说了算', '第 9 节标题：' + reqs[8].title);
+ok(/\{\{baseUrl\}\}\/get\?env=\{\{envTag\}\}/.test(reqs[8].url), '第 9 节用只写在 env 文件里的 {{envTag}}');
+ok(/\{\{envTag\}\}/.test(reqs[8].url) && !/^\s*@envTag/m.test(text), 'envTag 确实没有在文件里定义（否则切环境不会有差别）');
+
+/* 9 节各带 1–2 行导语：每个 ### 前面（含紧跟其后的注释）至少有一句说明 */
+{
+  const blocks = text.split(/^### /m).slice(1);
+  const noIntro = blocks.map((b, i) => ({ i, b })).filter(({ b }) => !/^#\s+\S/m.test(b.split('\n').slice(1, 4).join('\n')));
+  ok(blocks.length === 9 && noIntro.length === 0, '9 节每节都有导语，缺的是：' + noIntro.map((x) => x.i + 1).join(','));
+}
+
+/* 不预置身份：文件里可以「提到」这两个键（第一节就是讲它们），但解析结果不能有 id */
+ok(doc.fileId === undefined || doc.fileId === null || doc.fileId === '', '示例里没有预置 @file_id：' + doc.fileId);
+ok(reqs.every((r) => !r.interfaceId), '示例里没有预置 @interface_id：' + reqs.map((r) => r.interfaceId).join(','));
+ok(!/^\s*#\s*@(file|interface)_id\s+[0-9a-z]{6,}/mi.test(text), '没有一行长得像真身份（只会出现在说明文字里）');
+ok(/@file_id/.test(text) && /@interface_id/.test(text), '第一节确实讲了这两个键是什么');
 
 /* 变量解析后 URL 不带 {{ */
 const vars = doc.variables;

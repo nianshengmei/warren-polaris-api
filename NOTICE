@@ -22,6 +22,11 @@ warren-polaris-api, display name "HTTP File Client (.http)"):
 - added a bundled runnable examples.http written on first launch;
 - added multipart/form-data request bodies with byte-exact file parts;
 - added streamed text/event-stream (SSE) responses with a size/time cap;
-- new icon and rewritten store listing text.
+- new icon and rewritten store listing text;
+- from v1.0.0 the fork no longer tracks upstream: it adds `# @file_id` /
+  `# @interface_id` comments (plain comments, non-standard, honoured by this
+  plugin only), per-interface call history under `_history/`, and a history
+  panel. Upstream has none of these, so rebasing per release only resolves the
+  same conflicts over and over. All upstream notices above stay in place.
 
 No upstream copyright notices were removed.
