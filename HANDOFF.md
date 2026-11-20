@@ -64,7 +64,7 @@ node dev/dev-server.mjs
 > **⚠ 仓库里没有的东西**：`verify-ui/`（二十个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
-> - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261121-r13.zip` 里
+> - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261121-r14.zip` 里
 >   取 `verify-ui/` 和 `dev-workspace/`，放到与 `warren-polaris-api` 同级。
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
@@ -121,8 +121,8 @@ node dev/dev-server.mjs
 | S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（`crypto` 优先、可注入 rnd）；`insertFileId` 落在第一个 `###` 之前并与 `###` 隔一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` / `index` 两种定位）；`dedupe` 同文件重复 id 后一个换新；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口/重复斜杠/末尾斜杠/fragment 抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接、不重序列化**，插入行沿用文件自己的行尾（CRLF 不掺裸 LF）。`tools/identity.test.mjs` 9 项 |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → **14 文件全绿**（`verify.mjs` **61** 项、`map.test.mjs` 22、`store.test.mjs` 31、`identity.test.mjs` 13、`history.test.mjs` **29**、`sample.test.mjs` 46、`cancel.test.mjs` **14** 等）
-- `verify-ui/` **二十个**端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15、**s61=20**、**s71=12**、**s72=25**
+- `node tools/all.mjs` → **14 文件全绿**（`verify.mjs` **62** 项、`map.test.mjs` 22、`store.test.mjs` 31、`identity.test.mjs` 13、`history.test.mjs` **29**、`sample.test.mjs` 46、`cancel.test.mjs` **14** 等）
+- `verify-ui/` **二十个**端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15、**s61=22**、**s71=12**、**s72=25**
 - Rust 侧（沙箱里现在能跑）：`cargo check` / `clippy` **零警告**；`node tools/live-cancel.mjs` **11 项全过**
 
 ---
@@ -248,7 +248,7 @@ cd warren-polaris-api && git log --oneline -1   # 应能看到 a500446 及其后
 **B. 迁移包（离线备份 / 补 verify-ui 用）**
 
 ```
-polaris-handoff-20261121-r13.zip   （7.6 MB，685 条目，已校验 UTF-8 文件名 + testzip）
+polaris-handoff-20261121-r14.zip   （7.6 MB，685 条目，已校验 UTF-8 文件名 + testzip）
 ├── warren-polaris-api/     完整项目，含 .git（已解压实测过：git status 干净、14/14 全绿）
 ├── verify-ui/              端到端脚本 20 个（不含 node_modules，Mac 上 npm i playwright-core）
 ├── dev-workspace/          调试目录（含 wpa-workspace.json 与两个 .http）
