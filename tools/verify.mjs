@@ -198,6 +198,28 @@ ok('S2.5d：归位与排序只改映射，请求级拖拽走整段搬移', () =>
     assert(mp.includes(k), '映射层缺少 ' + k));
 });
 
+ok('S3.1：浮层拖拽走位移，位置落偏好、双击复位', () => {
+  const ed = read('ui/http-editor.js');
+  /* 位置用 --fe-dx/--fe-dy 位移，不改 left/top（改了宽度会被压变形） */
+  assert(/\.pa-fe\{--fe-dx:0px;--fe-dy:0px/.test(ed), '浮层需用 --fe-dx/--fe-dy 记位移');
+  assert(/transform:translate\(var\(--fe-dx\),var\(--fe-dy\)\)/.test(ed), '浮层定位应走 translate(dx,dy)');
+  assert(ed.includes('function applyFePos'), '缺少 applyFePos()');
+  assert(ed.includes('function clampFePos'), '缺少 clampFePos()（拖出窗口要夹回）');
+  assert(ed.includes('function bindPaneDrag'), '缺少 bindPaneDrag()');
+  assert(/bindPaneDrag[\s\S]{0,2000}requestAnimationFrame/.test(ed), '拖拽需 rAF 合帧');
+  assert(/bindPaneDrag[\s\S]{0,1400}setPointerCapture/.test(ed), '拖拽需 setPointerCapture');
+  assert(/bindPaneDrag[\s\S]{0,3000}dblclick/.test(ed), '双击标题条应复位');
+  /* 标题条里的按钮/下拉不能当拖拽手柄 */
+  assert(/isCtl[\s\S]{0,160}closest\('button,select,input/.test(ed), '拖拽应跳过按钮/下拉');
+  /* 位置持久化 + 启动恢复 + 布局变化后重夹 */
+  assert(/feX:\s*Math\.round\(S\.feX\)/.test(ed), 'feX 需写进偏好');
+  assert(/isFinite\(p\.feX\)/.test(ed), '启动时需恢复 feX');
+  assert(ed.includes('function reclampFe'), '缺少 reclampFe()（窗口缩放后重夹）');
+  assert(/setPointerCapture/.test(ed), '拖拽需 setPointerCapture');
+  /* 收起态不许拖：off 时本来也点不到，但状态机要拦住 */
+  assert(/pointerdown[\s\S]{0,200}S\.collapsed\) return/.test(ed), '收起态不应起拖');
+});
+
 ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
   const ed = read('ui/http-editor.js');
   /* 一览 */
@@ -254,7 +276,7 @@ ok('v0.6.0：.http 浮层 + 右缘悬浮箭头', () => {
   /* 浮层挂到 .work（绝对定位），不再塞进 .req-region */
   assert(/querySelector\('\.work'\)/.test(ed), '浮层必须挂到 .work 下');
   assert(/\.pa-root \.work\{position:relative\}/.test(ed), '.work 需要 position:relative');
-  assert(/\.pa-fe\.off\{transform:translateX\(var\(--fe-slide/.test(ed), '收起动画应走 --fe-slide');
+  assert(/\.pa-fe\.off\{transform:translate\(calc\(var\(--fe-dx\) \+ var\(--fe-slide/.test(ed), '收起动画仍应走 --fe-slide（S3.1 后带 --fe-dx 偏移）');
   assert(/--fe-slide/.test(ed), '滑出距离需按工作区宽度算');
 
   /* 三态 + 箭头 */

@@ -9,9 +9,9 @@
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1（文件真源）+ M2（双视图）已完成**，`S2.5a/b/c/d + S2.6` 全绿，
-**下一步是 M3 交互（S3.1 浮层拖拽）**，之后是 M4 → M5 → M6 → M7。
-S2.5d 于 2026-11-20 在 Mac 侧收官：文件级拖拽（归位 / 排序 / 退回根）+ 请求级同文件整段搬移。
+1.0.0 的 **M1（文件真源）+ M2（双视图）已完成**，`S2.5a/b/c/d + S2.6 + S3.1` 全绿，
+**下一步是 M3 交互的 S3.2 字号缩放**，之后是 S3.3 → M4 → M5 → M6 → M7。
+S3.1 于 2026-11-20 收官：按住标题条拖浮层，位置落偏好，双击复位，拖出边界自动夹回。
 
 ---
 
@@ -49,7 +49,7 @@ node dev/dev-server.mjs
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
 **新会话开场白建议直接说**：
-> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M3 的 S3.1 开始。口径不许改。
+> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M3 的 S3.2 开始。口径不许改。
 
 ---
 
@@ -82,23 +82,26 @@ node dev/dev-server.mjs
 | S2.5b 侧栏文件夹树 | ✅ | `renderSidebarMapped / renderFolderNode / renderMapFile` |
 | S2.5c 浮层去文件树 | ✅ | 浮层只剩「接口一览 + 源码」，顶栏「≡ 接口一览」是唯一开关 |
 | S2.5d 归位与排序 | ✅ | 文件行拖拽：文件夹头归入 / 上下半区插前后 / 根区退回根，全走 `POLARIS_MAP.moveTo` + `saveWorkspaceMap()`，只改映射不动文件；请求级同文件调序 = 整段搬移（`store.moveSegment`），跨文件仍留 1.0.1。`verify-ui/check-s25d.mjs` 23 项 |
+| S3.1 浮层拖拽 | ✅ | 标题条拖动 → `--fe-dx/--fe-dy` 位移（不改 left/top，宽度不会被压变形），rAF 合帧 + `setPointerCapture`；整块夹在 `.work` 内，双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，scrollLeft 被顶偏 26px 导致浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S2.6 示例自动挂载 | ✅ | 含 `POLARIS_MAP.save` 并发写修复（tmp 名唯一 + 串行） |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → 11 文件全绿（`verify.mjs` 49 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项等）
-- `verify-ui/` 八个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8
+- `node tools/all.mjs` → 11 文件全绿（`verify.mjs` 50 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项等）
+- `verify-ui/` 九个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20
 
 ---
 
-## 4. 下一步：M3 交互 · S3.1 浮层拖拽
+## 4. 下一步：M3 交互 · S3.2 字号缩放
 
-> 目标：按住标题条把 `.pa-fe` 浮层拖到任意位置，重启后位置还在；双击标题条复位。
-> 验收：拖到左下角 → 关掉重开位置不变；拖出窗口自动夹回。
+> 目标：`Ctrl` + 滚轮改编辑器字号 12–28px，textarea / 行号 / 高亮三层不错位；`Ctrl+0` 复位。
+> 验收：缩到 28px 时随便点一行，光标位置与文字对得上（错位是本步唯一的失败形态）。
 
-改动落点：`ui/http-editor.js` 的拖拽状态机（pointerdown/move/up + rAF 合帧）、`ui/app.css` 的
-`left/top` 定位与吸边。位置持久化到 `ui.float`（storage 只留偏好）。
+改动落点：`ui/http-editor.js` 的 `injectCss`（浮层样式其实都在这儿，不在 `ui/app.css`）——
+加 `--pa-fs` 并让 `.pa-fe-text` / `.pa-fe-ln`（行号）/ `.pa-fe-hl` 三处同源引用；
+`LINE_H` / `PAD_TOP` 两个常量与 CSS 联动，`syncGutter`、`syncScroll`、光标行归属都依赖行高，
+改字号时必须一起换算，否则就是「三层错位」。`Ctrl+0` 复位到默认字号；字号落偏好。
 
-之后按 `docs/plan-v1.0.0.md` 顺序：**S3.2 字号 / S3.3 身份行配色 → M4 身份与历史 → M5 示例与文档 → M6 取消 → M7 冻结发版**。
+之后按 `docs/plan-v1.0.0.md` 顺序：**S3.3 身份行配色 → M4 身份与历史 → M5 示例与文档 → M6 取消 → M7 冻结发版**。
 
 ---
 

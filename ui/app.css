@@ -178,7 +178,7 @@
 .pa-root .m-PATCH{color:var(--m-patch)} .m-DELETE{color:var(--m-del)} .m-HEAD,.m-OPTIONS{color:var(--m-other)}
 
 /* 工作区 */
-.pa-root .work{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.pa-root .work{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;overflow:clip}
 .pa-root .tabbar{display:flex;align-items:stretch;height:var(--tabsbar);min-height:var(--tabsbar);border-bottom:1px solid var(--line);background:var(--bg-2);overflow-x:auto;overflow-y:hidden;position:relative}
 .pa-root .tabbar::-webkit-scrollbar{height:0}
 /* 右缘溢出遮罩：隐藏滚动条下"还有更多 tab"的唯一提示（左缘因加号 sticky 钉住，只需右侧） */

@@ -32,7 +32,9 @@
 | S2.5c 面板去文件树 | ✅ | 浮层左栏只剩「接口一览」，文件列表 / 目录输入框 / ⟳ 扫描 / ＋ 新建 / ⇣ 导入 / 📂 打开全部删除，扫目录逻辑（`scan`/`renderFiles`/`refreshFiles`/`matchScanned`/`S.files`）连根拔掉；工作目录改由 `workspaceDir()` 推导（当前文件 → 映射目录）；侧栏文件头新增 `</>` 进源码；顶栏新增「≡ 接口一览」开关（收起后仍有唯一入口）。`verify-ui/check-s25c.mjs` 21 项 |
 | S2.5d 归位与排序 | ✅ | **文件级**：文件夹头 = 归入（追加到末尾）、文件行上/下半区 = 插到前/后（同组即排序）、根区 `.root-zone` = 退回根；落点下标按「先摘后插」算（`dropIndex`），一律 `POLARIS_MAP.moveTo` → `saveWorkspaceMap()`，**只改映射、不碰文件**；拖进折叠的文件夹会顺手展开；拖拽手柄只给 `.group-head`（`.gact` 上的按下不算拖拽，也不触发折叠）。**请求级**：恢复 S1.5 暂停的拖拽 —— 同一文件内调序 = 整段搬移（新增 `store.moveSegment` / 纯函数 `moveSegmentText`，按字符偏移切段重排，文件头与段内字节逐字节不变，`baseMtime` 冲突照旧）；跨文件搬段仍拒绝并提示（会丢注释，留 1.0.1）。`store.test.mjs` +5 项、`verify.mjs` +1 项、`verify-ui/check-s25d.mjs` 23 项 |
 
-一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s25d.mjs`（23 项）+ `check-s26.mjs`（8 项）。
+| S3.1 浮层拖拽 | ✅ | 按住标题条拖浮层，位置记在 `--fe-dx/--fe-dy`（**不改 left/top** —— 基础盒贴着请求区算，改 left 会把宽度压变形），`pointerdown/move/up` + rAF 合帧，`setPointerCapture` 保证拖出标题条也不丢；夹取按「整块留在 `.work` 里」算，拖过头贴边；双击标题条归零；位置写进偏好 `feX/feY`，启动恢复、窗口缩放后重夹。顺带修掉两处既有毛病：`.work` 的 `overflow:hidden` 会变成可滚容器（`scrollLeft` 被顶偏 26px，浮层整体错位）→ 改 `overflow:clip`；标题条上的按钮/下拉不作为拖拽手柄。`verify.mjs` +1 项、`verify-ui/check-s31.mjs` 20 项 |
+
+一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s25d.mjs`（23 项）+ `check-s26.mjs`（8 项）+ `check-s31.mjs`（20 项）。
 
 ### 本地浏览器调试（`dev/`）
 
@@ -203,11 +205,11 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 
 ## M3 交互
 
-### S3.1 浮层拖拽
+### S3.1 浮层拖拽 ✅
 
 - **目标**：按住标题条拖到任意位置，重启后位置还在；双击复位。
-- **改动**：`ui/http-editor.js` 加拖拽状态机（pointerdown/move/up + rAF 合帧）；`ui/app.css` 加 `left/top` 定位与吸边。
-- **验收**：拖到左下角 → 关闭重开 → 位置不变；拖出窗口 → 自动夹回。
+- **落地**：不在 `ui/app.css`（浮层样式其实在 `ui/http-editor.js` 的 `injectCss` 里），而是位移式定位：`--fe-dx/--fe-dy` + `translate()`，宽度高度仍由 `layoutLayer()` 贴着请求区算。夹取用 `offsetLeft/offsetTop` 量基础盒（不受 transform 影响，收起动画中量得准），范围是「整块留在 `.work` 内」——`上下` 分栏只有纵向余量、`左右` 分栏只有横向余量，拖过头就贴边，绝不露出去被裁。位置存偏好 `feX/feY`，`Ctrl+0` 无关；双击标题条归零。
+- **验收**：`verify-ui/check-s31.mjs` —— 拖 140px 位移跟着变、拖到 900px 外夹回、刷新后位置一致、双击归零且归零也落盘、按在「保存」按钮上起手不拖走。
 
 ### S3.2 字号缩放
 

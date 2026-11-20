@@ -45,6 +45,8 @@
     open: false,
     collapsed: false,  /* v0.6.0：浮层是否已收进右缘箭头（状态保留，不是关闭） */
     edgeTop: 20,       /* 右缘箭头垂直位置（%.work 高度）；可拖动，记在这里 */
+    feX: 0,            /* S3.1：浮层相对基础盒的位移（px），拖动标题条改这里，双击标题条归零 */
+    feY: 0,
     dir: '',
     path: '',
     name: '',
@@ -298,8 +300,14 @@
        * 只盖「顶栏 tab 之下、响应框之上」的请求编辑区：上方 tab 点得到，下方响应框还看得见，
        * 收起时整体向右滑出屏幕，留下右缘一颗灰色半透明箭头。 */
       '.pa-root .work{position:relative}',
-      '.pa-fe{position:absolute;left:0;right:0;top:79px;bottom:0;z-index:16;display:flex;flex-direction:column;background:var(--bg,#16181e);color:var(--ink,#d8dae2);font-size:12.5px;overflow:hidden;border-radius:10px 0 0 10px;box-shadow:-18px 0 46px -20px rgba(0,0,0,.62),inset 1px 0 0 var(--line,rgba(255,255,255,.1));transform:translateX(0);opacity:1;visibility:visible;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s}',
-      '.pa-fe.off{transform:translateX(var(--fe-slide,100%));opacity:0;pointer-events:none;visibility:hidden;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s .36s}',
+      /* S3.1：位置 = 基础盒（贴 .work 左/上/右/下） + --fe-dx/--fe-dy 位移。
+       * 用位移而不是改 left/top：宽度高度还是由布局算出来，拖动不会把浮层拉变形。 */
+      '.pa-fe{--fe-dx:0px;--fe-dy:0px;position:absolute;left:0;right:0;top:79px;bottom:0;z-index:16;display:flex;flex-direction:column;background:var(--bg,#16181e);color:var(--ink,#d8dae2);font-size:12.5px;overflow:hidden;border-radius:10px 0 0 10px;box-shadow:-18px 0 46px -20px rgba(0,0,0,.62),inset 1px 0 0 var(--line,rgba(255,255,255,.1));transform:translate(var(--fe-dx),var(--fe-dy));opacity:1;visibility:visible;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s}',
+      '.pa-fe.off{transform:translate(calc(var(--fe-dx) + var(--fe-slide,100%)),var(--fe-dy));opacity:0;pointer-events:none;visibility:hidden;transition:transform .36s cubic-bezier(.22,.61,.36,1),opacity .26s ease,visibility 0s .36s}',
+      /* 拖动中不要过渡，否则浮层会追着光标慢慢飘 */
+      '.pa-fe.dragging{transition:none;box-shadow:0 26px 64px -18px rgba(0,0,0,.74),inset 1px 0 0 var(--line,rgba(255,255,255,.1))}',
+      '.pa-fe.dragging,.pa-fe.dragging *{user-select:none}',
+      '.pa-fe.dragging .pa-fe-bar{cursor:grabbing}',
       /* 收起后的入口：贴右边缘的灰色半透明箭头（可上下拖动，单击展开，右键彻底关闭） */
       '.pa-root .pa-edge{position:absolute;right:0;top:20%;width:24px;height:96px;z-index:18;margin:0;padding:0;border:0;border-radius:14px 0 0 14px;background:rgba(150,156,172,.32);color:#fff;-webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);box-shadow:inset 1px 0 0 rgba(255,255,255,.16),-4px 0 18px -6px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;pointer-events:none;transform:translateY(-50%) translateX(110%);transition:opacity .22s ease,background-color .18s,transform .32s cubic-bezier(.22,.61,.36,1);-webkit-tap-highlight-color:transparent;touch-action:none;user-select:none}',
       '.pa-root .pa-edge.on{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0);transition-delay:.08s}',
@@ -309,7 +317,7 @@
       '.pa-root .pa-edge svg{display:block;pointer-events:none}',
       '[data-dbx-theme="light"] .pa-root .pa-edge{background:rgba(0,0,0,.42);box-shadow:inset 1px 0 0 rgba(255,255,255,.18),-4px 0 18px -6px rgba(0,0,0,.22)}',
       '[data-dbx-theme="light"] .pa-root .pa-edge:hover{background:rgba(0,0,0,.55)}',
-      '.pa-fe-bar{display:flex;align-items:center;gap:7px;padding:5px 9px;border-bottom:1px solid var(--line,rgba(255,255,255,.1));background:var(--surface,#1e2028);flex:none;min-height:33px;flex-wrap:wrap}',
+      '.pa-fe-bar{display:flex;align-items:center;gap:7px;padding:5px 9px;border-bottom:1px solid var(--line,rgba(255,255,255,.1));background:var(--surface,#1e2028);flex:none;min-height:33px;flex-wrap:wrap;cursor:grab;touch-action:none;user-select:none}',
       '.pa-fe-dot{width:7px;height:7px;border-radius:50%;background:var(--ok,#3fb950);flex:none;box-shadow:0 0 6px var(--ok,#3fb950)}',
       '.pa-fe-name{font-weight:600;font-size:12.5px;white-space:nowrap;max-width:250px;overflow:hidden;text-overflow:ellipsis}',
       '.pa-fe-path{font-size:11px;color:var(--dimmer,#6e7282);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34%;font-family:var(--mono,Consolas,monospace)}',
@@ -545,8 +553,10 @@
     if (S.open) { S.collapsed = false; return; }
     S.open = true;
     S.collapsed = false;
+    resetWorkScroll();
     setTimeout(syncGutter, 30);
     setTimeout(syncGutter, 400);
+    setTimeout(function () { resetWorkScroll(); reclampFe(); }, 420);
   }
 
   /* 关键：浮层尺寸跟着「请求编辑区」走 —— 上下分栏时盖到响应框上沿（结果还看得见），
@@ -576,6 +586,10 @@
     /* 收起时要整块滑出 .work 右边界：位移量按工作区宽度算，
      * 左右分栏时浮层比工作区窄，100% 不够（会露出一截盖在响应框上）。 */
     pane.style.setProperty('--fe-slide', Math.round(wr.width) + 'px');
+    /* 尺寸重算后位置也要重新夹：窗口变小/分栏切换后，原来的位移可能已经出界 */
+    var c = clampFePos(S.feX, S.feY);
+    S.feX = c.x; S.feY = c.y;
+    applyFePos();
   }
 
   /* 浮层滑到工作区外面以后，浏览器有时会把 .work 的横向 scrollLeft 顶偏
@@ -584,6 +598,128 @@
   function resetWorkScroll() {
     var w = document.querySelector('.work');
     if (w && w.scrollLeft) w.scrollLeft = 0;
+  }
+
+  /* ===================== S3.1：按住标题条拖浮层 =====================
+   * 位置只记「相对基础盒的位移」--fe-dx/--fe-dy，不去改 left/top ——
+   * 基础盒由 layoutLayer() 贴着请求编辑区算，改 left 会把宽度压变形。
+   * 拖动时 pointermove 只记数、rAF 合帧写样式；松手夹回 .work 内并落偏好；
+   * 双击标题条归零。 */
+  function applyFePos() {
+    if (!pane) return;
+    pane.style.setProperty('--fe-dx', Math.round(S.feX) + 'px');
+    pane.style.setProperty('--fe-dy', Math.round(S.feY) + 'px');
+  }
+
+  /* 用 offsetLeft/offsetTop 量基础盒：这两个值不受 transform 影响，
+   * 收起动画进行中、或刚从 off 里出来时也量得准。 */
+  function paneBaseBox() {
+    if (!pane) return null;
+    var work = document.querySelector('.work');
+    if (!work) return null;
+    var wr = work.getBoundingClientRect();
+    var bar = pane.querySelector('.pa-fe-bar');
+    /* offsetLeft/Top 是相对 padding 盒的，.work 被滚过（overflow:hidden 也能被滚）
+     * 就要把滚量减回去，否则量出来的基础盒会整体偏一段。 */
+    return {
+      l: wr.left - (work.scrollLeft || 0) + pane.offsetLeft,
+      t: wr.top - (work.scrollTop || 0) + pane.offsetTop,
+      w: pane.offsetWidth,
+      h: pane.offsetHeight,
+      bar: bar ? bar.offsetHeight : 34,
+      work: wr
+    };
+  }
+
+  /* 允许的位移：整块浮层留在 .work 里。
+   * 不采用「只留标题条」的松夹法 —— 那样浮层会露到工作区外面被裁掉，
+   * 看着像坏了；宁可夹紧一点，位置也更好预测。 */
+  function clampFePos(x, y, box) {
+    box = box || paneBaseBox();
+    if (!box || !box.w || !box.h) return { x: x, y: y };
+    var minX = box.work.left - box.l;
+    var maxX = box.work.right - box.l - box.w;
+    var minY = box.work.top - box.t;
+    var maxY = box.work.bottom - box.t - box.h;
+    return {
+      x: maxX < minX ? minX : Math.max(minX, Math.min(maxX, x)),
+      y: maxY < minY ? minY : Math.max(minY, Math.min(maxY, y))
+    };
+  }
+
+  /* 布局变了（窗口缩放 / 分栏切换）后把现有位置重新夹一遍 */
+  function reclampFe() {
+    if (!pane || !S.open || S.collapsed) return;
+    var p = clampFePos(S.feX, S.feY);
+    if (p.x !== S.feX || p.y !== S.feY) {
+      S.feX = p.x; S.feY = p.y;
+      applyFePos();
+    }
+  }
+
+  function resetFePos(silent) {
+    S.feX = 0; S.feY = 0;
+    applyFePos();
+    savePrefs();
+    if (!silent) toast('浮层位置已复位');
+  }
+
+  function bindPaneDrag() {
+    if (!pane) return;
+    var bar = pane.querySelector('.pa-fe-bar');
+    if (!bar) return;
+    bar.title = '按住标题条拖动浮层 · 双击复位';
+    /* 标题条里全是按钮 / 下拉，按在它们身上不算拖 */
+    var isCtl = function (t) {
+      return !!(t && t.closest && t.closest('button,select,input,textarea,a,label'));
+    };
+    var dg = null, raf = 0, nx = 0, ny = 0;
+
+    bar.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0 || isCtl(e.target) || !S.open || S.collapsed) return;
+      if (!paneBaseBox()) return;
+      dg = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: S.feX, dy: S.feY, live: false, box: paneBaseBox() };
+      try { bar.setPointerCapture(e.pointerId); } catch (err) { }
+      e.preventDefault();
+    });
+
+    bar.addEventListener('pointermove', function (e) {
+      if (!dg || e.pointerId !== dg.id) return;
+      var mx = e.clientX - dg.x0, my = e.clientY - dg.y0;
+      if (!dg.live) {
+        if (Math.abs(mx) < 3 && Math.abs(my) < 3) return;   /* 手指抖不算拖 */
+        dg.live = true;
+        pane.classList.add('dragging');
+      }
+      var p = clampFePos(dg.dx + mx, dg.dy + my, dg.box);
+      nx = p.x; ny = p.y;
+      if (!raf) raf = requestAnimationFrame(function () {
+        raf = 0;
+        S.feX = nx; S.feY = ny;
+        applyFePos();
+      });
+    });
+
+    var endDrag = function () {
+      if (!dg) return;
+      var live = dg.live, id = dg.id;
+      dg = null;
+      if (raf) {   /* 最后一帧还没落地：补上，别丢掉松手前最后那几像素 */
+        cancelAnimationFrame(raf); raf = 0;
+        S.feX = nx; S.feY = ny;
+        applyFePos();
+      }
+      pane.classList.remove('dragging');
+      try { bar.releasePointerCapture(id); } catch (err) { }
+      if (live) savePrefs();
+    };
+    bar.addEventListener('pointerup', endDrag);
+    bar.addEventListener('pointercancel', endDrag);
+
+    bar.addEventListener('dblclick', function (e) {
+      if (isCtl(e.target)) return;
+      resetFePos();
+    });
   }
 
   /* 只把箭头挂上、浮层保持藏起来（v0.6.1）。
@@ -629,6 +765,11 @@
     S.collapsed = false;
     if (pane) pane.classList.remove('off');
     if (edge) edge.classList.remove('on');
+    /* 展开时浏览器会把焦点滚进视野，.work 的 scrollLeft 可能被顶偏；
+     * 滚量一变基础盒就偏，位置也就偏，所以归零后再夹一次。 */
+    resetWorkScroll();
+    setTimeout(resetWorkScroll, 60);
+    setTimeout(function () { resetWorkScroll(); reclampFe(); }, 420);
     setTimeout(function () { if (ta) ta.focus(); }, 140);
     setTimeout(syncGutter, 400);
   }
@@ -2127,7 +2268,7 @@
     try {
       DBX.storage.set(ST_KEY, {
         dir: S.dir, autoSave: S.autoSave, activeEnv: S.activeEnv, lastPath: S.path,
-        edgeTop: S.edgeTop
+        edgeTop: S.edgeTop, feX: Math.round(S.feX), feY: Math.round(S.feY)
       });
     } catch (e) { }
   }
@@ -2140,6 +2281,9 @@
       S.dir = p.dir || '';
       S.activeEnv = p.activeEnv || '';
       if (isFinite(p.edgeTop)) S.edgeTop = Math.max(6, Math.min(94, Number(p.edgeTop)));
+      /* S3.1：上次拖到的位置；真正的夹取在布局量出来之后（见 init 里的 reclampFe） */
+      if (isFinite(p.feX)) S.feX = Number(p.feX);
+      if (isFinite(p.feY)) S.feY = Number(p.feY);
     }
     updateAutoBtn();
     if (!S.dir) {
@@ -2179,10 +2323,12 @@
     var side = byId('paFeSide');
 
     /* 工具条 */
-    E.save.onclick = function () { doSave(true); };
-    E.saveAs.onclick = function () { saveAs(); };
+    E.save.onclick = function () { doSave(true); };    E.saveAs.onclick = function () { saveAs(); };
     byId('paFeRunAll').onclick = function () { runAll(); };
     byId('paFeClose').onclick = function () { collapse(); };
+
+    /* S3.1：标题条拖动浮层（双击复位） */
+    bindPaneDrag();
 
     /* ---- 右缘箭头：单击展开 / 上下拖动挪位置 / 右键彻底关闭 ---- */
     if (edge) {
@@ -2378,7 +2524,7 @@
       }
     });
     window.addEventListener('resize', function () {
-      if (S.open) layoutLayer();
+      if (S.open) layoutLayer();   /* layoutLayer 里已带位置重新夹取 */
       syncGutter();
     });
 
@@ -2429,6 +2575,10 @@
     renderEnvSel();
     updateFoot();
     if (edge) edge.style.top = S.edgeTop + '%';
+    /* S3.1：先把上次的位置贴上；布局尺寸还没量准，稍后再夹一次 */
+    applyFePos();
+    setTimeout(reclampFe, 320);
+    setTimeout(reclampFe, 960);
 
     /* 恢复上次打开的文件（只挂右缘箭头，不展开浮层）。
      * 示例每次都确保存在（noClobber，改过/删前的都不动）——
@@ -2474,6 +2624,9 @@
       isCollapsed: function () { return !!S.collapsed; },
       collapse: collapse,
       expand: expand,
+      /* S3.1：浮层位置（拖动 / 复位），给自动化验证用 */
+      pos: function () { return { x: S.feX, y: S.feY }; },
+      resetPos: resetFePos,
       ensureSample: ensureDefaultSample
     };
 
