@@ -1355,8 +1355,11 @@ async function send(){
     writeCancelFlag(cancelPath);
     btn.classList.remove('stop-mode'); btn.disabled=false; btn.innerHTML='发送 <span class="k">⌘↵</span>'; btn.title='';
     btn.onclick=send;
-    $('#resPane').innerHTML=`<div class="res-err"><div class="ti">⏹ 已手动中断</div><div>请求已停止。<span style="color:var(--dimmer)">已通知后端断开${cancelPath?'':'（当前环境没有后端，仅逻辑中断）'}，正在传输的响应不会再读下去。</span></div><div style="margin-top:10px;color:var(--dimmer);font-size:11px">耗时 ${ms(performance.now()-t0)} · ${esc(url)}</div></div>`;
-    setStatus('请求已中断 · '+ms(performance.now()-t0),'err');
+    /* 停止文案（2026-11-21 拍板 C）：只写「已停止」，不解释后台。
+     * 写「已通知后端、正在断开」是实现口径，且对端完全不发数据时连接会多挂一会儿，
+     * 属轻微过度承诺；耗时与 URL 留着，那是事实不是解释。 */
+    $('#resPane').innerHTML=`<div class="res-err"><div class="ti">⏹ 已停止</div><div style="margin-top:8px;color:var(--dimmer);font-size:11px">耗时 ${ms(performance.now()-t0)} · ${esc(url)}</div></div>`;
+    setStatus('请求已停止 · '+ms(performance.now()-t0),'err');
   };
   btn.onclick = (e)=>{ e.preventDefault(); e.stopPropagation(); doStop(); };
 
@@ -1441,7 +1444,9 @@ function recordHistory(t,resp,method,url){
   const ref=t.docRef||{};
   if(!ref.file) return;
   try{
-    if(!DOCS.history) DOCS.history=window.POLARIS_HISTORY.createHistory({store:DOCS.store,dir:DOCS.dir});
+    /* 5 MB：宿主单条 JSON 消息上限 8 MiB，二进制走 base64（膨胀 4/3），
+       * 原始体 6 MiB 就把整条消息顶穿。5 MB 留出约 20% 余量，超了只丢 .bin。 */
+    if(!DOCS.history) DOCS.history=window.POLARIS_HISTORY.createHistory({store:DOCS.store,dir:DOCS.dir,maxBodyBytes:5*1024*1024});
     DOCS.history.record({
       path:ref.file,
       req:{ line:ref.line, method:method, url:t.url.trim(), name:ref.name, interfaceId:ref.interfaceId||null },

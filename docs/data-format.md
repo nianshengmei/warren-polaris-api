@@ -154,7 +154,9 @@ Content-Type: application/json
 | 为什么是 base64 | 宿主只提供文本写（utf8），没有二进制写通道；硬写裸字节会被当 utf8 弄坏。后缀保留 `.bin` 是为了与计划对齐，读的时候先看 `bodyEncoding` |
 | 引用 | jsonl 的 `bodyRef` + `bodyEncoding: "base64"` + `bodyBytes` |
 | 兼容承诺 | 只增不删；缺失时降级为「响应体未保存」，不报错 |
-| 上限 | `maxBodyBytes` 旋钮，默认 `Infinity`；超过则记 `bodyOmitted: "TOO_LARGE"`，**不落 .bin** |
+| 上限 | **5 MB**（`maxBodyBytes`，2026-11-21 定）；超过则记 `bodyOmitted: "TOO_LARGE"` + 真实 `bodyBytes`，**不落 .bin**，历史行照记 |
+| 为什么是 5 MB | 宿主单条 JSON 消息硬顶 **8 MiB**（SDK `MAX_JSON_BYTES`），二进制响应要 base64 装在 JSON 里（膨胀 4/3）——原始体约 **6 MiB 就会把整条消息顶穿**，那时不是历史存不下，而是这次响应压根回不来。5 MB 比硬顶低约 20%，给 headers 与 JSON 外壳留余量 |
+| 想要更大的响应 | 不能靠调大这个数：那是协议硬顶，调了也不会生效。要做 20 MB 级得换通道（后端把 body 落盘、JSON 只回路径，UI 分块读），属于后续版本 |
 
 ---
 

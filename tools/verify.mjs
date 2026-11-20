@@ -766,4 +766,18 @@ ok('S3.4：浮层下边界可拖（把手 / 夹取 / 落偏好都在）', () => 
   assert(/feBaseBottom = Math\.max\(0, bottom\)/.test(ed), '基准下边界必须来自 layoutLayer 量出来的值');
 });
 
+ok('0.9.0 收尾：.bin 封顶 5 MB，停止文案只留「已停止」', () => {
+  const app = read('ui/app.js');
+  assert(/maxBodyBytes:\s*5\s*\*\s*1024\s*\*\s*1024/.test(app), '.bin 上限必须是 5 MB（协议硬顶 8 MiB ÷ 4/3 ≈ 6 MB，留 20% 余量）');
+  const hist = read('ui/http-history.js');
+  assert(/TOO_LARGE/.test(hist), '超限必须是「只丢 .bin、行照记」，不能整条丢');
+  assert(/MAX_JSON_BYTES/.test(hist) || /8 MiB/.test(hist), '注释里要写清 5 MB 是从 8 MiB 倒推的，别下一个人随手调大');
+  /* 停止文案（2026-11-21 拍板 C）：只写「已停止」，不再解释后台 */
+  assert(/⏹ 已停止/.test(app), '停止标题必须是「⏹ 已停止」');
+  assert(!/已通知后端断开/.test(app), '不许再出现「已通知后端断开」（实现口径，且有过承诺）');
+  assert(!/不会再读下去/.test(app), '不许再出现解释性长句');
+  const doc = read('docs/data-format.md');
+  assert(/5 MB/.test(doc) && /8 MiB/.test(doc), 'data-format 要写清 5 MB 的依据');
+});
+
 console.log('\n' + pass + ' checks passed');

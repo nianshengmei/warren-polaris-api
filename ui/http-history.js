@@ -231,8 +231,11 @@
   }
 
   /* 把 base64 落到 `_history/<collection>/<id>-<at>.bin`，返回相对 collection 目录的文件名。
-   * 上限 maxBodyBytes 默认 Infinity —— 具体卡多少（plan 里写的 5 MB）等用户拍板，
-   * 这里只提供旋钮，不自作主张。 */
+   * 上限 maxBodyBytes 默认 Infinity（函数层），调用方传 5 MB ——
+   * 这个数不是拍脑袋：宿主单条 JSON 消息硬顶 8 MiB（SDK MAX_JSON_BYTES），
+   * 二进制响应要 base64 装在 JSON 里，膨胀 4/3，原始体约 6 MiB 就会把整条消息顶穿
+   * （不是历史存不下，是这次响应压根回不来）。5 MB 比硬顶低约 20%，留出余量；
+   * 超了就只丢 .bin，历史行照记 TOO_LARGE。 */
   async function writeBody(store, dir, collection, interfaceId, at, b64, o) {
     o = o || {};
     var S = requireStore();
