@@ -129,6 +129,13 @@
 .pa-root .req-item.drop-before{box-shadow:inset 0 2px 0 var(--brand)}
 .pa-root .req-item.drop-after{box-shadow:inset 0 -2px 0 var(--brand)}
 .pa-root .reqs.drop-on,.pa-root .group-head.drop-on{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--brand);border-radius:var(--r-sm)}
+/* 文件级拖拽（S2.5d）：整行可拖，落点分上下半区；文件夹头 / 根区是「归位」目标 */
+.pa-root .group.dragging-file{opacity:.4}
+.pa-root .group.drop-before{box-shadow:inset 0 2px 0 var(--brand)}
+.pa-root .group.drop-after{box-shadow:inset 0 -2px 0 var(--brand)}
+.pa-root .group.drop-on{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--brand);border-radius:var(--r-sm)}
+.pa-root .root-zone{min-height:14px;border-radius:var(--r-sm)}
+.pa-root .root-zone.drop-on{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--brand)}
 .pa-root .tree-empty{padding:24px 14px;text-align:center;color:var(--dimmer);font-size:11.5px;line-height:1.8}
 
 /* 侧栏文件夹（S2.5b）：文件夹只有一层，文件挂在里面；顺序与归属来自 wpa-workspace.json */

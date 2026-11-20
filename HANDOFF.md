@@ -9,9 +9,9 @@
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1（文件真源）+ M2（双视图）已完成**，`S2.5a/b/c + S2.6` 全绿，
-**下一步是 `S2.5d 归位与排序`**，之后是 M3 → M4 → M5 → M6 → M7。
-代码全部提交在本地 `main`（20 个提交未推送），工作树干净。
+1.0.0 的 **M1（文件真源）+ M2（双视图）已完成**，`S2.5a/b/c/d + S2.6` 全绿，
+**下一步是 M3 交互（S3.1 浮层拖拽）**，之后是 M4 → M5 → M6 → M7。
+S2.5d 于 2026-11-20 在 Mac 侧收官：文件级拖拽（归位 / 排序 / 退回根）+ 请求级同文件整段搬移。
 
 ---
 
@@ -49,7 +49,7 @@ node dev/dev-server.mjs
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
 **新会话开场白建议直接说**：
-> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 S2.5d 开始。口径不许改。
+> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M3 的 S3.1 开始。口径不许改。
 
 ---
 
@@ -81,24 +81,24 @@ node dev/dev-server.mjs
 | S2.5a 映射层 | ✅ | `ui/workspace-map.js`（`POLARIS_MAP`），无任何扫目录函数 |
 | S2.5b 侧栏文件夹树 | ✅ | `renderSidebarMapped / renderFolderNode / renderMapFile` |
 | S2.5c 浮层去文件树 | ✅ | 浮层只剩「接口一览 + 源码」，顶栏「≡ 接口一览」是唯一开关 |
+| S2.5d 归位与排序 | ✅ | 文件行拖拽：文件夹头归入 / 上下半区插前后 / 根区退回根，全走 `POLARIS_MAP.moveTo` + `saveWorkspaceMap()`，只改映射不动文件；请求级同文件调序 = 整段搬移（`store.moveSegment`），跨文件仍留 1.0.1。`verify-ui/check-s25d.mjs` 23 项 |
 | S2.6 示例自动挂载 | ✅ | 含 `POLARIS_MAP.save` 并发写修复（tmp 名唯一 + 串行） |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → 11 文件全绿（`verify.mjs` 48 项、`map.test.mjs` 22 项等）
-- `verify-ui/` 七个端到端：s15=17、s22=26、s23=20、s24=10、s25=21、s25c=21、s26=8
+- `node tools/all.mjs` → 11 文件全绿（`verify.mjs` 49 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项等）
+- `verify-ui/` 八个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8
 
 ---
 
-## 4. 下一步：S2.5d 归位与排序
+## 4. 下一步：M3 交互 · S3.1 浮层拖拽
 
-> 目标：把外部文件拖进文件夹、文件夹内调顺序（写回映射）；恢复 S1.5 因"文件真源"暂停的**请求级拖拽**。
-> 验收：拖完 `wpa-workspace.json` 变了；重启后顺序还在。
+> 目标：按住标题条把 `.pa-fe` 浮层拖到任意位置，重启后位置还在；双击标题条复位。
+> 验收：拖到左下角 → 关掉重开位置不变；拖出窗口自动夹回。
 
-已有原语（**直接用，别新写**）：`POLARIS_MAP.moveTo / relocate / unregister / addFolder`。
-渲染侧要动 `renderSidebarMapped` 的拖拽事件；注意 `.gact`（`</>` 按钮）的 `pointerdown` 不触发折叠，
-拖拽 handler 也要跳过它。
+改动落点：`ui/http-editor.js` 的拖拽状态机（pointerdown/move/up + rAF 合帧）、`ui/app.css` 的
+`left/top` 定位与吸边。位置持久化到 `ui.float`（storage 只留偏好）。
 
-之后按 `docs/plan-v1.0.0.md` 顺序：**M3 交互（S3.1 浮层拖拽 / S3.2 字号 / S3.3 身份行配色）→ M4 身份与历史 → M5 示例与文档 → M6 取消 → M7 冻结发版**。
+之后按 `docs/plan-v1.0.0.md` 顺序：**S3.2 字号 / S3.3 身份行配色 → M4 身份与历史 → M5 示例与文档 → M6 取消 → M7 冻结发版**。
 
 ---
 
@@ -129,6 +129,8 @@ node dev/dev-server.mjs
 | `verify-ui/check-*.mjs` 里 `const CHROME = 'C:/Program Files/...'` 是 Windows 硬编码 | Mac 改成 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
 | `verify-ui/node_modules`（playwright-core）是 Windows 装的 | **没打进包里**，Mac 上 `cd verify-ui && npm i playwright-core` |
 | 仓库内全是 LF（`i/lf w/lf`），本机 `core.autocrlf=true` | Mac 上设 `git config core.autocrlf input`，否则可能整树显示 modified |
+| `tools/fixtures/messy.http` 必须是 CRLF（436 字节），但 blob 里存的是 LF | 已加 `.gitattributes` 指定 `text eol=crlf`；缺了它 Linux/Mac 上 `fixtures` / `store` 两个测试会红 |
+| `check-s15/s22/s23.mjs` 里 `ROOT` 曾硬编码成 Windows 工作区绝对路径 | 已改成 `path.resolve(..., '..', 'warren-polaris-api')`，与其余脚本一致；`CHROME` 也改为按平台解析（可用 `CHROME=` 覆盖） |
 | 本机 `git push` 常 502 | 推送技巧在 `tools/push-one.mjs`（走 REST），token 用 `git credential fill` 取、用完删 |
 | 无 `package.json`、无 npm 依赖 | 不需要 `npm install`；测试与 dev server 都是 `node xxx.mjs` 直跑 |
 
@@ -140,7 +142,7 @@ node dev/dev-server.mjs
 
 ```bash
 git clone https://github.com/nianshengmei/warren-polaris-api.git
-cd warren-polaris-api && git log --oneline -1   # 应为 10b2883 docs: 1.0.0 交接单
+cd warren-polaris-api && git log --oneline -1   # 应能看到 a500446 及其后的 S2.5d 提交
 ```
 
 代码、20 个提交的历史、本交接单全都在这。缺的只有 `verify-ui/` 和 `dev-workspace/`（见第 1 节）。

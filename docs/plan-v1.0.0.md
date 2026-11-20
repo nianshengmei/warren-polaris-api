@@ -30,8 +30,9 @@
 | S2.5b 侧栏文件夹树 | ✅ | `renderSidebar` 拆成 `renderSidebarMapped / renderFolderNode / renderMapFile / renderFileGroup`：文件夹 → 文件 → 请求，顺序与归属全来自映射；折叠态写回 `collapsed`；外部文件带「外部」标；找不到的显示灰色占位（↻ 重新定位 / ✕ 移除登记）；底部「＋ 挂载 .http」+「＋ 新建文件夹」，文件夹可改名/删除（文件退回根）。`collectDocsList()` 改成**只遍历映射**逐个 `store.readOne()`，一个目录都不扫。`verify-ui/check-s25.mjs` 21 项 |
 | S2.6 初始示例自动挂载 | ✅ | `ensureDefaultSample` 两个分支都调 `POLARIS_DOCS.register`（已存在也补登记，不再依赖「打开过一次」）；`loadWorkspaceMap` 首启建映射时若示例已在磁盘上就一并写进去，侧栏第一帧就有东西。顺带修 `POLARIS_MAP.save` 并发写：tmp 名唯一 + 写操作串行（启动期「首启建映射」与「示例挂载」会同时写，共用 tmp 会把映射文件撞掉）。`verify-ui/check-s26.mjs` 8 项 |
 | S2.5c 面板去文件树 | ✅ | 浮层左栏只剩「接口一览」，文件列表 / 目录输入框 / ⟳ 扫描 / ＋ 新建 / ⇣ 导入 / 📂 打开全部删除，扫目录逻辑（`scan`/`renderFiles`/`refreshFiles`/`matchScanned`/`S.files`）连根拔掉；工作目录改由 `workspaceDir()` 推导（当前文件 → 映射目录）；侧栏文件头新增 `</>` 进源码；顶栏新增「≡ 接口一览」开关（收起后仍有唯一入口）。`verify-ui/check-s25c.mjs` 21 项 |
+| S2.5d 归位与排序 | ✅ | **文件级**：文件夹头 = 归入（追加到末尾）、文件行上/下半区 = 插到前/后（同组即排序）、根区 `.root-zone` = 退回根；落点下标按「先摘后插」算（`dropIndex`），一律 `POLARIS_MAP.moveTo` → `saveWorkspaceMap()`，**只改映射、不碰文件**；拖进折叠的文件夹会顺手展开；拖拽手柄只给 `.group-head`（`.gact` 上的按下不算拖拽，也不触发折叠）。**请求级**：恢复 S1.5 暂停的拖拽 —— 同一文件内调序 = 整段搬移（新增 `store.moveSegment` / 纯函数 `moveSegmentText`，按字符偏移切段重排，文件头与段内字节逐字节不变，`baseMtime` 冲突照旧）；跨文件搬段仍拒绝并提示（会丢注释，留 1.0.1）。`store.test.mjs` +5 项、`verify.mjs` +1 项、`verify-ui/check-s25d.mjs` 23 项 |
 
-一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s26.mjs`（8 项）。
+一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s25d.mjs`（23 项）+ `check-s26.mjs`（8 项）。
 
 ### 本地浏览器调试（`dev/`）
 
@@ -192,7 +193,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 | **S2.5a 映射层** | `ui/workspace-map.js`：读写 `wpa-workspace.json`、相对/绝对路径归一、`register()` 挂载、**不提供任何扫目录函数** | `tools/map.test.mjs`：路径归一、挂载幂等、磁盘上有但没登记的不进树、丢失文件标 missing、不覆盖已有 folders |
 | **S2.5b 侧栏文件夹树** | 渲染改成「文件夹 → 文件 → 请求」；折叠态进映射；映射里找不到的文件显示灰色「找不到」+ 重新定位；底部「＋ 挂载 .http」入口 | `verify-ui/check-s25.mjs`：两个文件夹 + 外部文件 + 缺失文件 + 「未登记不出现 → 挂载后出现」 |
 | **S2.5c 面板去文件树** ✅ | 删掉 `.http` 浮层里的文件列表与「文件目录」输入框，只留「接口一览 + 源码」；所有打开入口收归侧栏 | 面板全程 `http/listFiles` 调用数为 0；侧栏 `</>` 能直接把文件开成源码视图 |
-| **S2.5d 归位与排序** | 把外部文件拖进文件夹、文件夹内调顺序（写回映射）；恢复 S1.5 暂停的拖拽 | 拖完映射文件变了、重启后顺序还在 |
+| **S2.5d 归位与排序** ✅ | 把外部文件拖进文件夹、文件夹内调顺序（写回映射）；恢复 S1.5 暂停的拖拽（同文件整段搬移，跨文件留 1.0.1） | 拖完映射文件变了、重启后顺序还在 |
 
 - **风险**：侧栏从扁平数组变树，牵动搜索 / 折叠 / tab 重绑 / 拖拽，是 M2 里改动面最大的一步。先做 a（纯数据层，可单测）再做 b（渲染），c 最后收口。
 - **与旧计划冲突处**：设计稿原写「不需要注册表」，已改为「映射为权威」；再收紧为「只认映射、打开即挂载」。

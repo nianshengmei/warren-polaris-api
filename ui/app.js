@@ -680,7 +680,11 @@ function renderSidebarMapped(tree,q,stat){
   const M=window.POLARIS_MAP;
   const view=M.resolve(DOCS.map,DOCS.dir,(DOCS.files||[]).map(f=>f.path));
   view.folders.forEach(f=>{ const sec=renderFolderNode(f,q,stat); if(sec) tree.appendChild(sec); });
-  view.unfiled.forEach(node=>{ const n=renderMapFile(node,q,stat); if(n) tree.appendChild(n); });
+  /* 根上的散文件单独包一层：它是「拖出文件夹」的投放区，也是根内排序的容器 */
+  const rootZone=el('div','root-zone');
+  view.unfiled.forEach(node=>{ const n=renderMapFile(node,q,stat,null); if(n) rootZone.appendChild(n); });
+  bindRootDrop(rootZone);
+  tree.appendChild(rootZone);
   if(!view.folders.length && !view.unfiled.length){
     tree.appendChild(el('div','tree-empty','侧栏是空的。<br>点「＋ 挂载 .http」选一个文件，它就挂到这里。'));
   }else if(q && stat.shown===0){
@@ -698,7 +702,7 @@ function renderFolderNode(f,q,stat){
   const M=window.POLARIS_MAP;
   const body=el('div','folder-body');
   let any=false;
-  f.files.forEach(node=>{ const n=renderMapFile(node,q,stat); if(n){ body.appendChild(n); any=true; } });
+  f.files.forEach(node=>{ const n=renderMapFile(node,q,stat,f.name); if(n){ body.appendChild(n); any=true; } });
   if(q && !any) return null;            // 搜索时整夹没有命中就不占地方
   const sec=el('div','folder'+(f.collapsed&&!q?' collapsed':''));
   const head=el('div','folder-head');
@@ -712,6 +716,22 @@ function renderFolderNode(f,q,stat){
     const r=M.setFolderCollapsed(DOCS.map,f.name,!f.collapsed);
     if(r.ok){ DOCS.map=r.map; saveWorkspaceMap(); renderSidebar(); }
   };
+  /* 文件夹头 = 文件投放区：拖到这里 = 归入本文件夹并追加到末尾 */
+  head.addEventListener('dragover',e=>{
+    if(!dragFile) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect='move';
+    head.classList.add('drop-on');
+  });
+  head.addEventListener('dragleave',e=>{ if(!head.contains(e.relatedTarget)) head.classList.remove('drop-on'); });
+  head.addEventListener('drop',e=>{
+    if(!dragFile) return;
+    e.preventDefault(); e.stopPropagation();
+    head.classList.remove('drop-on');
+    const src=dragFile; dragFile=null;
+    const hit=(DOCS.map.folders||[]).find(x=>x.name===f.name);
+    applyFileMove(src.entry,f.name,dropIndex((hit&&hit.files)||[],src.entry,null,true));
+  });
   sec.append(head,body);
   return sec;
 }
@@ -727,7 +747,103 @@ async function openSourceForFile(g){
   if(!ok) setStatus('打开 .http 源码失败：文件可能已被移动','warn');
 }
 
-function renderMapFile(node,q,stat){
+/* ---------- 拖拽：文件归位与排序（S2.5d） ----------
+ * 只改映射，不碰文件。三种落点：
+ *   · 文件夹头        → 归入该文件夹（追加到末尾）
+ *   · 另一个文件行    → 插到它前面 / 后面（上下半区判定），同组内即排序
+ *   · 根区（.root-zone）→ 移回根目录（追加） */
+let dragFile=null;   // 正在拖的映射条目：{ entry, folder }
+
+function entryKey(e){ const M=window.POLARIS_MAP; return M?M.pathKey(e):String(e||''); }
+function clearDropMarks(){ $$('#tree .drop-on,#tree .drop-before,#tree .drop-after').forEach(n=>{ n.classList.remove('drop-on','drop-before','drop-after'); }); }
+
+/* 落点下标：按「摘掉被拖条目之后」的列表算 ——
+ * moveTo 是「先摘后插」，同一列表里往后拖时若不先减一位就会差一格。 */
+function dropIndex(list,entry,targetEntry,after){
+  const k=entryKey(entry);
+  const rest=(list||[]).filter(e=>entryKey(e)!==k);
+  if(targetEntry==null) return rest.length;
+  const i=rest.findIndex(e=>entryKey(e)===entryKey(targetEntry));
+  if(i<0) return rest.length;
+  return after? i+1 : i;
+}
+
+/* 落盘 → 重渲染。失败时 DOCS.map 保持原样（moveTo 返回的是新对象，没赋值就还没生效） */
+async function applyFileMove(entry,folder,index){
+  const M=window.POLARIS_MAP;
+  if(!M||!DOCS.map) return;
+  const r=M.moveTo(DOCS.map,entry,folder,index);
+  if(!r.ok){
+    setStatus(r.reason==='NO_FOLDER'?'目标文件夹已经不在了':'这个文件不在映射里，先打开一次再拖','warn');
+    return;
+  }
+  let next=r.map;
+  /* 拖进折叠的文件夹就顺手展开：否则用户看不到自己刚拖进去的东西 */
+  if(folder!=null){
+    const f=(next.folders||[]).find(x=>x.name===folder);
+    if(f&&f.collapsed){ const c=M.setFolderCollapsed(next,folder,false); if(c.ok) next=c.map; }
+  }
+  DOCS.map=next;
+  if(!await saveWorkspaceMap()) return;
+  renderSidebar();
+  setStatus(folder==null?'已移回根目录':('已归入「'+folder+'」'),'ok');
+}
+
+/* 一个文件行既是拖拽源，也是投放目标（落在它上/下半区 = 插到前/后）。
+ * 拖拽手柄只给「文件头」：请求行是独立的 draggable，套在同一 draggable 里会互相抢。 */
+function bindFileDrag(elem,node,folder){
+  const handle=elem.querySelector('.group-head')||elem;
+  handle.draggable=true;
+  handle.addEventListener('dragstart',e=>{
+    /* 从 </> / ✎ / 🗑 上按下不算拖整行（与「点按钮不折叠」同一条约定） */
+    if(e.target&&e.target.closest&&e.target.closest('.gact')){ e.preventDefault(); return; }
+    dragFile={entry:node.entry,folder:folder};
+    dragRid=null;
+    try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',node.entry); }catch(_){}
+    elem.classList.add('dragging-file');
+  });
+  handle.addEventListener('dragend',()=>{ dragFile=null; elem.classList.remove('dragging-file'); clearDropMarks(); });
+  elem.addEventListener('dragover',e=>{
+    if(!dragFile||entryKey(dragFile.entry)===entryKey(node.entry)) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect='move';
+    const rt=elem.getBoundingClientRect();
+    const after=(e.clientY-rt.top)>rt.height/2;
+    elem.classList.toggle('drop-after',after);
+    elem.classList.toggle('drop-before',!after);
+  });
+  elem.addEventListener('dragleave',e=>{ if(!elem.contains(e.relatedTarget)) elem.classList.remove('drop-before','drop-after'); });
+  elem.addEventListener('drop',e=>{
+    if(!dragFile) return;
+    e.preventDefault(); e.stopPropagation();
+    const after=elem.classList.contains('drop-after');
+    elem.classList.remove('drop-before','drop-after');
+    const src=dragFile; dragFile=null;
+    if(entryKey(src.entry)===entryKey(node.entry)) return;
+    const hit=folder==null?null:(DOCS.map.folders||[]).find(x=>x.name===folder);
+    const list=folder==null?(DOCS.map.unfiled||[]):((hit&&hit.files)||[]);
+    applyFileMove(src.entry,folder,dropIndex(list,src.entry,node.entry,after));
+  });
+}
+
+function bindRootDrop(zone){
+  zone.addEventListener('dragover',e=>{
+    if(!dragFile) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect='move';
+    zone.classList.add('drop-on');
+  });
+  zone.addEventListener('dragleave',e=>{ if(!zone.contains(e.relatedTarget)) zone.classList.remove('drop-on'); });
+  zone.addEventListener('drop',e=>{
+    if(!dragFile) return;
+    e.preventDefault();
+    zone.classList.remove('drop-on');
+    const src=dragFile; dragFile=null;
+    applyFileMove(src.entry,null,dropIndex(DOCS.map.unfiled||[],src.entry,null,true));
+  });
+}
+
+function renderMapFile(node,q,stat,folder){
   if(node.dup) return null;             // 同一文件登记两次：只认第一条
   const g=node.exists===false?null:groupOfPath(node.path);
   if(!g){
@@ -741,6 +857,7 @@ function renderMapFile(node,q,stat){
     const cnt=fileEl.querySelector('.gcount');
     if(cnt) cnt.insertAdjacentElement('beforebegin',tag);
   }
+  bindFileDrag(fileEl,node,folder);
   return fileEl;
 }
 
@@ -794,10 +911,10 @@ function renderFileGroup(g,q,stat){
       item.append(rn,x); item.onclick=()=>openSaved(r);
       const nameEl=item.querySelector('.rn');
       if(nameEl) nameEl.ondblclick=e=>{ e.stopPropagation(); renameSaved(g,r); };
-      /* 拖拽：可在分组间移动 / 组内排序（文件真源下跨文件搬段会丢注释，1.0.1 再做） */
-      item.draggable=!DOCS.enabled;
-      item.title=DOCS.enabled?'双击重命名':'双击重命名 · 拖拽可移动到其他分组';
-      item.addEventListener('dragstart',e=>{ dragRid=r.id; item.classList.add('dragging'); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',r.id); }catch(_){} });
+      /* 拖拽：同一文件内调顺序 = 整段搬移（S2.5d）；跨文件搬段仍不做（会丢注释，留 1.0.1） */
+      item.draggable=true;
+      item.title=DOCS.enabled?'双击重命名 · 拖动可调整同一文件内的顺序':'双击重命名 · 拖拽可移动到其他分组';
+      item.addEventListener('dragstart',e=>{ dragRid=r.id; dragFile=null; item.classList.add('dragging'); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',r.id); }catch(_){} });
       item.addEventListener('dragend',()=>{ dragRid=null; item.classList.remove('dragging'); $$('#tree .drop-before,#tree .drop-after,#tree .drop-on').forEach(n=>{ n.classList.remove('drop-before','drop-after','drop-on'); }); });
       item.addEventListener('dragover',e=>{ if(!dragRid||dragRid===r.id) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect='move'; const rt=item.getBoundingClientRect(); const after=(e.clientY-rt.top)>rt.height/2; item.classList.toggle('drop-after',after); item.classList.toggle('drop-before',!after); });
       item.addEventListener('dragleave',()=>{ item.classList.remove('drop-before','drop-after'); });
@@ -1537,10 +1654,12 @@ function renameSaved(g,r){
     setStatus('已重命名为「'+name+'」','ok');
   });
 }
-/* 拖拽移动：把请求 rid 移到分组 toGid；beforeRid 指定插入到哪个请求之前，null = 追加到末尾 */
+/* 拖拽移动：把请求 rid 移到分组 toGid；beforeRid 指定插入到哪个请求之前，null = 追加到末尾
+ * 文件真源下（S2.5d）同一文件内调序走「整段搬移」：只重排 ### 段的先后，段内字节不动。
+ * 跨文件搬段仍不做 —— 那要连注释一起搬，留到 1.0.1。 */
 function moveSaved(rid,toGid,beforeRid){
   if(!rid||beforeRid===rid) return;
-  if(DOCS.enabled){ setStatus('文件真源下暂不支持拖拽移动（会丢注释，留到 1.0.1 做原文搬移）','warn'); return; }
+  if(DOCS.enabled) return moveRequestInFile(rid,toGid,beforeRid);
   const src=findSaved(rid); if(!src) return;
   const dst=state.collections.find(g=>g.id===toGid); if(!dst) return;
   const idx=src.g.requests.findIndex(x=>x.id===rid);
@@ -1552,6 +1671,31 @@ function moveSaved(rid,toGid,beforeRid){
   dst.collapsed=false;
   persist(); renderSidebar();
   setStatus(src.g.id===dst.id?'已调整请求顺序':('已移动到「'+dst.name+'」'),'ok');
+}
+
+async function moveRequestInFile(rid,toGid,beforeRid){
+  const src=findSaved(rid); if(!src) return;
+  const dst=state.collections.find(g=>g.id===toGid); if(!dst) return;
+  if(!src.g.path||!dst.path||src.g.path!==dst.path){
+    setStatus('跨文件搬段会丢注释，留到 1.0.1；同一文件内可以直接拖动调整顺序','warn');
+    return;
+  }
+  if(!src.r.httpSource||!src.r.httpSource.line) return;
+  const before=dst.requests.find(x=>x.id===beforeRid);
+  const res=await DOCS.store.moveSegment(src.g.path,src.r.httpSource.line,
+    (before&&before.httpSource?before.httpSource.line:null),{baseMtime:src.g.mtime});
+  if(!res.ok){
+    if(res.reason==='CONFLICT'){
+      await refreshDocs(true);
+      setStatus('文件已被别处修改，已重新载入；确认后再拖一次','warn');
+      return;
+    }
+    setStatus('调整顺序失败：'+(res.reason||''),'err');
+    return;
+  }
+  if(res.moved===false) return;          // 拖回原位：什么都不用做
+  await refreshDocs(true);               // 重读 + rebindTabs：行号变了，tab 要重新对上
+  setStatus('已调整请求顺序','ok');
 }
 /* 同一分组内 r 的下一个请求 id（拖到底部时用），没有则 null */
 function nextSavedId(g,rid){ const i=g.requests.findIndex(x=>x.id===rid); if(i<0) return null; const n=g.requests[i+1]; return n?n.id:null; }

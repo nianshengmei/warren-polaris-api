@@ -153,6 +153,56 @@
     return head.concat(fresh, tail).join(g.eol);
   }
 
+  /* 整段搬移（S2.5d 拖拽排序）：把 fromLine 所在段整块搬到 beforeLine 所在段之前。
+   *
+   * 只重排「### 段」的顺序 —— 段的原始字节、文件头（preamble）、换行风格全部原样保留，
+   * 不走 parse/serialize，所以注释、空行、手写排版一个字符都不会变。
+   * beforeLine 省略（null）→ 搬到末尾。定位不到段或不足两段时返回 null，由调用方报 NOT_FOUND。 */
+  function moveSegmentText(text, fromLine, beforeLine) {
+    var t = String(text == null ? '' : text);
+    var g = segments(t);
+    if (g.marks.length < 2) return null;          /* 不到两段，没有可调的顺序 */
+
+    /* 每个 ### 行的字符起始偏移：按偏移切原文，重排后拼接才逐字节不变 */
+    var offs = [0];
+    var re = /\r?\n/g, m;
+    while ((m = re.exec(t))) offs.push(m.index + m[0].length);
+    if (offs.length !== g.lines.length) return null;   /* 行数与偏移对不上（混合换行）：不冒险 */
+
+    var cuts = g.marks.map(function (i) { return offs[i]; });
+    var chunks = cuts.map(function (c, i) {
+      return t.slice(c, i + 1 < cuts.length ? cuts[i + 1] : t.length);
+    });
+    var prefix = t.slice(0, cuts[0]);
+
+    function segAt(line1) {
+      if (!line1) return -1;
+      var line = Math.max(0, Number(line1) - 1);
+      for (var i = 0; i < g.marks.length; i++) {
+        var end = i + 1 < g.marks.length ? g.marks[i + 1] - 1 : g.lines.length - 1;
+        if (g.marks[i] <= line && line <= end) return i;
+      }
+      return -1;
+    }
+
+    var from = segAt(fromLine);
+    if (from < 0) return null;
+    var moved = chunks[from];
+    var rest = chunks.slice(0, from).concat(chunks.slice(from + 1));
+
+    var at;
+    if (beforeLine == null || beforeLine === '') {
+      at = rest.length;
+    } else {
+      var before = segAt(beforeLine);
+      if (before < 0) return null;
+      if (before === from) return t;            /* 拖回自己身上：什么都不做 */
+      at = before > from ? before - 1 : before; /* 摘掉源段后目标下标会前移一位 */
+    }
+    rest.splice(at, 0, moved);
+    return prefix + rest.join('');
+  }
+
   /* ---------- 面向前端的宿主（走 sidecar） ---------- */
 
   function invokeHost(invoke) {
@@ -341,6 +391,26 @@
       /* 在文件末尾追加一段（「保存请求」落到某个 collection 时用）。
        * 原有内容逐字节保留，唯一被规范化的是文件末尾的多余空行：
        * 追加前先压掉尾部空行，再用一个空行把新段隔开，文件以单个换行收尾。 */
+      /* 同文件内调请求顺序：整段搬移，段内字节不动（跨文件搬段不在这一步做）。 */
+      moveSegment: async function (path, fromLine, beforeLine, o) {
+        o = o || {};
+        var cur;
+        try {
+          cur = await store.read(path);
+        } catch (e) {
+          return { ok: false, reason: 'NOT_FOUND', error: String((e && e.message) || e) };
+        }
+        if (o.baseMtime != null && cur.mtime !== Math.round(o.baseMtime)) {
+          return { ok: false, reason: 'CONFLICT', current: cur.mtime };
+        }
+        var next = moveSegmentText(cur.text, fromLine, beforeLine);
+        if (next == null) return { ok: false, reason: 'NOT_FOUND' };
+        if (next === cur.text) return { ok: true, moved: false, path: path };
+        var w = await store.writeText(path, next, { baseMtime: cur.mtime });
+        if (!w.ok) return w;
+        return { ok: true, moved: true, path: path };
+      },
+
       appendRequest: async function (path, req, o) {
         o = o || {};
         var H = requireFile();
@@ -595,6 +665,7 @@
     dirName: dirName,
     segments: segments,
     replaceSegment: replaceSegment,
+    moveSegmentText: moveSegmentText,
     locateSegment: locateSegment,
     segIndexOfRequest: segIndexOfRequest,
     splitLines: splitLines

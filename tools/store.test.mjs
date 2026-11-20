@@ -353,6 +353,74 @@ async function main() {
     assert.equal(S.joinPath('/a/b', 'x.http'), '/a/b/x.http');
   });
 
+  /* ---------- S2.5d 整段搬移（拖拽排序） ---------- */
+  const three = [
+    '# @file_id abcd1234',
+    '@baseUrl = https://api.example.com',
+    '',
+    '### 甲',
+    '# 甲的说明',
+    'GET {{baseUrl}}/a',
+    '',
+    '### 乙',
+    'POST {{baseUrl}}/b',
+    '',
+    '{"x":1}',
+    '',
+    '### 丙',
+    'GET {{baseUrl}}/c',
+    '',
+  ].join('\n');
+
+  await ok('moveSegmentText：第三段搬到最前，段内字节与文件头一字不差', () => {
+    const out = S.moveSegmentText(three, 13, 4);
+    assert.ok(out.indexOf('# @file_id abcd1234\n@baseUrl = https://api.example.com\n\n### 丙') === 0, '文件头必须原样在前');
+    assert.ok(out.indexOf('### 丙') < out.indexOf('### 甲'), '丙要排到甲前');
+    assert.ok(out.indexOf('### 甲') < out.indexOf('### 乙'), '甲、乙相对顺序不变');
+    assert.ok(out.includes('### 甲\n# 甲的说明\nGET {{baseUrl}}/a'));
+    assert.ok(out.includes('### 乙\nPOST {{baseUrl}}/b\n\n{"x":1}'));
+  });
+
+  await ok('moveSegmentText：移到末尾（beforeLine=null），其余段字节不变', () => {
+    const out = S.moveSegmentText(three, 4, null);
+    assert.ok(out.indexOf('### 甲') > out.indexOf('### 丙'), '甲要排到最后');
+    assert.ok(out.startsWith('# @file_id abcd1234\n@baseUrl = https://api.example.com\n\n### 乙'));
+    /* 只重排、不增删：总字节数应与原文一致（段都是一样的字符） */
+    assert.equal(out.length, three.length);
+  });
+
+  await ok('moveSegmentText：拖回原位 / 越界行号 不破坏文件', () => {
+    assert.equal(S.moveSegmentText(three, 4, 4), three);
+    assert.equal(S.moveSegmentText(three, 999, 4), null);
+    assert.equal(S.moveSegmentText(three, 4, 999), null);
+    assert.equal(S.moveSegmentText('### 只有一个\nGET /x\n', 1, null), null);
+  });
+
+  await ok('store.moveSegment：写盘后段的顺序真的变了，其它行逐字节不变', async () => {
+    const p = path.join(dir, '三段.http');
+    fs.writeFileSync(p, three, 'utf8');
+    const rd = await store.read(p);
+    const lineOfC = rd.parsed.requests[2].line;
+    const lineOfA = rd.parsed.requests[0].line;
+    const res = await store.moveSegment(p, lineOfC, lineOfA, { baseMtime: rd.mtime });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    const after = fs.readFileSync(p, 'utf8');
+    assert.ok(after.indexOf('### 丙') < after.indexOf('### 甲'));
+    assert.ok(after.startsWith('# @file_id abcd1234\n@baseUrl = https://api.example.com\n\n'));
+    /* 再解析：请求数不变，标题顺序变成 丙 → 甲 → 乙 */
+    const again = await store.read(p);
+    assert.deepEqual(again.parsed.requests.map((r) => r.title), ['丙', '甲', '乙']);
+  });
+
+  await ok('store.moveSegment：baseMtime 过期 → CONFLICT，文件不动', async () => {
+    const p = path.join(dir, '三段.http');
+    const before = fs.readFileSync(p, 'utf8');
+    const res = await store.moveSegment(p, 4, null, { baseMtime: 1 });
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, 'CONFLICT');
+    assert.equal(fs.readFileSync(p, 'utf8'), before);
+  });
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('\n' + pass + ' checks passed');
 }

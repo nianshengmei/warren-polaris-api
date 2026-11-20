@@ -170,6 +170,34 @@ ok('S2.5c：浮层只剩「接口一览 + 源码」，文件入口收归侧栏',
   assert(/openSourceForFile[\s\S]{0,200}openPath/.test(app), 'openSourceForFile 需调 openPath');
 });
 
+ok('S2.5d：归位与排序只改映射，请求级拖拽走整段搬移', () => {
+  const app = read('ui/app.js');
+  const st = read('ui/http-store.js');
+  const css = read('ui/app.css');
+  const mp = read('ui/workspace-map.js');
+  /* 文件归位/排序：落点算下标，走 POLARIS_MAP.moveTo，落盘后重渲染 */
+  assert(app.includes('function applyFileMove'), '缺少 applyFileMove()');
+  assert(/applyFileMove[\s\S]{0,600}POLARIS_MAP|applyFileMove[\s\S]{0,600}M\.moveTo/.test(app), '归位必须走 POLARIS_MAP.moveTo');
+  assert(app.includes('function bindFileDrag'), '缺少文件行拖拽绑定');
+  assert(app.includes('function dropIndex'), '缺少 dropIndex（先摘后插的下标）');
+  assert(app.includes('root-zone'), '缺少拖回根的投放区 .root-zone');
+  /* 拖拽手柄只给文件头：请求行自己有 draggable，套在一起会互相抢 */
+  assert(/bindFileDrag[\s\S]{0,300}group-head/.test(app), '文件拖拽手柄应是 .group-head');
+  assert(!/item\.draggable\s*=\s*!DOCS\.enabled/.test(app), '请求行不应再按 DOCS.enabled 关掉拖拽');
+  /* 请求级：同一文件内整段搬移，跨文件仍拒绝 */
+  assert(app.includes('function moveRequestInFile'), '缺少 moveRequestInFile()');
+  assert(/moveRequestInFile[\s\S]{0,900}moveSegment/.test(app), '同文件调序需走 store.moveSegment');
+  assert(/跨文件/.test(app), '跨文件搬段要给出明确提示');
+  assert(st.includes('function moveSegmentText'), '缺少 moveSegmentText()');
+  assert(/moveSegmentText[\s\S]{0,1200}prefix/.test(st), '整段搬移必须保留文件头（prefix）');
+  assert(/moveSegment:\s*async function/.test(st), 'store 需暴露 moveSegment');
+  /* 拖拽视觉：文件行上下半区 + 投放高亮 */
+  ['dragging-file', 'drop-before', 'drop-after', 'root-zone'].forEach(k => assert(css.includes(k), '缺少样式 ' + k));
+  /* 归位原语仍在（不许另起一套） */
+  ['function moveTo', 'function relocate', 'function unregister', 'function addFolder'].forEach(k =>
+    assert(mp.includes(k), '映射层缺少 ' + k));
+});
+
 ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
   const ed = read('ui/http-editor.js');
   /* 一览 */
