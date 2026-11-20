@@ -1,0 +1,3 @@
+# 夹具里当场就要验 CRLF 换行风格：这个文件必须按 CRLF 检出，
+# 否则 Linux/macOS 上用默认 core.autocrlf 检出成 LF，fixtures/store 两个测试会红。
+tools/fixtures/messy.http text eol=crlf
