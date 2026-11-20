@@ -6,4 +6,4 @@ directory = "backend"
 binary = "dbx-plugin-warren-polaris-api"
 
 [package]
-include = ["assets", "ui"]
+include = ["assets", "ui", "LICENSE", "NOTICE"]

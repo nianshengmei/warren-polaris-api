@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.6.3';
+const VERSION = '0.6.4';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -303,6 +303,25 @@ ok('v0.6.3：打开文件停在第一行', () => {
   const doc = ed.slice(ed.indexOf('function setDoc'), ed.indexOf('function syncScroll'));
   assert(/setSelectionRange\(0, 0\)/.test(doc), 'setDoc 要把光标归零');
   assert(/ta\.scrollTop = 0/.test(doc), 'setDoc 要把滚动归零');
+});
+
+ok('v0.6.4：图标/文案/署名与上游可区分', () => {
+  const svg = read('assets/plugin.svg');
+  assert(!/#6d5dfc|#2b6de8/i.test(svg), '图标不能沿用上游的紫蓝渐变');
+  assert(/14b8a6|0b5f57/i.test(svg), '图标应为本 fork 的青绿色板');
+  const notice = read('NOTICE');
+  assert(/misxzaiz/i.test(notice), 'NOTICE 要署名上游作者');
+  assert(/v0\.2\.0/.test(notice), 'NOTICE 要写明派生自 v0.2.0');
+  assert(/Apache License, Version 2\.0/i.test(notice), 'NOTICE 要声明 Apache-2.0');
+  const toml = read('dbx-plugin.toml');
+  assert(/include\s*=\s*\[[^\]]*"LICENSE"[^\]]*\]/.test(toml), 'include 要带 LICENSE');
+  assert(/include\s*=\s*\[[^\]]*"NOTICE"[^\]]*\]/.test(toml), 'include 要带 NOTICE');
+  const m = JSON.parse(read('manifest.json'));
+  assert(/fork/i.test(m.description), 'manifest 描述要说明是 fork');
+  const store = JSON.parse(read('.dbx-store.json'));
+  assert(/community fork/i.test(store.description), '商店描述要说明 community fork');
+  assert(/misxzaiz/i.test(store.releaseNotes) && /0\.2\.0/.test(store.releaseNotes), '版本说明要注明派生来源');
+  assert(/许可与署名/.test(read('README.md')), 'README 需要「许可与署名」小节');
 });
 
 console.log('\n' + pass + ' checks passed');
