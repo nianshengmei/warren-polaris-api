@@ -751,4 +751,19 @@ ok('0.9.0：四个版本位一致，自用包脚本与验收清单在位', () =>
   assert(read('README.md').includes('v0.9.0'), 'README 版本历史里要有 0.9.0');
 });
 
+ok('S3.4：浮层下边界可拖（把手 / 夹取 / 落偏好都在）', () => {
+  const ed = read('ui/http-editor.js');
+  assert(/pa-fe-grip/.test(ed), '缺下边界把手 DOM');
+  assert(/bindFeResize\(\)/.test(ed), '把手没绑事件');
+  assert(/function applyFeGrow/.test(ed), '缺统一的高度应用函数');
+  assert(/S\.feGrow/.test(ed) && /feGrow:\s*Math\.round/.test(ed), 'feGrow 必须落偏好');
+  assert(/feBaseBottom\s*-\s*grow|base\s*-\s*grow/.test(ed), 'bottom 必须由基准减 grow 算出来');
+  assert(/maxFeGrow\(base\)/.test(ed) && /S\.feY/.test(ed), '上限要考虑标题条拖过的位移');
+  assert(/dblclick/.test(ed) && /resetFeGrow/.test(ed), '双击把手要能复位');
+  assert(/\.pa-fe-grip\{[^}]*cursor:ns-resize/.test(ed), '把手要给出可拖的光标');
+  assert(/\.pa-fe-grip\.off\{display:none\}/.test(ed), '左右分栏（无处可拉）时把手要能藏起来');
+  /* 不许把上下分栏的基准写成 0 —— 那等于默认就铺满 */
+  assert(/feBaseBottom = Math\.max\(0, bottom\)/.test(ed), '基准下边界必须来自 layoutLayer 量出来的值');
+});
+
 console.log('\n' + pass + ' checks passed');

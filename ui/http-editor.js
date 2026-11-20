@@ -50,6 +50,7 @@
     edgeTop: 20,       /* 右缘箭头垂直位置（%.work 高度）；可拖动，记在这里 */
     feX: 0,            /* S3.1：浮层相对基础盒的位移（px），拖动标题条改这里，双击标题条归零 */
     feY: 0,
+    feGrow: 0,         /* S3.4：下边界往下拉了多少 px（0 = 默认贴着响应区上沿），双击下边把手归零 */
     fontSize: FS_DEF,  /* S3.2：编辑器字号（px），Ctrl+滚轮改、Ctrl+0 复位 */
     dir: '',
     path: '',
@@ -90,6 +91,9 @@
   };
 
   var pane = null, edge = null, ta = null, ginner = null, hlEl = null, E = {};
+  /* S3.4：layoutLayer() 每次算出的「默认下边界」（相对 .work 底、px）。
+   * 用户拖过之后真正生效的是 feBaseBottom - S.feGrow；这里存的是基准，不是结果。 */
+  var feBaseBottom = 0;
   var parseTimer = null, saveTimer = null, hitTimer = null, trackTimer = null;
   var fsSaveTimer = null;   /* S3.2：字号连续滚动的落盘节流 */
   var refreshDocsTimer = null;   /* 保存后让侧栏重扫资源目录（合帧） */
@@ -313,6 +317,15 @@
       '.pa-fe.dragging{transition:none;box-shadow:0 26px 64px -18px rgba(0,0,0,.74),inset 1px 0 0 var(--line,rgba(255,255,255,.1))}',
       '.pa-fe.dragging,.pa-fe.dragging *{user-select:none}',
       '.pa-fe.dragging .pa-fe-bar{cursor:grabbing}',
+      /* S3.4：下边界拖拽把手。做成布局内的最后一条（不是绝对定位），
+       * 这样它不遮响应区/滚动条，也不压住 footer 的字。 */
+      '.pa-fe-grip{flex:none;height:9px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;touch-action:none;background:var(--surface,#1e2028);border-top:1px solid var(--line,rgba(255,255,255,.1))}',
+      '.pa-fe-grip.off{display:none}',
+      '.pa-fe-grip i{display:block;width:44px;height:3px;border-radius:2px;background:rgba(255,255,255,.2);transition:background .12s,width .12s}',
+      '.pa-fe-grip:hover i,.pa-fe.resizing .pa-fe-grip i{background:var(--brand,#ff7a59);width:68px}',
+      '[data-dbx-theme="light"] .pa-fe-grip i{background:rgba(0,0,0,.2)}',
+      '.pa-fe.resizing{transition:none}',
+      '.pa-fe.resizing,.pa-fe.resizing *{user-select:none}',
       /* 收起后的入口：贴右边缘的灰色半透明箭头（可上下拖动，单击展开，右键彻底关闭） */
       '.pa-root .pa-edge{position:absolute;right:0;top:20%;width:24px;height:96px;z-index:18;margin:0;padding:0;border:0;border-radius:14px 0 0 14px;background:rgba(150,156,172,.32);color:#fff;-webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);box-shadow:inset 1px 0 0 rgba(255,255,255,.16),-4px 0 18px -6px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;pointer-events:none;transform:translateY(-50%) translateX(110%);transition:opacity .22s ease,background-color .18s,transform .32s cubic-bezier(.22,.61,.36,1);-webkit-tap-highlight-color:transparent;touch-action:none;user-select:none}',
       '.pa-root .pa-edge.on{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0);transition-delay:.08s}',
@@ -539,7 +552,8 @@
       '    <div class="pa-fe-idle" id="paFeIdle"><div style="font-size:13px;font-weight:600;color:var(--dim,#a8acba)">打开本地 .http 文件</div><div>点上方 <b>📂 打开</b>（或顶栏「▤ 打开 .http」）弹出系统文件对话框选择文件；<br>也可以直接把文件<b>从资源管理器拖进来</b>。</div><div style="font-size:11.5px">打开后可直接编辑，<b>自动保存</b>写回原文件、「保存」可反复点；每个请求左侧 ▶ 一点即发，结果显示在下方响应框。</div></div>',
       '  </div>',
       '</div>',
-      '<div class="pa-fe-foot"><span id="paFeFoot">—</span><span class="pa-fe-cf" id="paFeConflict" hidden></span><span class="sp"></span><span>▶ 运行该请求 · Ctrl+S 保存 · Tab 缩进</span></div>'
+      '<div class="pa-fe-foot"><span id="paFeFoot">—</span><span class="pa-fe-cf" id="paFeConflict" hidden></span><span class="sp"></span><span>▶ 运行该请求 · Ctrl+S 保存 · Tab 缩进</span></div>',
+      '<div class="pa-fe-grip" id="paFeGrip" title="按住往下拖，浮层就变大 · 双击复位"><i></i></div>'
     ].join('\n');
     host.appendChild(d);
 
@@ -602,8 +616,14 @@
       else right = Math.round(wr.right - qr.right);                             /* 左右 */
     }
     pane.style.top = Math.max(0, top) + 'px';
-    pane.style.bottom = Math.max(0, bottom) + 'px';
     pane.style.right = Math.max(0, right) + 'px';
+    feBaseBottom = Math.max(0, bottom);
+    /* 先把下边界落到「基准 - 当前 grow」上（这里先不扣标题条的位移）：
+     * 紧接着的 clampFePos() 要量 offsetHeight，量到的必须是真实高度。
+     * 若留给 CSS 初值 bottom:0，会量成「铺满工作区」的高度，
+     * 上限变小 → 上次拖到下面的 feY 一重启就被夹回 0。 */
+    var g0 = Math.max(0, Math.min(Number(S.feGrow) || 0, feBaseBottom));
+    pane.style.bottom = Math.max(0, feBaseBottom - g0) + 'px';
     /* 收起时要整块滑出 .work 右边界：位移量按工作区宽度算，
      * 左右分栏时浮层比工作区窄，100% 不够（会露出一截盖在响应框上）。 */
     pane.style.setProperty('--fe-slide', Math.round(wr.width) + 'px');
@@ -611,6 +631,8 @@
     var c = clampFePos(S.feX, S.feY);
     S.feX = c.x; S.feY = c.y;
     applyFePos();
+    /* 夹完位置再算高度上限：maxFeGrow 依赖最终的 S.feY */
+    applyFeGrow();
   }
 
   /* 浮层滑到工作区外面以后，浏览器有时会把 .work 的横向 scrollLeft 顶偏
@@ -630,6 +652,89 @@
     if (!pane) return;
     pane.style.setProperty('--fe-dx', Math.round(S.feX) + 'px');
     pane.style.setProperty('--fe-dy', Math.round(S.feY) + 'px');
+  }
+
+  /* ===================== S3.4：拖下边界把浮层拉大 =====================
+   * 浮层默认只盖「请求编辑区」（bottom 贴着响应区上沿）。往下拖 = 把 bottom 吃掉，
+   * 最多吃到 0（铺满工作区），拖回去就还原。左右分栏时浮层本来就贴着工作区底，
+   * 没有可拉的量，把手直接藏起来。 */
+  function maxFeGrow(base) {
+    base = base == null ? feBaseBottom : base;
+    /* 标题条拖过（S.feY > 0）时整块已经下移，底部更贴 .work 底：
+     * 还能吃掉的量要相应变少，否则拉到底会有一截被 .work 裁掉、看着像拉不动。 */
+    return Math.max(0, base - Math.max(0, Math.round(S.feY)));
+  }
+
+  function applyFeGrow() {
+    if (!pane) return;
+    var base = Math.max(0, feBaseBottom);
+    var max = maxFeGrow(base);
+    var grow = Math.max(0, Math.min(Number(S.feGrow) || 0, max));
+    pane.style.bottom = Math.max(0, base - grow) + 'px';
+    var g = pane.querySelector('.pa-fe-grip');
+    if (g) g.classList.toggle('off', max <= 0);
+  }
+
+  function resetFeGrow(silent) {
+    S.feGrow = 0;
+    applyFeGrow();
+    savePrefs();
+    if (!silent) toast('浮层高度已复位');
+  }
+
+  function bindFeResize() {
+    if (!pane) return;
+    var grip = pane.querySelector('.pa-fe-grip');
+    if (!grip) return;
+    var dg = null, raf = 0, nv = 0;
+
+    grip.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0 || !S.open || S.collapsed) return;
+      var max = maxFeGrow();
+      if (max <= 0) return;                       /* 左右分栏：本来就到底了 */
+      dg = { id: e.pointerId, y0: e.clientY, g0: Math.min(Number(S.feGrow) || 0, max), max: max, live: false };
+      nv = dg.g0;
+      try { grip.setPointerCapture(e.pointerId); } catch (err) { }
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    grip.addEventListener('pointermove', function (e) {
+      if (!dg || e.pointerId !== dg.id) return;
+      var dy = e.clientY - dg.y0;
+      if (!dg.live) {
+        if (Math.abs(dy) < 2) return;             /* 手抖不算拉 */
+        dg.live = true;
+        pane.classList.add('resizing');
+      }
+      nv = Math.max(0, Math.min(dg.max, dg.g0 + dy));
+      if (!raf) raf = requestAnimationFrame(function () {
+        raf = 0;
+        S.feGrow = nv;
+        applyFeGrow();
+      });
+    });
+
+    var endResize = function () {
+      if (!dg) return;
+      var live = dg.live, id = dg.id;
+      dg = null;
+      if (raf) {          /* 最后一帧还没落地：补上 */
+        cancelAnimationFrame(raf); raf = 0;
+        S.feGrow = nv;
+        applyFeGrow();
+      }
+      pane.classList.remove('resizing');
+      try { grip.releasePointerCapture(id); } catch (err) { }
+      if (live) { savePrefs(); syncScroll(); }
+    };
+    grip.addEventListener('pointerup', endResize);
+    grip.addEventListener('pointercancel', endResize);
+
+    grip.addEventListener('dblclick', function (e) {
+      e.preventDefault();
+      resetFeGrow();
+    });
   }
 
   /* 用 offsetLeft/offsetTop 量基础盒：这两个值不受 transform 影响，
@@ -675,6 +780,7 @@
     if (p.x !== S.feX || p.y !== S.feY) {
       S.feX = p.x; S.feY = p.y;
       applyFePos();
+      applyFeGrow();     /* 位置一变，下边界能吃多少也跟着变 */
     }
   }
 
@@ -732,7 +838,7 @@
       }
       pane.classList.remove('dragging');
       try { bar.releasePointerCapture(id); } catch (err) { }
-      if (live) savePrefs();
+      if (live) { savePrefs(); applyFeGrow(); }
     };
     bar.addEventListener('pointerup', endDrag);
     bar.addEventListener('pointercancel', endDrag);
@@ -2343,6 +2449,7 @@
       DBX.storage.set(ST_KEY, {
         dir: S.dir, autoSave: S.autoSave, activeEnv: S.activeEnv, lastPath: S.path,
         edgeTop: S.edgeTop, feX: Math.round(S.feX), feY: Math.round(S.feY),
+        feGrow: Math.round(S.feGrow || 0),
         fontSize: S.fontSize
       });
     } catch (e) { }
@@ -2359,6 +2466,8 @@
       /* S3.1：上次拖到的位置；真正的夹取在布局量出来之后（见 init 里的 reclampFe） */
       if (isFinite(p.feX)) S.feX = Number(p.feX);
       if (isFinite(p.feY)) S.feY = Number(p.feY);
+      /* S3.4：上次拉到的下边界；真正的可用上限等布局量出来才准（layoutLayer 里夹） */
+      if (isFinite(p.feGrow)) S.feGrow = Math.max(0, Number(p.feGrow));
       if (isFinite(p.fontSize)) S.fontSize = Math.max(FS_MIN, Math.min(FS_MAX, Number(p.fontSize)));
     }
     updateAutoBtn();
@@ -2405,6 +2514,8 @@
 
     /* S3.1：标题条拖动浮层（双击复位） */
     bindPaneDrag();
+    /* S3.4：拖下边界把浮层拉大（双击复位） */
+    bindFeResize();
 
     /* ---- 右缘箭头：单击展开 / 上下拖动挪位置 / 右键彻底关闭 ---- */
     if (edge) {
@@ -2726,8 +2837,10 @@
       collapse: collapse,
       expand: expand,
       /* S3.1：浮层位置（拖动 / 复位），给自动化验证用 */
-      pos: function () { return { x: S.feX, y: S.feY }; },
+      pos: function () { return { x: S.feX, y: S.feY, grow: Math.round(S.feGrow || 0) }; },
       resetPos: resetFePos,
+      /* S3.4：下边界拉开的量（0 = 默认只盖请求区），给自动化验证用 */
+      resetGrow: resetFeGrow,
       /* S3.2：字号（Ctrl+滚轮 / Ctrl+0），给自动化验证用 */
       fontSize: function () { return S.fontSize; },
       setFontSize: function (v) { applyFontSize(v, { toast: false }); savePrefs(); },
