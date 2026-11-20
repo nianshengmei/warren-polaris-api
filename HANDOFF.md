@@ -41,6 +41,13 @@ node dev/dev-server.mjs
 `verify-ui/check-*.mjs` 里写的是 `path.resolve(..., '..', 'warren-polaris-api')`，
 靠的是相对位置，不是绝对路径。
 
+> **⚠ 仓库里没有的东西**：`verify-ui/`（七个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
+> 从来没进过 `nianshengmei/warren-polaris-api`。所以：
+> - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
+> - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261120.zip` 里
+>   取 `verify-ui/` 和 `dev-workspace/`，放到与 `warren-polaris-api` 同级。
+>   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
+
 **新会话开场白建议直接说**：
 > 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 S2.5d 开始。口径不许改。
 
@@ -127,19 +134,28 @@ node dev/dev-server.mjs
 
 ---
 
-## 8. 包里有什么
+## 8. 怎么拿到代码（二选一）
+
+**A. GitHub（首选，2026-11-20 已推送）**
+
+```bash
+git clone https://github.com/nianshengmei/warren-polaris-api.git
+cd warren-polaris-api && git log --oneline -1   # 应为 10b2883 docs: 1.0.0 交接单
+```
+
+代码、20 个提交的历史、本交接单全都在这。缺的只有 `verify-ui/` 和 `dev-workspace/`（见第 1 节）。
+
+**B. 迁移包（离线备份 / 补 verify-ui 用）**
 
 ```
-polaris-handoff-20261120.zip
-├── warren-polaris-api/     完整项目，含 .git（20 个提交，工作树干净）
-├── verify-ui/              端到端脚本（不含 node_modules，Mac 上重装）
-├── dev-workspace/          本地调试用的示例目录（含 wpa-workspace.json 与两个 .http）
-└── .workbuddy/memory/      三天的工作日志 + MEMORY.md（长期约定，值得读 2026-11-20.md）
+polaris-handoff-20261120.zip   （6.0 MB，714 条目，已校验 UTF-8 文件名）
+├── warren-polaris-api/     完整项目，含 .git
+├── verify-ui/              端到端脚本（不含 node_modules，Mac 上 npm i playwright-core）
+├── dev-workspace/          调试目录（含 wpa-workspace.json 与两个 .http）
+└── .workbuddy/memory/      工作日志 + 长期约定（值得读 2026-11-20.md）
 ```
-
-同目录另有 `verify-zip.mjs`（我用来核对包内条目名编码的脚本，可删）。
 
 **关于对话历史**：`~/.workbuddy/projects/<cwd-hash>/*.jsonl`（24 MB）**不能跨机器 resume** ——
-目录名是工作区路径算出来的 hash，换机器就挂不上新会话。想要原文只当资料查的话，
-拷 `C:\Users\yanming\.workbuddy\projects\c-Users-yanming-WorkBuddy-2026-11-18-13-25-59\58f84e70-*.jsonl`
+目录名是工作区路径算出来的 hash，换机器就挂不上新会话。想查原话的话，拷
+`C:\Users\yanming\.workbuddy\projects\c-Users-yanming-WorkBuddy-2026-11-18-13-25-59\58f84e70-*.jsonl`
 过去 grep 即可；正常接手读本文件就够。
