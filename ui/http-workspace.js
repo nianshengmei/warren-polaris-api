@@ -660,12 +660,27 @@
     }
   }
 
+  /* ---------- 取消标志（S6.2） ---------- */
+  /* 用户点「停止」时，app.js 往 `<资源目录>/_cancel/<requestId>.flag` 写一笔；
+   * 后端每读 64 KiB 看一眼这个文件，看到就断开连接、把已收到的部分带回去。
+   * 路径在这里算，不让 app.js 自己拼 —— 与 `_history/` 一样挂在工作区根下，
+   * 换分隔符的地方只有一处（Windows 的 `\` 与 POSIX 的 `/` 由 joinPath 处理）。 */
+  var CANCEL_DIR = '_cancel';
+  function cancelPath(rid) {
+    var dir = WS.workDir || '';
+    if (!dir || !rid) return '';
+    var S = window.POLARIS_STORE;
+    var base = (S && S.joinPath) ? S.joinPath(dir, CANCEL_DIR) : String(dir).replace(/[\\/]+$/, '') + '/' + CANCEL_DIR;
+    var name = String(rid) + '.flag';
+    return (S && S.joinPath) ? S.joinPath(base, name) : base + '/' + name;
+  }
+
   /* ---------- 启动 ---------- */
   async function boot() {
     injectCss();
     panel = buildPanel();
     bind();
-    window.POLARIS_HTTP_WS = { onResponse: onResponse, show: show, state: WS };
+    window.POLARIS_HTTP_WS = { onResponse: onResponse, show: show, state: WS, cancelPath: cancelPath };
     if (DBX && DBX.ready) await DBX.ready;
     await loadWs();
     if (hostAvailable()) {

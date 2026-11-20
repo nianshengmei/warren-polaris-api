@@ -3,21 +3,26 @@
 > 这份文档是给"另一台电脑上的新会话"看的。**它没有上一轮的对话记忆**，
 > 所有判断依据都在这里和 `docs/plan-v1.0.0.md` 里。读完这份就能接着干活。
 >
-> 生成时间：2026-11-21 00:20（M4 + M5 收官）
+> 生成时间：2026-11-21 01:40（M6 收官）
 
 ---
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）+ M4（身份与历史）+ M5（示例与文档）全部完成**，
-`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1–4.6 + S5.1–5.4` 全绿，**下一步是 M6「取消」（S6.1–S6.3）**，之后 M7 发版。
-S4/S5 于 2026-11-21 收官：历史每接口 10 条自动轮转、二进制外置 `.bin`、历史子页 10 条倒序、
-删了 id 行会**问一句**再决定要不要接回；示例扩到 9 节并讲清了两行身份注释的来历。
+1.0.0 的 **M1–M6 全部完成**，`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1–4.6 + S5.1–5.4 + S6.1–6.3` 全绿，
+**下一步是 M7「数据格式冻结 + 发版」**。
+M6 于 2026-11-21 收官：响应体改 64 KiB 分块读、点停止写 `_cancel/<requestId>.flag`、
+后端在下一块之前收手——50 MB 下载中途停止，**160 ms 断开**，只带回已收到的 3 MB。
 
 > ⚠ 这批里挖出一个**躺了很久的真 bug**并修了：`ui/dbx-bridge.js` 用 `Object.assign` 搬访问器，
 > 导致 `readyOk` 永远是 `false`，`http-workspace` 的 `hostAvailable()` 恒假 ——
 > 「结果保存到 `_results/`」和「目录扫描」整条链路其实一直是死的（演示站跑了几十次请求，`_results/` 是空的）。
 > 现在改成 `Object.defineProperties`。**如果哪天有人把这段改回去，`verify.mjs` 会红。**
+
+> ✅ **Rust 侧这次真编译过了**（此前一直以为沙箱没有 cargo）：
+> `dbx-plugin-sdk` 不在 crates.io 上，用 `--config patch.crates-io.dbx-plugin-sdk.path=...`
+> 指向从 GitHub 拉的 SDK 源码（只有 serde/serde_json 两个依赖）即可 `cargo check/build/clippy`。
+> crates.io 直连只有 ~12 KB/s，换 USTC 镜像后 17 秒跑完。
 
 ---
 
@@ -33,11 +38,11 @@ node -v        # 需要 >= 18，建议 22
 #    再把 .workbuddy/memory/ 解压到该工作区的 .workbuddy/ 下
 #    （Mac 上双击用「归档实用工具」解压即可；包内中文文件名的 UTF-8 标志已校验过）
 
-# 3) 自检：应当全绿，且 git 历史完整（43 个提交，最新一条是 M5）
+# 3) 自检：应当全绿，且 git 历史完整（48 个提交，最新一条是 M6）
 cd warren-polaris-api
-git log --oneline | head -3      # 最新一条应是 M5 示例与文档
+git log --oneline | head -3      # 最新一条应是 M6 取消
 git status --short               # 应为空（或只有 HANDOFF.md）
-node tools/all.mjs               # 13 个文件全绿
+node tools/all.mjs               # 14 个文件全绿
 
 # 4) 起本地调试环境，浏览器打开 http://127.0.0.1:8899
 node dev/dev-server.mjs
@@ -79,6 +84,9 @@ node dev/dev-server.mjs
 
 | 里程碑 | 状态 | 落点 |
 |---|---|---|
+| S6.3 取消回归 | ✅ | `tools/live-cancel.mjs` 在**真二进制**上跑四条：512 KiB 二进制响应 SHA-256 一致、784 KiB 上传体 SHA-256 一致（等价那支 wav）、SSE 11 事件完整、`/hang` 超时 816 ms 仍报错。11 项 |
+| S6.2 UI 写标志 | ✅ | `http-workspace.js` 新增 `cancelPath(rid)`（`<资源目录>/_cancel/<rid>.flag`，路径只在这一处拼）；`app.js` 每次发送生成 `rid='q'+base36`，随 `requestId`/`cancelPath` 传给后端；`doStop` 里 `writeCancelFlag()` **不 await**（按钮立刻复原），`finally` 里 `clearCancelFlag()`。没有后端时自动退化为纯逻辑中断。`verify-ui/check-s61.mjs` 20 项 |
+| S6.1 后端分块读 | ✅ | `backend/src/main.rs`：`READ_CHUNK = 64 KiB`，SSE 与普通两条分支都在**每次 read 之前**查 `cancel_requested()`；`CancelFlagGuard` 在函数返回（含 panic 前）删标志；发车前先清残留标志；返回体新增 `cancelled` / `truncated`。50 MB 中途停止 ≈ 160 ms 断开。`tools/cancel.test.mjs` 14 项 + `tools/live-cancel.mjs` 11 项 |
 | S1.0–S1.5 文件真源 | ✅ | `ui/http-file.js` `ui/http-store.js` `app.js` 的 DOCS 层 / 投影层 |
 | S2.1 段落级写回 | ✅ | `locateSegment`，只改目标字段，其余字节不变 |
 | S2.2 反向刷新 + 冲突 | ✅ | `syncTabsWithDocs` + `baseMtime` + `#docConflict` |
@@ -104,30 +112,39 @@ node dev/dev-server.mjs
 | S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（`crypto` 优先、可注入 rnd）；`insertFileId` 落在第一个 `###` 之前并与 `###` 隔一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` / `index` 两种定位）；`dedupe` 同文件重复 id 后一个换新；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口/重复斜杠/末尾斜杠/fragment 抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接、不重序列化**，插入行沿用文件自己的行尾（CRLF 不掺裸 LF）。`tools/identity.test.mjs` 9 项 |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → 13 文件全绿（`verify.mjs` **58** 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项、`identity.test.mjs` **13** 项、`history.test.mjs` **23** 项、`sample.test.mjs` **46** 项等）
-- `verify-ui/` 十七个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15
+- `node tools/all.mjs` → **14 文件全绿**（`verify.mjs` **58** 项、`map.test.mjs` 22、`store.test.mjs` 31、`identity.test.mjs` 13、`history.test.mjs` 23、`sample.test.mjs` 46、`cancel.test.mjs` **14** 等）
+- `verify-ui/` **十八个**端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15、**s61=20**
+- Rust 侧（沙箱里现在能跑）：`cargo check` / `clippy` **零警告**；`node tools/live-cancel.mjs` **11 项全过**
 
 ---
 
-## 4. 下一步：M6「取消」（S6.1–S6.3）
+## 4. 下一步：M7「数据格式冻结 + 发版」（S7.0–S7.4）
 
-> 目标：下载大响应时不把整包读进内存，点「停止」两秒内真断。
-> **这一节要改 Rust（`backend/src/main.rs`），沙箱里没有 `cargo`，改完只能静态校验 + 等 CI / 本机编译。**
+> 进 M7 前先把 `docs/plan-v1.0.0.md` 里 S7.0–S7.4 逐条读一遍，那里写死了发版要同步的五个版本位。
 
-S6.1 后端分块读（`handle_request` 的普通分支）：
+1. **S7.0 撤回商店 PR**：`v0.6.4` 的 PR #557 先前已决定撤回，确认一遍状态即可。
+2. **S7.1 数据格式冻结**：把 `wpa-workspace.json`（version 1）、`_history/*.jsonl`（每行字段）、
+   `.identities.jsonl`、`http-client.env.json` 四处写进 README「数据格式」一节，并标 `frozen at 1.0.0`。
+   冻结的含义：1.0.x 只加字段不删不改语义；要改就等 1.1。
+3. **S7.2 版本位**：`manifest.json`、`backend/Cargo.toml`、`backend/Cargo.lock`、
+   `.dbx-store.json` 的 `releaseNotes`、README 版本历史、`tools/verify.mjs` 的 `const VERSION` —— 六处一起改。
+4. **S7.3 出包**：`cargo build --release`（三平台走 GitHub Actions），产物进 `.dbx` 包，跑一遍 `node tools/all.mjs`。
+5. **S7.4 上架**：新开商店 PR，附 1.0.0 的 release notes。
 
-- 现在是 `to_vec()` 一次读完；改成 64 KB 一块循环读，每块前检查取消标志。
-- 取消标志的来源见 S6.2；SSE 分支已有循环，照着加同样检查。
-- 验收：本地起 `/big?mb=50`，中途写标志 → 2 秒内断开，日志打 `cancelled at N bytes`。
+发版前最后跑一次（沙箱里就能做的）：
+```bash
+cd backend && cargo clippy --config 'patch.crates-io.dbx-plugin-sdk.path="/root/dbx-sdk"'   # 零警告
+cd .. && node tools/all.mjs && node tools/live-cancel.mjs
+cd ../verify-ui && node check-s61.mjs
+```
 
-S6.2 UI 写标志：
-
-- 停止按钮写 `_cancel/<requestId>.flag`，请求结束删掉；路径由 `http-workspace.js` 提供。
-- 注意 `invoke` 是同步 RPC 无法中断，所以 UI 侧仍要保留 `sendSeq` 守卫丢迟到响应（现在的做法），标志只是让**后端**早点停手。
-
-S6.3 回归：SSE、multipart、超时三条不许退化（`verify-multipart` 21/21、784 KB wav SHA-256 一致、SSE 11 事件完整）。
-
-之后是 M7：数据格式冻结 + 发版。
+> **沙箱里怎么编 Rust**（这次摸出来的，Mac 上照做也行）：
+> ```bash
+> git clone --depth 1 https://github.com/t8y2/dbx /tmp/dbx   # 只用 plugins/sdk/rust/dbx-plugin-sdk
+> cd warren-polaris-api/backend
+> cargo check --config 'patch.crates-io.dbx-plugin-sdk.path="/tmp/dbx/plugins/sdk/rust/dbx-plugin-sdk"'
+> ```
+> 若 crates.io 慢，在 `~/.cargo/config.toml` 里把源换成 USTC 镜像（sparse）。
 
 ---
 
@@ -136,8 +153,10 @@ S6.3 回归：SSE、multipart、超时三条不许退化（`verify-multipart` 21
 1. `.pa-fe` 浮层偏矮，是否加「⤢ 铺满」按钮？
 2. ~~历史保留条数 3 / 10 / 30？~~ **已定：10 条**（2026-11-20 拍板，已落进 `MAX_LINES`）
 3. 二进制响应（`.bin`）单文件 5 MB 上限是否合适？**现在 `maxBodyBytes` 默认不设限**，只留了旋钮，等你给数。
-4. 后端 4 个新命令**只在 Mac/Linux 侧编译验证过吗**——若是，需等 CI 或本机 `cargo` 跑一次。
-   Windows 侧没有 `cargo`，产物一直靠 GitHub Actions 构建。
+4. ~~后端 4 个新命令只在 Mac/Linux 侧编译验证过吗？~~ **已办（2026-11-21）**：沙箱里用 SDK 源码 patch 的方式
+   真跑了 `cargo check` / `build` / `clippy`，零警告；M6 的分块读还用真二进制做了取消与三条回归的实测。
+   Windows 侧的产物仍靠 GitHub Actions 构建。
+5. M6 之后「停止」的文案改成「已通知后端断开」。若你想更克制（比如只写「已停止」），说一声就改。
 
 ---
 

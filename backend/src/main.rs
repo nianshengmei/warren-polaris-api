@@ -290,7 +290,7 @@ fn handle_write_file(params: Value) -> Result<Value, PluginError> {
         "path": path.to_string_lossy().to_string(),
         "exists": false,
         "written": true,
-        "size": content.as_bytes().len() as u64,
+        "size": content.len() as u64,
         "modified": now_millis(),
         "backup": backup,
     }))
@@ -746,6 +746,51 @@ fn handle_reveal_dir(params: Value) -> Result<Value, PluginError> {
 
 /* ===================== HTTP 请求（原有逻辑） ===================== */
 
+/* 响应体按 64 KiB 一块读，每块之前看一眼取消标志。
+ * 之前是 `resp.bytes()` 一口气读完 —— 50 MB 的下载在 UI 上点了停止，
+ * sidecar 仍会把整包灌进内存，连接也不会断。 */
+const READ_CHUNK: usize = 64 * 1024;
+
+/* 取消标志的约定：UI 在用户点「停止」时写 `<workspace>/_cancel/<requestId>.flag`，
+ * 后端每读一块前 stat 一次，文件出现就收手。请求结束时（成功 / 失败 / 取消）由
+ * CancelFlagGuard 删掉。
+ *
+ * 为什么走文件而不是 `http/cancel` 这种 RPC：sidecar 默认是 2–16 个 worker 线程，
+ * 请求正占着一个线程阻塞在 read 上，另一个线程确实能处理 cancel RPC —— 但那需要在
+ * 进程里维护一张「requestId → 原子标志」的全局表，还得处理跨 worker 的竞态；
+ * 一个文件已经足够表达「停」，且 UI 侧不需要额外的登记/注销协议。
+ *
+ * 局限（写在这里免得以后当成 bug）：read 本身阻塞时检查不到；只有对端在持续推数据
+ * （每块之间）才能在毫秒级停手。连接完全静默时，取消仍要等读超时 —— 那种情况下
+ * UI 早已用 sendSeq 做了逻辑中断，用户看到的界面是立刻停的。 */
+fn is_cancel_flag(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("flag"))
+        .unwrap_or(false)
+}
+
+fn cancel_requested(p: Option<&Path>) -> bool {
+    match p {
+        Some(x) => is_cancel_flag(x) && x.exists(),
+        None => false,
+    }
+}
+
+/// 请求一结束就删标志：UI 的 `http/deleteFile` 是异步 RPC，可能晚到，
+/// 残留的同名标志会让下一次请求刚发车就被取消。只删 `.flag`，别的一概不碰。
+struct CancelFlagGuard(Option<PathBuf>);
+
+impl Drop for CancelFlagGuard {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            if is_cancel_flag(&p) {
+                let _ = fs::remove_file(&p);
+            }
+        }
+    }
+}
+
 /// 处理 http/request：用 reqwest 发送任意 URL 请求。
 fn handle_request(params: Value) -> Result<Value, PluginError> {
     let method = params.get("method").and_then(Value::as_str).unwrap_or("GET").to_uppercase();
@@ -757,6 +802,21 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
     let body_b64 = params.get("bodyBase64").and_then(Value::as_str).unwrap_or("");
     let body_type = params.get("bodyType").and_then(Value::as_str).unwrap_or("text");
     let timeout_ms = params.get("timeoutMs").and_then(Value::as_u64).unwrap_or(120_000);
+
+    /* 取消标志（可选）。UI 会传绝对路径；只认 `.flag` 结尾，传错路径不会误删别的文件。 */
+    let cancel_path = params
+        .get("cancelPath")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| is_cancel_flag(p));
+    /* 发车前先清一次：上一轮停止写的标志可能还躺着（UI 的删除请求晚到了） */
+    if let Some(p) = &cancel_path {
+        let _ = fs::remove_file(p);
+    }
+    let _cancel_guard = CancelFlagGuard(cancel_path.clone());
+    let cancel_ref = cancel_path.as_deref();
 
     /* 原始字节 body：multipart / 二进制文件上传都走这里，避免文本化把附件写坏 */
     let raw_body: Option<Vec<u8>> = if body_b64.is_empty() {
@@ -847,12 +907,16 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
     let is_binary = is_binary_content_type(&content_type);
     let is_sse = wants_sse || content_type.to_ascii_lowercase().contains("text/event-stream");
     /* SSE：边收边攒，最多 512 KiB；到 client 超时（sseMs）或服务端断开就收尾。
-     * 其它请求照旧一次性读完整个 body。 */
+     * 其它请求按 READ_CHUNK 分块读 —— 中途被取消就把已收到的部分带回去，
+     * 不再把整包灌进内存（S6.1）。 */
+    let mut cancelled = false;
+    let mut read_error: Option<String> = None;
     let (bytes, sse_ended) = if is_sse {
         let mut buf: Vec<u8> = Vec::new();
         let mut tmp = [0u8; 8192];
         let mut ended = false;
         loop {
+            if cancel_requested(cancel_ref) { cancelled = true; break; }
             match resp.read(&mut tmp) {
                 Ok(0) => { ended = true; break; }
                 Ok(n) => {
@@ -864,8 +928,27 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         }
         (buf, ended)
     } else {
-        (resp.bytes().map_err(|e| PluginError::new(-32000, format!("read body: {e}")))?.to_vec(), true)
+        let mut buf: Vec<u8> = Vec::with_capacity(READ_CHUNK);
+        let mut tmp = vec![0u8; READ_CHUNK];
+        loop {
+            if cancel_requested(cancel_ref) { cancelled = true; break; }
+            match resp.read(&mut tmp) {
+                Ok(0) => break,
+                Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                Err(e) => { read_error = Some(e.to_string()); break; }
+            }
+        }
+        /* 一块都没读到就报错，保持原来的失败语义；读到一半出错则返回部分并标记截断 */
+        if buf.is_empty() {
+            if let Some(e) = &read_error {
+                return Err(PluginError::new(-32000, format!("read body: {e}")));
+            }
+        }
+        (buf, true)
     };
+    if cancelled {
+        eprintln!("[polaris-api] request cancelled at {} bytes", bytes.len());
+    }
     let time_ms = start.elapsed().as_millis() as u64;
 
     let (body_out, is_base64) = if is_binary {
@@ -887,6 +970,9 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         "timeMs": time_ms,
         "sse": is_sse,
         "sseTruncated": is_sse && !sse_ended,
+        /* S6.1：UI 点过停止 → true，body 只带已经收到的部分；truncated 表示「没读完」。 */
+        "cancelled": cancelled,
+        "truncated": if is_sse { !sse_ended } else { cancelled || read_error.is_some() },
     }))
 }
 

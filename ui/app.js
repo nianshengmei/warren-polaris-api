@@ -1279,8 +1279,38 @@ function syncUrlToParams(t){
 }
 
 /* ===================== 发送 ===================== */
+
+/* S6.2：取消标志。invoke 是同步 RPC，点了停止也拦不住已经在跑的原生请求；
+ * 所以在 `<资源目录>/_cancel/<requestId>.flag` 写一个文件，后端每读 64 KiB stat 一次。
+ * sidecar 默认 2–16 个 worker 线程，请求占住一个，写标志的这条能由别的线程处理。
+ * 写失败（无后端 / 老版本 sidecar / 宿主串行）就退化成纯逻辑中断 —— UI 侧的
+ * sendSeq 守卫照旧把迟到响应丢掉，功能不受影响。 */
+function cancelPathFor(rid){
+  try{
+    const W=window.POLARIS_HTTP_WS;
+    if(W&&typeof W.cancelPath==='function') return W.cancelPath(rid)||'';
+  }catch(e){ /* 工作区还没 boot 完：没有路径就不发标志 */ }
+  return '';
+}
+function writeCancelFlag(p){
+  if(!p||!DBX||!DBX.invoke) return;
+  const dir=p.replace(/[\\/][^\\/]+$/,'');
+  Promise.resolve()
+    .then(()=>DBX.invoke('http/ensureDir',{dir}))
+    .then(()=>DBX.invoke('http/writeFile',{path:p,content:String(Date.now())}))
+    .catch(()=>{ /* 停不下来也还有 sendSeq 兜底 */ });
+}
+function clearCancelFlag(p){
+  if(!p||!DBX||!DBX.invoke) return;
+  /* 删不掉不算事：后端在请求结束（含取消）时也会删，下次发车前还会再清一次 */
+  Promise.resolve().then(()=>DBX.invoke('http/deleteFile',{path:p})).catch(()=>{});
+}
+
 async function send(){
   const t=activeTab();
+  /* S6.2：本次调用的取消标志路径。请求结束（含失败）就删，后端也会兜底删一次。 */
+  const rid='q'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  const cancelPath=cancelPathFor(rid);
   const seq=(t.sendSeq||0)+1;              // 竞态守卫序号：迟到响应不得覆盖新请求/已中断状态
   t.sendSeq=seq;
   t.stopped=false;                       // 新发送重置中断标记
@@ -1321,9 +1351,11 @@ async function send(){
     t.stopped=true;
     clearInterval(tick);
     if(t.abortCtl){ t.abortCtl.abort(); t.abortCtl=null; }
+    /* S6.2：先让原生请求停手。写标志是异步的，绝不 await —— 按钮要立刻复原。 */
+    writeCancelFlag(cancelPath);
     btn.classList.remove('stop-mode'); btn.disabled=false; btn.innerHTML='发送 <span class="k">⌘↵</span>'; btn.title='';
     btn.onclick=send;
-    $('#resPane').innerHTML=`<div class="res-err"><div class="ti">⏹ 已手动中断</div><div>请求已停止。<span style="color:var(--dimmer)">sidecar 原生请求仍在后台继续，UI 已丢弃响应（逻辑中断）。</span></div><div style="margin-top:10px;color:var(--dimmer);font-size:11px">耗时 ${ms(performance.now()-t0)} · ${esc(url)}</div></div>`;
+    $('#resPane').innerHTML=`<div class="res-err"><div class="ti">⏹ 已手动中断</div><div>请求已停止。<span style="color:var(--dimmer)">已通知后端断开${cancelPath?'':'（当前环境没有后端，仅逻辑中断）'}，正在传输的响应不会再读下去。</span></div><div style="margin-top:10px;color:var(--dimmer);font-size:11px">耗时 ${ms(performance.now()-t0)} · ${esc(url)}</div></div>`;
     setStatus('请求已中断 · '+ms(performance.now()-t0),'err');
   };
   btn.onclick = (e)=>{ e.preventDefault(); e.stopPropagation(); doStop(); };
@@ -1335,13 +1367,16 @@ async function send(){
     {
       // sidecar 模式：经 dbxPlugin.invoke('http/request') 调本插件原生 backend 发送。
       // 原生进程用 reqwest 发请求，无 CORS/混合内容/禁发头限制，等效 cURL。
-      // 停止按钮为逻辑中断：invoke 是同步 RPC 无法取消，请求继续在 sidecar 跑，
-      // UI 用 sendSeq 守卫丢弃迟到响应（与原版 cap.http 面板模式同范式）。
+      // 中断分两层：① invoke 是同步 RPC，拦不住已经在跑的请求，所以停止时写
+      // `_cancel/<rid>.flag` 让**后端**在下一块数据前收手（S6.2）；
+      // ② 万一标志没送到（无后端 / 老 sidecar），UI 仍用 sendSeq 守卫丢弃迟到响应。
       const r = await DBX.invoke('http/request', {
         method, url, headers,
         body: body || '',
         bodyType: t.bodyType || 'text',
         timeoutMs: tmo > 0 ? tmo : 86400000,
+        requestId: rid,
+        cancelPath: cancelPath || undefined,
       });
       if (t.stopped || t.sendSeq !== seq) return;
       const ct = r.contentType || '';
@@ -1380,6 +1415,8 @@ async function send(){
     setStatus('请求失败：'+(err.message||err),'err');
   }finally{
     clearInterval(tick);
+    /* S6.2：这次请求结束了（成功 / 失败 / 中途停止），标志都该消失 */
+    clearCancelFlag(cancelPath);
     if(btn.classList.contains('stop-mode')){
       btn.classList.remove('stop-mode'); btn.disabled=false; btn.innerHTML='发送 <span class="k">⌘↵</span>'; btn.title='';
     }

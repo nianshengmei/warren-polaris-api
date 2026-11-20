@@ -20,6 +20,7 @@ const files = [
   'tools/vars.test.mjs',
   'tools/multipart.test.mjs',
   'tools/sample.test.mjs',
+  'tools/cancel.test.mjs',
 ];
 
 let failed = 0;

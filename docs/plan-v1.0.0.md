@@ -87,7 +87,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 | **M3 交互** | S3.1–S3.3 | 浮层可拖、字号可缩、身份行可辨 | 可与 M1 并行 |
 | **M4 身份与历史** | S4.1–S4.6 | 每次调用落一行 jsonl，接口身份可追溯 | M1（需文件写入） |
 | **M5 示例与文档** | S5.1–S5.4 | 一套 demo、README 写明代价、seed 退役 | M4 |
-| **M6 取消** | S6.1–S6.3 | 点停止能在 2 秒内断开大响应 | 独立 |
+| **M6 取消** | S6.1–S6.3 | 点停止能在 2 秒内断开大响应 ✅ | 独立 |
 | **M7 格式冻结与发版** | S7.0–S7.4 | 撤回 0.6.4 上架、冻结数据格式、1.0.0 出包并新开商店 PR | 全部 |
 
 并行建议：M3 与 M1/M2 无代码交集（一个动 `http-editor.js`/`app.css`，一个动 `http-store.js`/`http-file.js`），可穿插做。
@@ -318,24 +318,36 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 
 ---
 
-## M6 取消（L1）
+## M6 取消（L1）✅ 2026-11-21 完成
 
-### S6.1 backend 分块读
+### S6.1 backend 分块读 ✅
 
 - **目标**：普通响应不再 `to_vec()` 一次读完，改 64 KB 分块，每块检查取消标志。
 - **改动**：`backend/src/main.rs` —— `handle_request` 的普通分支（SSE 分支已有循环，加同样检查）。
 - **验收**：本地起一个慢速大文件服务（`/big?mb=50`），中途写标志 → 2 秒内连接断开，日志打印 `cancelled at N bytes`。
+- **实际**：`READ_CHUNK = 64 * 1024`；两条分支都是「先查标志、再 read」，SSE 也加了；
+  `CancelFlagGuard` 的 `Drop` 负责删标志（成功/失败/取消三条出口都覆盖）；返回体新增 `cancelled` / `truncated`；
+  一块都没读到仍按原语义报 `read body: ...`。**实测 50 MB 下载中途停止 ≈ 160 ms 断开**（日志 `cancelled at 3244032 bytes`）。
+- **测试**：`tools/cancel.test.mjs` 14 项（源码契约）+ `tools/live-cancel.mjs` 11 项（真二进制）。
 
-### S6.2 UI 写标志
+### S6.2 UI 写标志 ✅
 
 - **目标**：停止按钮写 `_cancel/<requestId>.flag`，请求结束删掉。
 - **改动**：`ui/app.js` 的 `doStop()`；`ui/http-workspace.js` 提供路径。
 - **验收**：手工 —— 下载 50 MB 时点停止，`netstat` 看不到持续连接。
+- **实际**：`http-workspace` 新增 `cancelPath(rid)`（唯一拼路径的地方，`POLARIS_STORE.joinPath` 处理分隔符）；
+  每次发送生成 `rid='q'+Date.now().toString(36)+rand`，连同 `requestId` / `cancelPath` 传给后端；
+  `writeCancelFlag()` 不 await（按钮当帧复原），`finally` 里 `clearCancelFlag()`；
+  没有后端 / 老 sidecar 时自动退化成纯逻辑中断（`sendSeq` 守卫照旧）。
+- **测试**：`verify-ui/check-s61.mjs` 20 项（真浏览器 + 假宿主，验到「标志路径 == 请求里的 cancelPath」「迟到响应不顶走已中断」）。
 
-### S6.3 回归
+### S6.3 回归 ✅
 
 - **目标**：SSE、multipart、超时三条不退化。
 - **验收**：`verify-multipart` 21/21；真机 784 KB wav 上传 SHA-256 一致；SSE 11 事件完整。
+- **实际**：`tools/live-cancel.mjs` 在真二进制上跑 —— 512 KiB 二进制响应 SHA-256 一致、
+  784 KiB 上传体（随机字节，与那支 wav 同量级）SHA-256 一致、SSE 11 事件完整且 `sseTruncated=false`、
+  `/hang` 在 800 ms 超时设定下 816 ms 报错。`verify-ui` 的 s42（23）/s43（30）也照旧全绿。
 
 ---
 
