@@ -28,7 +28,7 @@ node -v        # 需要 >= 18，建议 22
 #    再把 .workbuddy/memory/ 解压到该工作区的 .workbuddy/ 下
 #    （Mac 上双击用「归档实用工具」解压即可；包内中文文件名的 UTF-8 标志已校验过）
 
-# 3) 自检：应当全绿，且 git 历史 20 个提交都在
+# 3) 自检：应当全绿，且 git 历史完整（37 个提交，最新一条是 S4.1）
 cd warren-polaris-api
 git log --oneline | head -3      # 最新一条应是 S4.1 身份纯函数
 git status --short               # 应为空（或只有 HANDOFF.md）
