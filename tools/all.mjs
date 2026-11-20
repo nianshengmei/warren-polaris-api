@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const files = [
   'tools/verify.mjs',
   'tools/http-file.test.mjs',
+  'tools/identity.test.mjs',
   'tools/fixtures.test.mjs',
   'tools/serialize.test.mjs',
   'tools/store.test.mjs',

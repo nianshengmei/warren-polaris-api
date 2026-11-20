@@ -9,9 +9,10 @@
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）已完成**，`S2.5a/b/c/d + S2.6 + S3.1/2/3` 全绿，
-**下一步是 M4 身份与历史的 S4.1 `HttpIdentity`**，之后是 S4.2 → S4.3 → M5 → M6 → M7。
-S3.3 于 2026-11-20 收官：`@file_id` / `@interface_id` 四层标记，与普通注释一眼可分。
+1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）+ S4.1（身份纯函数）已完成**，
+`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1` 全绿，**下一步是 M4 的 S4.2 赋予时机**，之后是 S4.3 → S4.4 → S4.5 → S4.6 → M5 → M6 → M7。
+S4.1 于 2026-11-20 收官：`ui/http-identity.js` 五个纯函数（生成/插 file_id/插 interface_id/去重/指纹），
+`tools/identity.test.mjs` 9 项；**到这一步为止还没有任何地方调用它**，S4.2 才接进发送链路。
 
 ---
 
@@ -29,9 +30,9 @@ node -v        # 需要 >= 18，建议 22
 
 # 3) 自检：应当全绿，且 git 历史 20 个提交都在
 cd warren-polaris-api
-git log --oneline | head -3      # 应为 2a0e263 S2.5c ...
+git log --oneline | head -3      # 最新一条应是 S4.1 身份纯函数
 git status --short               # 应为空（或只有 HANDOFF.md）
-node tools/all.mjs               # 11 个文件全绿
+node tools/all.mjs               # 12 个文件全绿
 
 # 4) 起本地调试环境，浏览器打开 http://127.0.0.1:8899
 node dev/dev-server.mjs
@@ -41,7 +42,7 @@ node dev/dev-server.mjs
 `verify-ui/check-*.mjs` 里写的是 `path.resolve(..., '..', 'warren-polaris-api')`，
 靠的是相对位置，不是绝对路径。
 
-> **⚠ 仓库里没有的东西**：`verify-ui/`（七个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
+> **⚠ 仓库里没有的东西**：`verify-ui/`（十一个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
 > - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261120.zip` 里
@@ -86,27 +87,31 @@ node dev/dev-server.mjs
 | S3.2 字号缩放 | ✅ | `--pa-fs`/`--pa-lh` 挂在 `.pa-fe`，textarea / 高亮层 / 行号 / 折叠箭头 / ▶ 同源；`LINE_H` 常量换成 `lineH(fs)`；Ctrl+滚轮 12–28px、Ctrl+0 复位、`fontSize` 落偏好。**踩到真坑**：`app.css` 的 `.pa-root textarea{font-size:inherit}` 特异性 (0,1,1) 压过单类 `.pa-fe-text`，textarea 一直 12.5px、高亮层却变大 —— 规则改 `.pa-fe .pa-fe-text` 才压住。`verify-ui/check-s32.mjs` 25 项 |
 | S3.1 浮层拖拽 | ✅ | 标题条拖动 → `--fe-dx/--fe-dy` 位移（不改 left/top，宽度不会被压变形），rAF 合帧 + `setPointerCapture`；整块夹在 `.work` 内，双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，scrollLeft 被顶偏 26px 导致浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S2.6 示例自动挂载 | ✅ | 含 `POLARIS_MAP.save` 并发写修复（tmp 名唯一 + 串行） |
+| S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（`crypto` 优先、可注入 rnd）；`insertFileId` 落在第一个 `###` 之前并与 `###` 隔一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` / `index` 两种定位）；`dedupe` 同文件重复 id 后一个换新；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口/重复斜杠/末尾斜杠/fragment 抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接、不重序列化**，插入行沿用文件自己的行尾（CRLF 不掺裸 LF）。`tools/identity.test.mjs` 9 项 |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → 11 文件全绿（`verify.mjs` 52 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项等）
+- `node tools/all.mjs` → 12 文件全绿（`verify.mjs` 52 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项、`identity.test.mjs` 9 项等）
 - `verify-ui/` 十一个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24
 
 ---
 
-## 4. 下一步：M4 身份与历史 · S4.1 `HttpIdentity`
+## 4. 下一步：M4 身份与历史 · S4.2 赋予时机（编排）
 
-> 目标：生成、插入、去重、指纹四件事各自独立可测。
-> 验收：`tools/identity.test.mjs` 9 项 —— 含「插完再解析能读回同一个 id」「插 file_id 后请求数不变」「两段同 id 时第二个被换掉」。
+> 目标：**只有"要落历史"才写身份**；先插 id 并等写盘成功，再写历史；写盘失败就不写历史。
+> 验收：`tools/history.test.mjs` 用只读夹具（Node 里 `chmod 0444`）断言"没有产生 jsonl"；
+> 正常路径断言"文件里 id 行 == jsonl 里的 interfaceId"。
 
-改动落点：**新建** `ui/http-identity.js`（纯函数，不碰 DOM、不读宿主），四个能力：
-`newId()` 8 位 base36；`insertFileId(text)` 插到第一个 `###` 之前（空文件即第 1 行）；
-`insertInterfaceId(text, req)` 插到该 `###` 的紧下一行；`dedupe(doc)` 同文件重复 id 后一个换新；
-`fingerprint(req)` = `METHOD + 归一化 URL`（**变量保留原文，不展开** —— 展开会让同一接口换环境就变指纹）。
+现在已有的零件（别重复造）：
+- `ui/http-identity.js` 的 `insertFileId(text, id)` / `insertInterfaceId(text, req, id)` 返回 `{text, changed, id, line}`，
+  幂等且不会覆盖异 id（`reason:'EXISTS_OTHER'`）。**插入是文本级的，不要退回 `store.writeRequest`**
+  —— 那条路会 `serializeRequest` 整段重排，把用户段内的注释抹掉。
+- `POLARIS_DOCS`（`ui/app.js`）能拿到 doc 的 `path / text / mtime / parsed`，`ui/http-store.js` 有 `writeText(path, text, {baseMtime})`。
+- 接口身份与历史目录的关系：`fileId` 决定 collection 目录名，`interfaceId` 决定 jsonl 文件名（见 plan S4.3）。
 
-写插入时注意：S3.3 刚给身份行做的高亮是按 `# @file_id` 认的，插进去的行必须带上 `# ` 前缀，
-否则颜色不生效；插入位置算错会让「请求数不变」这条验收红掉。
+S4.2 要做的事：`ui/http-history.js` 的 `record()` 内部两步走（先落 id、再落 jsonl），
+`ui/app.js` 发送成功后调它；`READONLY` / 重试 2 次仍 `CONFLICT` → 不写历史 + 状态栏只提示一次。
 
-之后按 `docs/plan-v1.0.0.md` 顺序：**S4.2 赋予时机 → S4.3 调用历史 → M5 示例与文档 → M6 取消 → M7 冻结发版**。
+之后按 `docs/plan-v1.0.0.md` 顺序：**S4.3 调用历史 → S4.4 接入发送链路 → S4.5 历史面板 → S4.6 询问式接回 → M5 → M6 → M7**。
 
 ---
 

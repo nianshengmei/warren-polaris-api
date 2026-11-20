@@ -34,8 +34,9 @@
 | S3.1 浮层拖拽 | ✅ | 按住标题条拖浮层：位置记在 `--fe-dx/--fe-dy`（**不改 left/top**，基础盒贴着请求区算，改 left 会把宽度压变形），pointer + rAF 合帧 + `setPointerCapture`；夹取按「整块留在 `.work` 里」算；双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，`scrollLeft` 被顶偏 26px，浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S3.2 字号缩放 | ✅ | `--pa-fs` / `--pa-lh` 挂在 `.pa-fe` 上，textarea / 高亮层 / 行号 / 折叠箭头 / ▶ 全部同源引用；`LINE_H` 常量换成 `lineH(fs)`（字号 × 1.6），行号 `top` 跟着重算；`Ctrl+滚轮` 12–28px（步进 1，`passive:false` 拦整页缩放）、`Ctrl+0` 复位、`fontSize` 落偏好。**修掉一个真错位**：`app.css` 的 `.pa-root textarea{font-size:inherit}` 特异性 (0,1,1) 压过 `.pa-fe-text` (0,1,0)，textarea 一直继承 12.5px 而高亮层跟着变量变 —— 规则改成 `.pa-fe .pa-fe-text`。`verify.mjs` +1 组、`verify-ui/check-s32.mjs` 25 项 |
 | S3.3 身份行配色 | ✅ | `# @file_id` / `# @interface_id` 两种行做四层标记：紫色淡底 + 左侧 2px 竖线 + 键斜体加粗（`@` 号变淡）+ 值亮紫 `#c9a9ff`，行号栏对应行变紫并挂 4px 圆点锚点。**只认这两个键**，`@name` / `@baseUrl` / 普通注释一律不动（`# @name` 保持正体，与身份行的斜体一眼可分）。大文件纯文本分支与正常分支都带 `ids`，行号签名纳入身份行位置（换文件后锚点不残留）；浅色主题单独调底色。`verify.mjs` +1 组、`verify-ui/check-s33.mjs` 24 项 |
+| S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（可注入 rnd，`crypto` 优先）；`insertFileId` 落在第一个 `###` 之前、与 `###` 之间留一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` 定位，`index` 等价）；`dedupe` 同文件重复 id 后一个换新（第一个不动）；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口、重复斜杠、末尾斜杠、fragment 全抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接**，不重序列化，插入行沿用文件自己的行尾（CRLF 文件不会被掺进裸 LF）；已有合法 id 幂等、非法值就地改正、异 id 不覆盖（`EXISTS_OTHER`）。`tools/identity.test.mjs` 9 项 |
 
-一键自测：`node tools/all.mjs`（11 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s25d.mjs`（23 项）+ `check-s26.mjs`（8 项）+ `check-s31.mjs`（20 项）+ `check-s32.mjs`（25 项）+ `check-s33.mjs`（24 项）。
+一键自测：`node tools/all.mjs`（12 个文件全绿）+ `node verify-ui/check-s15.mjs`（17 项）+ `check-s22.mjs`（29 项）+ `check-s23.mjs`（20 项）+ `check-s24.mjs`（10 项）+ `check-s25.mjs`（21 项）+ `check-s25c.mjs`（21 项）+ `check-s25d.mjs`（23 项）+ `check-s26.mjs`（8 项）+ `check-s31.mjs`（20 项）+ `check-s32.mjs`（25 项）+ `check-s33.mjs`（24 项）。
 
 ### 本地浏览器调试（`dev/`）
 
