@@ -38,7 +38,7 @@ node -v        # 需要 >= 18，建议 22
 #    再把 .workbuddy/memory/ 解压到该工作区的 .workbuddy/ 下
 #    （Mac 上双击用「归档实用工具」解压即可；包内中文文件名的 UTF-8 标志已校验过）
 
-# 3) 自检：应当全绿，且 git 历史完整（45 个提交，最新一条是 M6）
+# 3) 自检：应当全绿，且 git 历史完整（最新一条是 M6 取消）
 cd warren-polaris-api
 git log --oneline | head -3      # 最新一条应是 M6 取消
 git status --short               # 应为空（或只有 HANDOFF.md）
@@ -55,7 +55,7 @@ node dev/dev-server.mjs
 > **⚠ 仓库里没有的东西**：`verify-ui/`（十七个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
-> - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261120.zip` 里
+> - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261121-r10.zip` 里
 >   取 `verify-ui/` 和 `dev-workspace/`，放到与 `warren-polaris-api` 同级。
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
@@ -198,11 +198,11 @@ cd warren-polaris-api && git log --oneline -1   # 应能看到 a500446 及其后
 **B. 迁移包（离线备份 / 补 verify-ui 用）**
 
 ```
-polaris-handoff-20261120.zip   （6.0 MB，714 条目，已校验 UTF-8 文件名）
-├── warren-polaris-api/     完整项目，含 .git
-├── verify-ui/              端到端脚本（不含 node_modules，Mac 上 npm i playwright-core）
+polaris-handoff-20261121-r10.zip   （7.3 MB，655 条目，已校验 UTF-8 文件名 + testzip）
+├── warren-polaris-api/     完整项目，含 .git（已解压实测过：git status 干净、14/14 全绿）
+├── verify-ui/              端到端脚本 18 个（不含 node_modules，Mac 上 npm i playwright-core）
 ├── dev-workspace/          调试目录（含 wpa-workspace.json 与两个 .http）
-└── .workbuddy/memory/      工作日志 + 长期约定（值得读 2026-11-20.md）
+└── .workbuddy/memory/      工作日志 + 长期约定（值得读 2026-11-21.md）
 ```
 
 **关于对话历史**：`~/.workbuddy/projects/<cwd-hash>/*.jsonl`（24 MB）**不能跨机器 resume** ——
