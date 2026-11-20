@@ -111,4 +111,76 @@ ok('空文件与单请求无 ###', () => {
   assert.equal(H.parseHttpFile('GET https://example.com\nAccept: */*\n').requests.length, 1);
 });
 
+/* ---------- S1.1 身份注释 ---------- */
+
+ok('带 id：file_id 与 interface_id 都读出来', () => {
+  const r = H.parseHttpFile([
+    '# @file_id 7f3a9c21  wpa 文件身份',
+    '',
+    '### 登录',
+    '# @interface_id a1b2c3d4  wpa 接口身份',
+    'POST https://example.com/login',
+    '',
+    '{"u":1}',
+  ].join('\n'));
+  assert.equal(r.fileId, '7f3a9c21');
+  assert.equal(r.fileIdLine, 1);
+  assert.equal(r.requests[0].interfaceId, 'a1b2c3d4');
+  assert.equal(r.requests[0].interfaceIdLine, 4);
+});
+
+ok('无 id：fileId 与 interfaceId 都是 undefined，不猜', () => {
+  const r = H.parseHttpFile('### 无身份\nGET https://example.com\n');
+  assert.equal(r.fileId, undefined);
+  assert.equal(r.requests[0].interfaceId, undefined);
+});
+
+ok('畸形 id：值太短 / 含非法字符一律忽略并告警', () => {
+  const r = H.parseHttpFile('# @file_id ab\n### a\n# @interface_id 中文id\nGET https://example.com\n');
+  assert.equal(r.fileId, undefined);
+  assert.equal(r.requests[0].interfaceId, undefined);
+  assert.ok(r.warnings.some((w) => /@file_id 值不合法/.test(w)));
+  assert.ok(r.warnings.some((w) => /@interface_id 值不合法/.test(w)));
+});
+
+ok('带说明文字：只取第一个 token，行尾说明丢弃', () => {
+  const r = H.parseHttpFile([
+    '# @file_id 7f3a9c21  wpa 文件身份，用于关联历史目录',
+    '### a',
+    '# @interface_id a1b2c3d4  wpa 接口身份，改了等于换身份',
+    'GET https://example.com',
+  ].join('\n'));
+  assert.equal(r.fileId, '7f3a9c21');
+  assert.equal(r.requests[0].interfaceId, 'a1b2c3d4');
+});
+
+ok('短横线写法与下划线等价', () => {
+  const r = H.parseHttpFile([
+    '# @file-id 7f3a9c21',
+    '### a',
+    '# @interface-id a1b2c3d4',
+    'GET https://example.com',
+  ].join('\n'));
+  assert.equal(r.fileId, '7f3a9c21');
+  assert.equal(r.requests[0].interfaceId, 'a1b2c3d4');
+});
+
+ok('@file_id 写在第一个 ### 之后：忽略不算，且给出可定位的告警', () => {
+  const r = H.parseHttpFile('### a\n# @file_id 7f3a9c21\nGET https://example.com\n');
+  assert.equal(r.fileId, undefined);
+  assert.ok(r.warnings.some((w) => /第 2 行的 @file_id 位于第一个 ### 之后/.test(w)));
+});
+
+ok('身份行不会被算进 headers / body', () => {
+  const r = H.parseHttpFile([
+    '### a',
+    '# @interface_id a1b2c3d4',
+    'GET https://example.com',
+    'Accept: */*',
+  ].join('\n'));
+  assert.deepEqual(r.requests[0].headers.map((h) => h.k), ['Accept']);
+  assert.equal(r.requests[0].body, '');
+  assert.equal(r.requests[0].method, 'GET');
+});
+
 console.log('\n' + pass + ' assertions passed');

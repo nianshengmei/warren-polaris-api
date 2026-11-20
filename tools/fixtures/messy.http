@@ -1,0 +1,17 @@
+# @file_id ab
+# 上面这行的值太短（少于 4 位），解析器应当忽略它，fileId 保持为空
+### 一号接口
+# @interface_id dup0001
+GET https://example.com/a
+
+### 二号接口
+# @interface_id dup0001  ← 与上一段重复，写回时应重新生成
+GET https://example.com/b
+
+### 三号接口
+# 这一段没有 id
+GET https://example.com/c
+
+### 四号接口
+# @interface_id
+GET https://example.com/d

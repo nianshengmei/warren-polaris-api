@@ -116,19 +116,46 @@
     };
   }
 
+  /* ---- 身份注释（wpa 扩展，仍然是普通 # 注释）----
+   *   # @file_id 7f3a9c21  wpa 文件身份，用于关联本 collection 的历史目录
+   *   # @interface_id a1b2c3d4  wpa 接口身份，用于关联调用历史
+   *
+   * 两条硬规则：
+   *   1. 只取 id 后第一个 token，行尾说明一律丢弃 —— 否则第二次读回来 id 会带上整句话；
+   *   2. @file_id 必须写在第一个 ### 之前，写在段落里会被归给该段，这里显式告警并忽略。
+   * 短横线与下划线等价（@file-id / @file_id 都认）。 */
+  var ID_LINE_RE = /^#\s*@(file|interface)[_-]id(?:\s+(.*))?$/i;
+  var ID_VALUE_RE = /^[A-Za-z0-9_-]{4,32}$/;
+
+  /* 序列化时统一使用的行尾说明（解析时丢弃，写回时按模板重建） */
+  var ID_NOTE = {
+    file: 'wpa 文件身份，用于关联本 collection 的历史目录',
+    interface: 'wpa 接口身份，用于关联调用历史'
+  };
+
   /* 解析一个 .http 文件。
    * opts: { fileName, variables }
-   * 返回 { variables, requests, warnings, fileName }
-   * request: { id, name, method, url, headers:[{k,v}], body, bodyType,
-   *            bodyFromFile, outputFile, preScript, postScript, tests, raw, line, sourceFile } */
+   * 返回 { fileName, fileId, fileIdLine, variables, requests, warnings }
+   * request: { id, interfaceId, interfaceIdLine, name, method, url, headers:[{k,v}], body, bodyType,
+   *            bodyFromFile, outputFile, preScript, postScript, tests, raw, line, sourceFile }
+   *
+   * 注意 id 与 interfaceId 的区别：
+   *   id          —— 解析序号（http-1、http-2），只在本进程内有效，不落盘；
+   *   interfaceId —— 文件里 # @interface_id 的值，落盘、跨会话稳定，历史按它归档。 */
   function parseHttpFile(text, opts) {
     opts = opts || {};
     var src = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
     var lines = src.split('\n');
     var variables = Object.assign({}, opts.variables || {});
+    var fileVars = {};          /* 只含文件里写出来的 @变量，序列化用这个，别把环境变量写进文件 */
     var requests = [];
     var warnings = [];
     var sourceFile = opts.fileName || '';
+    var fileId;
+    var fileIdLine;
+    var sawDelimiter = false;
+    var pendingInterfaceId = null;
+    var pendingInterfaceIdLine = 0;
     pendingPreScript = null;
 
     var cur = null;
@@ -193,6 +220,8 @@
       seq += 1;
       cur = {
         id: 'http-' + seq,
+        interfaceId: pendingInterfaceId || undefined,
+        interfaceIdLine: pendingInterfaceIdLine || undefined,
         name: pendingName || '',
         title: pendingTitle || '',
         method: line.method,
@@ -211,6 +240,8 @@
       cur.rawLines = [];
       pendingName = null;
       pendingTitle = null;
+      pendingInterfaceId = null;
+      pendingInterfaceIdLine = 0;
       phase = 'headers';
     }
 
@@ -227,6 +258,7 @@
       if (/^#{3,}/.test(trimmed)) {
         finish();
         bodyBuf = []; scriptBuf = []; scriptKind = null;
+        sawDelimiter = true;
         var tm = /^#{3,}[ \t]+(.+)$/.exec(trimmed);
         var nm = tm ? tm[1].trim() : '';
         if (nm) { pendingName = nm; pendingTitle = nm; }
@@ -275,10 +307,47 @@
         continue;
       }
 
+      /* --- 身份注释 # @file_id / # @interface_id ---
+       * 位置很关键：必须在 ### 分支与脚本块之后、普通注释之前判定，
+       * 否则会被当成「纯注释」直接吞掉。 */
+      var idm = ID_LINE_RE.exec(trimmed);
+      if (idm) {
+        var idKind = idm[1].toLowerCase();
+        var idRest = String(idm[2] || '').trim();
+        var idVal = idRest ? idRest.split(/\s+/)[0] : '';
+        var idOk = ID_VALUE_RE.test(idVal);
+        if (idKind === 'file') {
+          if (sawDelimiter) {
+            warnings.push('第 ' + lineNo + ' 行的 @file_id 位于第一个 ### 之后，已忽略：文件身份要写在第一个请求分隔线之前');
+          } else if (!idOk) {
+            warnings.push('第 ' + lineNo + ' 行的 @file_id 值不合法（需 4–32 位字母、数字、下划线或短横线），已忽略');
+          } else if (fileId && fileId !== idVal) {
+            warnings.push('第 ' + lineNo + ' 行重复声明 @file_id，以第 ' + fileIdLine + ' 行的 ' + fileId + ' 为准');
+          } else if (!fileId) {
+            fileId = idVal;
+            fileIdLine = lineNo;
+          }
+        } else if (!idOk) {
+          warnings.push('第 ' + lineNo + ' 行的 @interface_id 值不合法（需 4–32 位字母、数字、下划线或短横线），已忽略');
+        } else if (cur) {
+          if (cur.interfaceId && cur.interfaceId !== idVal) {
+            warnings.push('请求「' + (cur.name || cur.id) + '」有多个 @interface_id，保留第一个 ' + cur.interfaceId);
+          } else if (!cur.interfaceId) {
+            cur.interfaceId = idVal;
+            cur.interfaceIdLine = lineNo;
+          }
+        } else {
+          pendingInterfaceId = idVal;
+          pendingInterfaceIdLine = lineNo;
+        }
+        if (cur) cur.rawLines.push(raw);
+        continue;
+      }
+
       /* --- 文件级变量 @name = value --- */
       if (/^@[\w.\-]+\s*=/.test(trimmed) && (!cur || phase === 'idle')) {
         var vm = trimmed.match(/^@([\w.\-]+)\s*=\s*(.*)$/);
-        if (vm) variables[vm[1]] = vm[2];
+        if (vm) { variables[vm[1]] = vm[2]; fileVars[vm[1]] = vm[2]; }
         if (cur) cur.rawLines.push(raw);
         continue;
       }
@@ -369,7 +438,15 @@
       }
     });
 
-    return { fileName: sourceFile, variables: variables, requests: requests, warnings: warnings };
+    return {
+      fileName: sourceFile,
+      fileId: fileId,
+      fileIdLine: fileIdLine,
+      variables: variables,
+      fileVars: fileVars,
+      requests: requests,
+      warnings: warnings
+    };
   }
 
   /* 简易 JSONPath：仅 $.a.b[0].c / a.b 形式，够用于 IDEA 的 response.body.$.token */
@@ -460,7 +537,7 @@
       formBody: opts.blankRow ? [opts.blankRow()] : [],
       bodyType: bodyType,
       body: body,
-      httpSource: { file: req.sourceFile, id: req.id, name: req.name, line: req.line }
+      httpSource: { file: req.sourceFile, id: req.id, name: req.name, line: req.line, interfaceId: req.interfaceId }
     };
   }
 
@@ -478,10 +555,61 @@
     return out;
   }
 
+  /* ---- 序列化（解析的逆运算）----
+   * 用途只有两处：新建文件、旧数据迁移。
+   * 日常改字段必须走 HttpStore.writeRequest() 的段落级替换 —— 整文件重序列化会把
+   * 用户手写的排版、注释、空行规范化掉（约束 2）。 */
+  function serializeRequest(req, opts) {
+    opts = opts || {};
+    var eol = opts.eol || '\n';
+    var notes = opts.notes !== false;
+    var out = [];
+    out.push(req.title ? '### ' + req.title : '###');
+    if (req.interfaceId) {
+      out.push('# @interface_id ' + req.interfaceId + (notes ? '  ' + ID_NOTE.interface : ''));
+    }
+    if (req.title && req.name && req.name !== req.title) out.push('# @name ' + req.name);
+    if (req.preScript) String(req.preScript).split(/\r?\n/).forEach(function (l) { out.push(l); });
+    out.push(String(req.method || 'GET').toUpperCase() + ' ' + String(req.url || ''));
+    (req.headers || []).forEach(function (h) {
+      if (!h || !h.k) return;
+      out.push(h.k + ': ' + (h.v == null ? '' : h.v));
+    });
+    var body = req.body == null ? '' : String(req.body);
+    if (req.bodyFromFile) {
+      out.push('');
+      out.push('< ' + req.bodyFromFile);
+    } else if (body) {
+      out.push('');
+      body.split(/\r?\n/).forEach(function (l) { out.push(l); });
+    }
+    if (req.outputFile) out.push('> ' + req.outputFile);
+    if (req.postScript) String(req.postScript).split(/\r?\n/).forEach(function (l) { out.push(l); });
+    return out.join(eol);
+  }
+
+  /* doc: { fileId, fileVars, requests }；block 之间空一行，文件末尾留一个换行。 */
+  function serializeCollection(doc, opts) {
+    opts = opts || {};
+    var eol = opts.eol || '\n';
+    var parts = [];
+    var head = [];
+    if (opts.header) String(opts.header).split(/\r?\n/).forEach(function (l) { head.push(l); });
+    if (doc.fileId) head.push('# @file_id ' + doc.fileId + (opts.notes === false ? '' : '  ' + ID_NOTE.file));
+    var vars = doc.fileVars || {};
+    Object.keys(vars).forEach(function (k) { head.push('@' + k + ' = ' + vars[k]); });
+    if (head.length) parts.push(head.join(eol));
+    (doc.requests || []).forEach(function (r) { parts.push(serializeRequest(r, opts)); });
+    return parts.join(eol + eol) + eol;
+  }
+
   var api = {
     METHODS: METHODS,
     parseHttpFile: parseHttpFile,
     parseMultipart: parseMultipart,
+    serializeRequest: serializeRequest,
+    serializeCollection: serializeCollection,
+    ID_NOTE: ID_NOTE,
     resolveVars: resolveVars,
     toTab: toTab,
     mergeEnvFiles: mergeEnvFiles,

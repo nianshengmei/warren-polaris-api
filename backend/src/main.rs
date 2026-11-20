@@ -11,6 +11,10 @@
 //   http/listFiles         扫描目录下的 .http / .rest 文件
 //   http/readFile          读取一个文本文件（.http、外部 body 文件等）
 //   http/writeFile         写回 .http 源码（编辑器保存 / 自动保存）
+//   http/statFile          毫秒级 mtime（段落级写回的冲突检测）
+//   http/deleteFile        删除文件（目录需 recursive=true）
+//   http/renameFile        改名 / 移动（Windows 上覆盖需先删目标）
+//   http/ensureDir         建目录（幂等）
 //   http/readEnvFiles      读取 http-client.env.json 与 http-client.private.env.json
 //   http/pickFile          原生文件对话框（打开 / 另存为），返回绝对路径
 //   http/saveResult        把一次请求 + 响应写入 results/*.json
@@ -50,6 +54,10 @@ impl PluginHandler for PolarisApi {
             "http/listFiles" => handle_list_files(params),
             "http/readFile" => handle_read_file(params),
             "http/writeFile" => handle_write_file(params),
+            "http/statFile" => handle_stat_file(params),
+            "http/deleteFile" => handle_delete_file(params),
+            "http/renameFile" => handle_rename_file(params),
+            "http/ensureDir" => handle_ensure_dir(params),
             "http/readEnvFiles" => handle_read_env_files(params),
             "http/pickFile" => handle_pick_file(params),
             "http/saveResult" => handle_save_result(params),
@@ -288,8 +296,96 @@ fn handle_write_file(params: Value) -> Result<Value, PluginError> {
     }))
 }
 
-/* ===================== 原生文件对话框 ===================== */
+/// 轻量 stat：不读内容，只回是否存在与**毫秒级**修改时间。
+/// 段落级写回靠它做冲突检测（listFiles 的 modified 只有秒级，不够判「刚被人改过」）。
+fn handle_stat_file(params: Value) -> Result<Value, PluginError> {
+    let p = param_str(&params, "path").ok_or_else(|| PluginError::new(-32602, "缺少 path"))?;
+    let path = PathBuf::from(p);
+    match fs::metadata(&path) {
+        Ok(m) => {
+            let modified = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            Ok(json!({
+                "path": path.to_string_lossy().to_string(),
+                "exists": true,
+                "isDir": m.is_dir(),
+                "size": m.len(),
+                "modified": modified,
+            }))
+        }
+        Err(_) => Ok(json!({
+            "path": path.to_string_lossy().to_string(),
+            "exists": false,
+            "isDir": false,
+            "size": 0,
+            "modified": 0,
+        })),
+    }
+}
 
+/// 删除文件（或目录，必须显式 recursive=true）。删不存在的路径不算错误，回 removed:false。
+fn handle_delete_file(params: Value) -> Result<Value, PluginError> {
+    let p = param_str(&params, "path").ok_or_else(|| PluginError::new(-32602, "缺少 path"))?;
+    let path = PathBuf::from(p);
+    if !path.exists() {
+        return Ok(json!({ "path": path.to_string_lossy().to_string(), "removed": false, "reason": "MISSING" }));
+    }
+    if path.is_dir() {
+        let recursive = params.get("recursive").and_then(Value::as_bool).unwrap_or(false);
+        if !recursive {
+            return Err(PluginError::new(-32602, "目标是目录，确需删除请传 recursive=true"));
+        }
+        fs::remove_dir_all(&path).map_err(|e| io_err("删除目录失败", e))?;
+    } else {
+        fs::remove_file(&path).map_err(|e| io_err("删除文件失败", e))?;
+    }
+    Ok(json!({ "path": path.to_string_lossy().to_string(), "removed": true }))
+}
+
+/// 改名 / 移动。Windows 上 fs::rename 不能覆盖已存在目标，故 overwrite 时先删目标再改名。
+/// overwrite=false 且目标已存在 → 回 { exists:true, renamed:false }，由 UI 决定换名。
+fn handle_rename_file(params: Value) -> Result<Value, PluginError> {
+    let from = param_str(&params, "from").ok_or_else(|| PluginError::new(-32602, "缺少 from"))?;
+    let to = param_str(&params, "to").ok_or_else(|| PluginError::new(-32602, "缺少 to"))?;
+    let overwrite = params.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
+    let (fp, tp) = (PathBuf::from(from), PathBuf::from(to));
+    if !fp.exists() {
+        return Err(PluginError::new(-32000, format!("源文件不存在：{}", fp.display())));
+    }
+    if fp == tp {
+        return Ok(json!({ "exists": true, "renamed": false, "path": to }));
+    }
+    if tp.exists() {
+        if !overwrite {
+            return Ok(json!({ "exists": true, "renamed": false, "path": to }));
+        }
+        if tp.is_dir() {
+            return Err(PluginError::new(-32602, "目标已存在且是目录，拒绝覆盖"));
+        }
+        fs::remove_file(&tp).map_err(|e| io_err("覆盖前删除目标失败", e))?;
+    }
+    if let Some(dir) = tp.parent() {
+        if !dir.as_os_str().is_empty() {
+            fs::create_dir_all(dir).map_err(|e| io_err("创建目录失败", e))?;
+        }
+    }
+    fs::rename(&fp, &tp).map_err(|e| io_err("改名失败", e))?;
+    Ok(json!({ "exists": false, "renamed": true, "path": to }))
+}
+
+/// 建目录（幂等）。资源目录、_history/、_cancel/ 都靠它。
+fn handle_ensure_dir(params: Value) -> Result<Value, PluginError> {
+    let d = param_str(&params, "dir").ok_or_else(|| PluginError::new(-32602, "缺少 dir"))?;
+    let path = PathBuf::from(d);
+    fs::create_dir_all(&path).map_err(|e| io_err("创建目录失败", e))?;
+    Ok(json!({ "dir": path.to_string_lossy().to_string(), "ok": true }))
+}
+
+/* ===================== 原生文件对话框 ===================== */
 /// 原生「打开 / 另存为」对话框，返回绝对路径。
 /// 参数：mode("open"|"save")、title、name（另存为默认文件名）、ext（可选，逗号分隔扩展名）。
 /// 返回：{ cancelled: true } 或 { cancelled:false, path, dir, name }。

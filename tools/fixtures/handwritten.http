@@ -1,0 +1,33 @@
+# 手写风格的 collection：排版不规范，用来验证「写回某一段时不碰别的段」
+# 这个文件的字节哈希记在 tools/fixtures.test.mjs 里，改内容要同步更新哈希
+
+@baseUrl = https://api.example.com
+@token   = demo-token-123
+
+
+### 查询订单列表
+# 头与体之间故意留了 3 个空行
+GET {{baseUrl}}/orders?page=1&size=20
+Accept: application/json
+Authorization: Bearer {{token}}
+
+
+
+### 创建订单
+POST {{baseUrl}}/orders
+Content-Type: application/json
+
+{
+	"sku": "A-1001",
+	"qty": 2,
+	"note": "制表符缩进的 JSON，从别处粘过来的"
+}
+
+### 删除订单
+# 没有 body，也没有 Accept
+DELETE {{baseUrl}}/orders/9001
+Authorization: Bearer {{token}}
+
+### 健康检查
+# 绝对地址，不用变量
+GET https://status.example.com/healthz

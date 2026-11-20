@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.6.4';
+const VERSION = '0.9.0';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -322,6 +322,59 @@ ok('v0.6.4：图标/文案/署名与上游可区分', () => {
   assert(/community fork/i.test(store.description), '商店描述要说明 community fork');
   assert(/misxzaiz/i.test(store.releaseNotes) && /0\.2\.0/.test(store.releaseNotes), '版本说明要注明派生来源');
   assert(/许可与署名/.test(read('README.md')), 'README 需要「许可与署名」小节');
+});
+
+/* ---------- v0.9.0 / M1：文件真源 ---------- */
+
+ok('http-store.js 已接入 index.html 且排在 http-file.js 之后', () => {
+  const html = read('ui/index.html');
+  const a = html.indexOf('./http-file.js');
+  const b = html.indexOf('./http-store.js');
+  assert(a > 0 && b > a, 'http-store.js 必须在 http-file.js 之后加载');
+  assert(b < html.indexOf('./app.js'), 'http-store.js 必须在 app.js 之前加载');
+});
+
+ok('http-store.js 导出 createStore 与段落级 API', () => {
+  const src = read('ui/http-store.js');
+  ['createStore', 'invokeHost', 'writeRequest', 'writeText', 'locateSegment', 'segIndexOfRequest', 'replaceSegment', 'sanitizeName'].forEach((k) => {
+    assert(src.indexOf(k + ':') > 0 || src.indexOf('function ' + k) > 0, '缺少 ' + k);
+  });
+  assert(/POLARIS_STORE/.test(src), '要挂 window.POLARIS_STORE');
+});
+
+ok('解析器认身份：@file_id / @interface_id 只取首个 token', () => {
+  const src = read('ui/http-file.js');
+  assert(/ID_LINE_RE/.test(src), '缺少身份行正则');
+  assert(/@\(file\|interface\)\[_-\]id/.test(src), '正则要同时接受下划线与短横线');
+  assert(/interfaceId/.test(src) && /fileId/.test(src), '返回值要带 fileId / interfaceId');
+});
+
+ok('序列化器存在，且只被 store/迁移使用（不接管日常保存）', () => {
+  const src = read('ui/http-file.js');
+  assert(/function serializeRequest/.test(src), '缺少 serializeRequest');
+  assert(/function serializeCollection/.test(src), '缺少 serializeCollection');
+  const store = read('ui/http-store.js');
+  assert(/serializeRequest\(/.test(store), 'store 的段落写回应当用 serializeRequest');
+});
+
+ok('sidecar 新增四个文件命令，UI 调用与实现对齐', () => {
+  const rs = read('backend/src/main.rs');
+  ['http/statFile', 'http/deleteFile', 'http/renameFile', 'http/ensureDir'].forEach((cmd) => {
+    assert(rs.indexOf('"' + cmd + '"') > 0, 'main.rs 缺少 ' + cmd);
+  });
+  const store = read('ui/http-store.js');
+  ['http/statFile', 'http/deleteFile', 'http/renameFile', 'http/ensureDir', 'http/listFiles', 'http/readFile', 'http/writeFile'].forEach((cmd) => {
+    assert(store.indexOf(cmd) > 0, 'http-store.js 未调用 ' + cmd);
+  });
+});
+
+ok('M1 测试夹具与四个测试文件齐全', () => {
+  ['minimal.http', 'handwritten.http', 'with-ids.http', 'messy.http'].forEach((f) => {
+    assert(fs.existsSync(path.join(root, 'tools/fixtures', f)), '缺少夹具 ' + f);
+  });
+  ['fixtures.test.mjs', 'serialize.test.mjs', 'store.test.mjs', 'migrate.test.mjs', 'project.test.mjs'].forEach((f) => {
+    assert(fs.existsSync(path.join(root, 'tools', f)), '缺少测试 ' + f);
+  });
 });
 
 console.log('\n' + pass + ' checks passed');

@@ -1,0 +1,16 @@
+# @file_id 7f3a9c21  wpa 文件身份，用于关联本 collection 的历史目录
+# 两级身份都在位的样本：验证解析、写回、序列化都不会丢 id
+
+@baseUrl = https://api.example.com
+
+### 登录
+# @interface_id a1b2c3d4  wpa 接口身份，用于关联调用历史
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{"user":"demo","pwd":"123456"}
+
+### 查询用户
+# @interface_id e5f6a7b8  wpa 接口身份，用于关联调用历史
+GET {{baseUrl}}/users/7
+Authorization: Bearer {{token}}

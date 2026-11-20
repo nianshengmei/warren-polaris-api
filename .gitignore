@@ -6,3 +6,6 @@ node_modules/
 *.log
 .DS_Store
 .vscode/
+
+# 插件运行时/自动化留下的本地状态，不进仓库
+.workbuddy/
