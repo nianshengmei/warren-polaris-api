@@ -103,7 +103,8 @@ ok('侧边栏：请求可重命名、可拖拽跨分组移动', () => {
   const s = read('ui/app.js');
   ['renameSaved', 'moveSaved', 'nextSavedId', 'dragRid'].forEach(k => assert(s.includes(k), '缺少 ' + k));
   assert(s.includes("'rx rr'"), '缺少请求重命名按钮 .rr');
-  assert(/item\.draggable\s*=\s*true/.test(s), '请求项必须 draggable');
+  /* 文件真源（v0.9.0）下跨文件搬段会丢注释，暂停拖拽；实现与样式都还在 */
+  assert(/item\.draggable\s*=\s*(true|!DOCS\.enabled)/.test(s), '请求项必须可拖拽');
   assert(s.includes("'drop-before'") && s.includes("'drop-after'"), '缺少插入位置高亮');
   assert(s.includes("'dragging'"), '缺少拖动中样式');
   assert(s.includes('moveSaved(rid,g.id,null)'), '分组头/空白区需支持追加投放');
@@ -375,6 +376,43 @@ ok('M1 测试夹具与四个测试文件齐全', () => {
   ['fixtures.test.mjs', 'serialize.test.mjs', 'store.test.mjs', 'migrate.test.mjs', 'project.test.mjs'].forEach((f) => {
     assert(fs.existsSync(path.join(root, 'tools', f)), '缺少测试 ' + f);
   });
+});
+
+/* ---------- v0.9.0 / S1.5：侧栏改文件源 ---------- */
+
+ok('侧栏数据源切到资源目录（DOCS 层 + 投影 + 重绑）', () => {
+  const s = read('ui/app.js');
+  ['initDocs', 'refreshDocs', 'applyDocs', 'patchGroup', 'rebindTabs', 'findDocRequest',
+    'saveToDoc', 'saveToDocNew', 'appendToDoc', 'storeReqFromTab', 'scheduleDocsRefresh'].forEach((k) => {
+    assert(s.indexOf('function ' + k) > 0 || s.indexOf(k + '=') > 0, 'app.js 缺少 ' + k);
+  });
+  assert(/POLARIS_STORE/.test(s), 'app.js 要用 window.POLARIS_STORE');
+  assert(/toLegacyCollections\(/.test(s), '投影层必须被调用');
+  assert(/await initDocs\(\)/.test(s), 'initApi 里要 await initDocs()');
+});
+
+ok('集合不再写 storage（文件是唯一真源），旧数据只迁移一次', () => {
+  const s = read('ui/app.js');
+  assert(/if\(!DOCS\.enabled\) snap\.collections/.test(s), 'persist 在文件真源下不得写 collections');
+  assert(/migrateFromStorage\(/.test(s), '缺少旧数据迁移调用');
+  assert(/ui\.migratedAt/.test(s), '迁移需要幂等标记');
+});
+
+ok('store 具备追加 / 删除一段的能力（侧栏保存与删除依赖）', () => {
+  const s = read('ui/http-store.js');
+  ['appendRequest', 'deleteRequest'].forEach((k) => {
+    assert(s.indexOf(k + ':') > 0, 'http-store.js 缺少 ' + k);
+  });
+  const app = read('ui/app.js');
+  assert(/appendRequest\(/.test(app) && /deleteRequest\(/.test(app), 'app.js 未接到 append/delete');
+});
+
+ok('侧栏提供手动重扫入口（外部改动可见）', () => {
+  const html = read('ui/index.html');
+  assert(/id="refreshDocs"/.test(html), '侧栏缺少重新扫描按钮');
+  const s = read('ui/app.js');
+  assert(/'#refreshDocs'/.test(s), '按钮未绑定');
+  assert(/addEventListener\('focus'/.test(s), '切回窗口时要自动重扫');
 });
 
 console.log('\n' + pass + ' checks passed');

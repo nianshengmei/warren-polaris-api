@@ -248,6 +248,8 @@
     $p('#paHwsDir').onchange = async function () {
       WS.workDir = this.value.trim();
       await persistWs();
+      /* 侧栏的集合来自同一个资源目录，改目录后让它一起重扫 */
+      if (window.POLARIS_DOCS && window.POLARIS_DOCS.setDir) window.POLARIS_DOCS.setDir(WS.workDir);
     };
     $p('#paHwsEnv').onchange = async function () {
       WS.activeEnv = this.value;
@@ -288,6 +290,7 @@
       WS.files = r.files || [];
       WS.workDir = r.dir || dir;
       if ($p('#paHwsDir')) $p('#paHwsDir').value = WS.workDir;
+      if (window.POLARIS_DOCS && window.POLARIS_DOCS.setDir) window.POLARIS_DOCS.setDir(WS.workDir);
       await loadEnvs(WS.workDir);
       renderFiles();
       await persistWs();
@@ -669,7 +672,9 @@
       try {
         var d = await invokeSafe('http/defaultDirs', {});
         if (!WS.resultsDir) WS.resultsDir = d.resultsDir || '';
-        if (!WS.workDir) WS.workDir = d.homeDir || '';
+        /* 与侧栏的「资源目录」保持一致：优先 ~/warren-polaris-api（default_work_dir），
+         * 只有拿不到时才退回用户主目录 —— 两处各扫一个目录，用户会看到两套集合。 */
+        if (!WS.workDir) WS.workDir = d.workDir || d.homeDir || '';
       } catch (e) { /* 保留已有配置 */ }
     }
     if ($p('#paHwsDir')) $p('#paHwsDir').value = WS.workDir;

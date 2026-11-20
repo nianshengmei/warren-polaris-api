@@ -90,6 +90,48 @@ async function main() {
     assert.deepEqual(groups2[0].requests, []);
   });
 
+  await ok('端到端：投影 → 改字段 → 写回 → 再投影，读到的是新值，别的段没动', async () => {
+    const p = path.join(dir, 'handwritten.http');
+    const before = fs.readFileSync(p, 'utf8');
+    const g0 = S.toLegacyCollections((await store.list()).filter((c) => c.name === 'handwritten'))[0];
+    const r0 = g0.requests[1]; // 创建订单
+    const w = await store.writeRequest(p, {
+      line: r0.httpSource.line,
+      method: r0.method,
+      url: '{{baseUrl}}/orders/v2',
+      headers: r0.headers.filter((h) => h.k).map((h) => ({ k: h.k, v: h.v })),
+      body: r0.body,
+      bodyType: r0.bodyType,
+    }, { baseMtime: g0.mtime });
+    assert.equal(w.ok, true, JSON.stringify(w));
+
+    const g1 = S.toLegacyCollections((await store.list()).filter((c) => c.name === 'handwritten'))[0];
+    assert.equal(g1.requests[1].url, '{{baseUrl}}/orders/v2');
+    assert.equal(g1.requests[1].name, r0.name, '名称不能丢');
+    assert.ok(Math.abs(g1.requests[1].httpSource.line - r0.httpSource.line) <= 1, '行号只能因换行规范小幅浮动');
+
+    // 其余段：投影出的 name/method/url/body 全等
+    [0, 2, 3].forEach((i) => {
+      assert.equal(g1.requests[i].name, g0.requests[i].name);
+      assert.equal(g1.requests[i].method, g0.requests[i].method);
+      assert.equal(g1.requests[i].url, g0.requests[i].url);
+      assert.equal(g1.requests[i].body, g0.requests[i].body);
+    });
+    assert.ok(fs.readFileSync(p, 'utf8').length > before.length - 40, '文件不该被整篇重写变样');
+    fs.writeFileSync(p, before, 'utf8'); // 复位，避免影响后续断言
+  });
+
+  await ok('端到端：追加一段后投影多一条，前面的请求顺序不变', async () => {
+    const p = path.join(dir, 'with-ids.http');
+    const g0 = S.toLegacyCollections((await store.list()).filter((c) => c.name === 'with-ids'))[0];
+    const w = await store.appendRequest(p, { name: '新接口', method: 'PUT', url: 'https://x/n', body: '', bodyType: 'none' });
+    assert.equal(w.ok, true, JSON.stringify(w));
+    const g1 = S.toLegacyCollections((await store.list()).filter((c) => c.name === 'with-ids'))[0];
+    assert.equal(g1.requests.length, g0.requests.length + 1);
+    assert.deepEqual(g1.requests.slice(0, g0.requests.length).map((r) => r.url), g0.requests.map((r) => r.url));
+    assert.equal(g1.requests[g1.requests.length - 1].name, '新接口');
+  });
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('\n' + pass + ' checks passed');
 }

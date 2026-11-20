@@ -12,19 +12,26 @@
 - 数据格式不再等版本号：**格式冻结跟着 0.9.0 走**（S7.1），否则 0.9.0 装过之后改格式又要搬家——这正是撤回 0.6.4 的原因。
 - 发版路径：`0.9.0` 本地/自用为主，**不进商店**；`1.0.0` 才新开商店 PR。
 
-## 进度（截至 2026-11-20 13:5x）
+## 进度（截至 2026-11-20 14:xx）
 
 | 步骤 | 状态 | 落地 |
 |---|---|---|
 | S1.0 测试夹具 | ✅ | `tools/fixtures/` 四件 + `fixtures.test.mjs`（15 项，哈希钉死） |
 | S1.1 解析器认身份 | ✅ | `http-file.js` 的 `@file_id` / `@interface_id`；`http-file.test.mjs` +7 项（共 28） |
 | S1.2 序列化器 | ✅ | `serializeRequest` / `serializeCollection`；`serialize.test.mjs` 19 项 |
-| S1.3 HttpStore | ✅ | `ui/http-store.js`；sidecar 补 `statFile/deleteFile/renameFile/ensureDir`；`store.test.mjs` 17 项 |
+| S1.3 HttpStore | ✅ | `ui/http-store.js`；sidecar 补 `statFile/deleteFile/renameFile/ensureDir`；`store.test.mjs` 22 项（含 append/delete 一段） |
 | S1.4 旧数据迁移 | ✅ | `migrateFromStorage` / `mirrorRequest`；`migrate.test.mjs` 9 项 |
-| S1.5 侧栏改文件源 | 🚧 下一步 | 投影层 `toLegacyCollections` 已就绪（`project.test.mjs` 8 项），差接线 |
-| S2.1 起 | ⬜ | — |
+| S1.5 侧栏改文件源 | ✅ | `app.js` 新增 DOCS 层（`initDocs/refreshDocs/applyDocs/patchGroup/rebindTabs`）；保存走 `writeRequest`、新建走 `appendRequest`、删除走 `deleteRequest`、改名走 `writeRequest(title)`；`persist()` 不再写 collections；资源目录与 `.http` 面板共用（`POLARIS_DOCS.setDir`）；`verify-ui/check-s15.mjs` 17 项真机端到端（假宿主 + 真 fs） |
+| S2.1 字段隔离验收 | ✅ | `store.test.mjs` +4 项（只改 URL / 只改 header / 只改 body / 方法大小写；`<` `>` 行与 Tab 缩进逐字节保留）、`locateSegment` 方法比对统一大写；共 26 项 |
+| S2.2 起 | ⬜ 下一步 | 反向刷新 + CONFLICT 二选一 |
 
-一键自测：`node tools/all.mjs`（9 个文件 174 项全绿）。
+一键自测：`node tools/all.mjs`（9 个文件 189 项全绿）+ `node verify-ui/check-s15.mjs`（17 项，假宿主 + 真 fs 端到端）。
+
+**S1.5 留下的三件事**（不影响往下走，记着别忘）：
+1. **拖拽移动暂停**：文件真源下跨文件搬段要保住段落原文，`moveSaved()` 现在直接提示"暂不支持"，`item.draggable=!DOCS.enabled`。要做就得写「原文搬段」（读 src 段行 → 删 → 插到 dst），留 1.0.1。
+2. **首次启动会写 `示例 · DEMO.http`**：0.6.x 的 seed 集合被迁移成文件，S5.3 会把 seed 换成 `examples.http` 单一样例。
+3. **`.http` 面板与侧栏各扫一遍目录**：现在同目录但各自缓存，改了源码靠 `POLARIS_DOCS.refresh()` 合帧重扫。真做 watch（S2.2）时合并成一处。
+
 
 ## 0. 不可违反的三条
 
@@ -111,10 +118,13 @@
 
 ### S2.1 表单写回（最高风险步）
 
-- **目标**：表单改一个字段 → 文件里**只有那一段**变化。
-- **改动**：`ui/app.js` 保存链路 → `HttpStore.writeRequest()`。
-- **验收**：`git diff` 只见该段；`tools/store.test.mjs` 加"改 header 不动 body 段"断言。
-- **风险**：这是最容易写坏用户文件的点。先写测试再写实现；先在 fixtures 上跑通，再开 UI。
+> **状态调整**：S1.5 已经把「保存 = 段落级写回」这条路接通（`saveToDoc`），否则侧栏一重扫就会把改动丢掉。
+> S2.1 剩下的不是接线，而是**把风险按住**：逐字段验收 + 边界用例。
+
+- **目标**：表单里任何一个字段（方法 / URL / 每条 header / body / bodyType）改完保存 → 文件里**只有那一段**变化。
+- **改动**：以测试与边界修补为主（`tools/store.test.mjs` + `verify-ui/check-s15.mjs` 扩用例），必要时修 `serializeRequest` 的边角。
+- **验收**：`git diff` 只见该段；逐个字段过一遍：只改 header 不动 body 段、只改 body 不动 header、方法大小写、空 body、CRLF 文件、单请求无 `###` 的文件、`< 文件引用` 与 `>` 输出文件这两行不丢。
+- **风险**：这是最容易写坏用户文件的点。先写测试再改实现；先在 fixtures 上跑通，再开 UI。
 
 ### S2.2 反向刷新 + 冲突
 

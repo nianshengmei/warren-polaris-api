@@ -81,6 +81,7 @@
 
   var pane = null, edge = null, ta = null, ginner = null, hlEl = null, E = {};
   var parseTimer = null, saveTimer = null, hitTimer = null, trackTimer = null;
+  var refreshDocsTimer = null;   /* 保存后让侧栏重扫资源目录（合帧） */
 
   /* ===================== 小工具 ===================== */
   function $(sel) { return document.querySelector(sel); }
@@ -1490,6 +1491,11 @@
       if (manual) toast('已保存到 <b>' + esc(S.name || fileNameOf(S.path)) + '</b> ✓（第 ' + S.saveCount + ' 次）');
       savePrefs();
       if (r && r.size >= 0 && E.foot) updateFoot();
+      /* 源码改了 = 侧栏的请求列表/名称可能变，顺手让它重扫（同一资源目录） */
+      if (window.POLARIS_DOCS && window.POLARIS_DOCS.refresh) {
+        clearTimeout(refreshDocsTimer);
+        refreshDocsTimer = setTimeout(function () { window.POLARIS_DOCS.refresh(true); }, 400);
+      }
       return true;
     } catch (e) {
       setSaveState('err', e);

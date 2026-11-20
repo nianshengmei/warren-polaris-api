@@ -60,7 +60,10 @@ function persist(){
   clearTimeout(_persistTimer);
   _persistTimer=setTimeout(()=>{
     const tabs=state.tabs.map(t=>{const c={...t};delete c.response;delete c.abortCtl;delete c.sendSeq;delete c.stopped;return c;});
-    const snap={tabs,activeTab:state.activeTab,collections:state.collections,envs:state.envs,activeEnv:state.activeEnv,ui};
+    const snap={tabs,activeTab:state.activeTab,envs:state.envs,activeEnv:state.activeEnv,ui};
+    /* 文件真源启用后，集合不再进 storage —— 磁盘上的 .http 是唯一副本。
+     * 双写会立刻出现「storage 与文件谁算数」的二义，所以这里直接不写。 */
+    if(!DOCS.enabled) snap.collections=state.collections;
     DBX.storage.set(ST_KEY, snap).catch(()=>{});
   },180);
 }
@@ -95,6 +98,176 @@ function seed(){
     ]};
     state.collections=[g];
   }
+}
+
+/* ===================== 资源目录：文件真源（v0.9.0） =====================
+ * 一个 .http 文件 = 一个 collection。侧栏、保存、删除全部以磁盘为准；
+ * storage 只留 tab / 环境 / 偏好。旧 storage 集合在首次启动时一次性搬成文件。
+ * 数据形状不开新路：HttpStore.toLegacyCollections() 把解析结果投影成旧形状，
+ * 下面的渲染与编辑代码一行不用改。
+ */
+const DOCS_KEY='warren-polaris-api.httpws.v1';   // 与 http-workspace.js 共用（资源目录 / 结果目录）
+const DOCS={ enabled:false, dir:'', store:null, files:[], busy:false, lastScan:0 };
+const STORE=window.POLARIS_STORE;
+
+async function docsResolveDir(){
+  try{ const s=await DBX.storage.get(DOCS_KEY); if(s&&s.workDir) return String(s.workDir); }catch(e){}
+  try{ const d=await DBX.invoke('http/defaultDirs',{}); return String((d&&(d.workDir||d.homeDir))||''); }catch(e){}
+  return '';
+}
+
+async function initDocs(){
+  if(!STORE || !DBX || !DBX.invoke) return;
+  const dir=await docsResolveDir();
+  if(!dir) return;
+  DOCS.dir=dir;
+  DOCS.store=STORE.createStore(STORE.invokeHost(DBX.invoke),{dir});
+  DOCS.enabled=true;
+  /* 一次性迁移：storage 里的旧集合 → 每个 collection 一个 .http。
+   * 幂等（目标已存在就留档到 .warren-migrate/，不覆盖），靠 ui.migratedAt 只跑一次。 */
+  if(!ui.migratedAt && state.collections.length){
+    try{
+      const out=await STORE.migrateFromStorage(DOCS.store,state.collections,{});
+      ui.migratedAt=Date.now(); persist();
+      if(out.created.length) setStatus('已把 '+out.created.length+' 个旧分组写成 .http 文件 · '+dir,'ok');
+      if(out.skipped.length) toast('有 '+out.skipped.length+' 个同名文件已存在，旧数据留档在 .warren-migrate/');
+    }catch(e){ setStatus('迁移旧分组失败：'+(e.message||e),'warn'); }
+  }
+  await refreshDocs(true);
+}
+
+/* 扫目录 → 投影成 state.collections。busy 期间的重入直接忽略（保存后连刷两次很常见）。 */
+async function refreshDocs(quiet){
+  if(!DOCS.enabled) return false;
+  if(DOCS.busy) return false;
+  DOCS.busy=true;
+  try{
+    const list=await DOCS.store.list();
+    DOCS.files=list; DOCS.lastScan=Date.now();
+    applyDocs(list);
+    rebindTabs();
+    renderSidebar();
+    const head=$('.side-head .t'); if(head) head.title=DOCS.dir;
+    return true;
+  }catch(e){
+    if(!quiet) setStatus('读取资源目录失败：'+(e.message||e),'warn');
+    return false;
+  }finally{ DOCS.busy=false; }
+}
+
+function applyDocs(list){
+  const groups=STORE.toLegacyCollections(list,{blankRow});
+  const col=ui.collapsed||{};
+  groups.forEach(g=>{ if(col[g.path]) g.collapsed=true; });
+  state.collections=groups;
+}
+
+/* 只重读一个文件并就地替换对应的分组（保存/删除后不必整目录重扫，
+ * 也不会因为重扫而把其它文件的折叠状态、行号快照抖掉）。 */
+async function patchGroup(path){
+  try{
+    const rd=await DOCS.store.read(path);
+    const name=STORE.baseName(path).replace(/\.(http|rest)$/i,'');
+    const item={ name, fileName:STORE.baseName(path), path, mtime:rd.mtime, size:(rd.text||'').length,
+                 requests:rd.parsed.requests, warnings:rd.parsed.warnings, fileId:rd.parsed.fileId, error:null };
+    const g=STORE.toLegacyCollections([item],{blankRow})[0];
+    const i=state.collections.findIndex(x=>x.path===path);
+    if(i>=0){ g.collapsed=state.collections[i].collapsed; state.collections[i]=g; }
+    else state.collections.push(g);
+    return g;
+  }catch(e){ return null; }
+}
+
+/* 文件被外部改过之后，把「从文件打开的 tab」重新挂到新的请求对象上。
+ * 顺序：interfaceId → 文件+行号+方法 → 文件+名称+方法（唯一）。
+ * 全对不上说明这一段真的没了，tab 退化成未保存（不静默绑到别的段）。 */
+function findDocRequest(ref){
+  const cands=[];
+  state.collections.forEach(g=>{
+    if(ref.file && g.path!==ref.file) return;
+    g.requests.forEach(r=>cands.push({g,r}));
+  });
+  if(ref.interfaceId){ const h=cands.find(c=>c.r.interfaceId===ref.interfaceId); if(h) return h; }
+  if(ref.line!=null){ const h=cands.find(c=>c.r.httpSource && c.r.httpSource.line===ref.line && (!ref.method||c.r.method===ref.method)); if(h) return h; }
+  if(ref.name){ const same=cands.filter(c=>c.r.name===ref.name && (!ref.method||c.r.method===ref.method)); if(same.length===1) return same[0]; }
+  return null;
+}
+function rebindTabs(){
+  state.tabs.forEach(t=>{
+    if(!t.docRef) return;
+    const hit=findDocRequest(t.docRef);
+    if(hit){
+      t.savedId=hit.r.id;
+      t.docRef={ file:hit.g.path, line:hit.r.httpSource?hit.r.httpSource.line:null,
+                 interfaceId:hit.r.interfaceId||null, name:hit.r.name, method:hit.r.method };
+    }else{ t.savedId=null; t.docRef=null; }
+  });
+}
+function setTabDocRef(t,path,req){
+  t.savedId=req.id;
+  t.docRef={ file:path, line:req.httpSource?req.httpSource.line:null,
+             interfaceId:req.interfaceId||null, name:req.name, method:req.method };
+}
+
+/* tab → 文件里那一段要写的内容。URL 保持 {{var}} 原文（变量只在发送时展开）。 */
+function storeReqFromTab(t){
+  const headers=t.headers.filter(r=>r.on!==false&&r.k).map(r=>({k:r.k,v:r.v==null?'':r.v}));
+  const hasCt=headers.some(h=>/^content-type$/i.test(h.k));
+  let body='';
+  if(!['GET','HEAD'].includes(t.method)){
+    if(t.bodyType==='json'||t.bodyType==='text') body=t.body||'';
+    else if(t.bodyType==='form') body=t.body||t.formBody.filter(r=>r.on!==false&&r.k).map(r=>r.k+'='+r.v).join('&');
+  }
+  if(!hasCt&&body){
+    if(t.bodyType==='json') headers.push({k:'Content-Type',v:'application/json'});
+    else if(t.bodyType==='form') headers.push({k:'Content-Type',v:'application/x-www-form-urlencoded'});
+  }
+  return { name:t.name, title:t.name, method:t.method, url:t.url, headers, body, bodyType:t.bodyType };
+}
+
+/* 把当前 tab 写回它所属的那一段 */
+async function saveToDoc(t,f){
+  if(!t.url){ setStatus('请先输入 URL','warn'); return false; }
+  const req=storeReqFromTab(t);
+  let res;
+  try{
+    res=await DOCS.store.writeRequest(f.r.httpSource.file,{
+      line:f.r.httpSource.line, method:t.method, url:req.url,
+      headers:req.headers, body:req.body, bodyType:req.bodyType,
+      interfaceId:f.r.httpSource.interfaceId||(t.docRef&&t.docRef.interfaceId)||null
+    },{ baseMtime:f.g.mtime });
+  }catch(e){
+    setStatus('保存失败：'+(e.message||e),'err'); return false;
+  }
+
+  if(res.ok){
+    t.dirty=false;
+    const g=await patchGroup(f.r.httpSource.file);
+    if(g&&g.requests[res.segment]){
+      const nr=g.requests[res.segment];
+      setTabDocRef(t,f.r.httpSource.file,nr);
+      if(nr.name!==t.name){ t.name=nr.name; renderTabs(); }   // tab 标题跟随文件里的 ###，避免两边两套名字
+    }
+    renderTabs(); renderSidebar();
+    setStatus('已写入「'+f.g.name+'」','ok');
+    toast('已更新「'+esc(t.name)+'」 <b>✓</b>');
+    return true;
+  }
+  if(res.reason==='CONFLICT'){
+    await refreshDocs(true);
+    setStatus('文件已被别处修改，已重新载入；请确认内容后再保存','warn');
+    return false;
+  }
+  setStatus('保存失败：'+(res.reason||'写入被拒')+(res.error?(' · '+res.error):''),'err');
+  return false;
+}
+
+/* 外部改动（IDEA 里保存、git 切分支）后切回插件时自动重扫；合帧避免抖动 */
+let _docsTimer=null;
+function scheduleDocsRefresh(delay){
+  if(!DOCS.enabled) return;
+  clearTimeout(_docsTimer);
+  _docsTimer=setTimeout(()=>{ refreshDocs(true); }, delay||300);
 }
 
 /* ===================== 变量解析 ===================== */
@@ -137,11 +310,13 @@ function renderSidebar(){
     const gEl=el('div','group'+(g.collapsed&&!q?' collapsed':''));
     const head=el('div','group-head');
     head.innerHTML=`<span class="caret">▼</span><span class="gname">${esc(g.name)}</span><span class="gcount">${g.requests.length}</span>`;
+    if(g.error){ head.title='解析失败：'+g.error; head.querySelector('.gcount').textContent='!'; }
+    else if(g.path){ head.title=g.path; }
     const act=el('span','gact');
-    const ren=el('button','x','✎'); ren.title='重命名'; ren.onclick=e=>{e.stopPropagation();renameGroup(g);};
-    const del=el('button','x','🗑'); del.title='删除分组'; del.onclick=e=>{e.stopPropagation();deleteGroup(g);};
+    const ren=el('button','x','✎'); ren.title=DOCS.enabled&&g.path?'重命名 .http 文件':'重命名'; ren.onclick=e=>{e.stopPropagation();renameGroup(g);};
+    const del=el('button','x','🗑'); del.title=DOCS.enabled&&g.path?'删除 .http 文件':'删除分组'; del.onclick=e=>{e.stopPropagation();deleteGroup(g);};
     act.append(ren,del); head.appendChild(act);
-    head.onclick=()=>{ g.collapsed=!g.collapsed; persist(); renderSidebar(); };
+    head.onclick=()=>{ g.collapsed=!g.collapsed; if(g.path){ ui.collapsed=ui.collapsed||{}; ui.collapsed[g.path]=g.collapsed; } persist(); renderSidebar(); };
     /* 分组头作为投放目标：拖到这里 = 追加到该分组末尾（折叠状态下松手会自动展开） */
     head.addEventListener('dragover',e=>{ if(!dragRid) return; e.preventDefault(); e.dataTransfer.dropEffect='move'; head.classList.add('drop-on'); });
     head.addEventListener('dragleave',e=>{ if(!head.contains(e.relatedTarget)) head.classList.remove('drop-on'); });
@@ -160,8 +335,9 @@ function renderSidebar(){
       item.append(rn,x); item.onclick=()=>openSaved(r);
       const nameEl=item.querySelector('.rn');
       if(nameEl) nameEl.ondblclick=e=>{ e.stopPropagation(); renameSaved(g,r); };
-      /* 拖拽：可在分组间移动 / 组内排序 */
-      item.draggable=true; item.title='双击重命名 · 拖拽可移动到其他分组';
+      /* 拖拽：可在分组间移动 / 组内排序（文件真源下跨文件搬段会丢注释，1.0.1 再做） */
+      item.draggable=!DOCS.enabled;
+      item.title=DOCS.enabled?'双击重命名':'双击重命名 · 拖拽可移动到其他分组';
       item.addEventListener('dragstart',e=>{ dragRid=r.id; item.classList.add('dragging'); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',r.id); }catch(_){} });
       item.addEventListener('dragend',()=>{ dragRid=null; item.classList.remove('dragging'); $$('#tree .drop-before,#tree .drop-after,#tree .drop-on').forEach(n=>{ n.classList.remove('drop-before','drop-after','drop-on'); }); });
       item.addEventListener('dragover',e=>{ if(!dragRid||dragRid===r.id) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect='move'; const rt=item.getBoundingClientRect(); const after=(e.clientY-rt.top)>rt.height/2; item.classList.toggle('drop-after',after); item.classList.toggle('drop-before',!after); });
@@ -622,9 +798,11 @@ function openCurlImport(){
 function markDirty(t){ if(!t.dirty){ t.dirty=true; renderTabs(); } }
 function findSaved(id){ for(const g of state.collections){ const r=g.requests.find(x=>x.id===id); if(r) return {g,r}; } return null; }
 function snapshot(t){ return { method:t.method,url:t.url,params:JSON.parse(JSON.stringify(t.params)),headers:JSON.parse(JSON.stringify(t.headers)),bodyType:t.bodyType,body:t.body,formBody:JSON.parse(JSON.stringify(t.formBody)) }; }
-function saveCurrent(){
+async function saveCurrent(){
   const t=activeTab();
   if(t.savedId){ const f=findSaved(t.savedId); if(f){
+    /* 文件真源：这一段是从磁盘来的，改完必须落回同一段（段落级替换，别的段不动） */
+    if(DOCS.enabled && f.r.httpSource) return saveToDoc(t,f);
     Object.assign(f.r,snapshot(t)); f.r.name=t.name; t.dirty=false;
     persist(); renderTabs(); renderSidebar();
     /* 每次点都给出可见反馈：重复保存不再像「点了没反应」 */
@@ -632,6 +810,7 @@ function saveCurrent(){
     toast('已更新「'+esc(t.name)+'」 <b>✓</b>');
     return;
   } }
+  if(DOCS.enabled) return saveToDocNew(t);
   const defName=t.url? t.method+' '+shortUrl(t.url):'未命名请求';
   const groupOpts=state.collections.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
   const m=openModal('保存请求','把当前请求存入一个分组',[
@@ -658,18 +837,120 @@ function saveCurrent(){
     if(sel){ sel.addEventListener('change',sync); sync(); if(sel.value==='__new'&&nf) setTimeout(()=>{nf.focus();nf.select&&nf.select();},0); }
   }
 }
+
+/* 文件真源下的「新请求」保存：作为一段追加到所选 .http 末尾（一个文件 = 一个 collection） */
+async function saveToDocNew(t){
+  if(!t.url){ setStatus('请先输入 URL','warn'); return false; }
+  if(!state.collections.length){
+    const c=await DOCS.store.createCollection('我的接口');
+    if(!c.ok){ setStatus('创建 .http 文件失败：'+(c.reason||''),'err'); return false; }
+    await refreshDocs(true);
+  }
+  const defName=t.url? t.method+' '+shortUrl(t.url):'未命名请求';
+  const fileOpts=state.collections.map(g=>`<option value="${esc(g.path)}">${esc(g.name)}</option>`).join('');
+  const m=openModal('保存到 .http','新请求会作为一段写进所选文件末尾（不会重排文件里已有的内容）',[
+    {label:'名称',id:'mName',type:'text',value:defName},
+    {label:'文件（collection）',id:'mFile',type:'select',html:fileOpts+'<option value="__new">＋ 新建 .http 文件…</option>'},
+    {label:'新文件名',id:'mNewFile',type:'text',value:'新集合'},
+  ],vals=>{
+    const name=(vals.mName||'').trim()||defName;
+    if(vals.mFile==='__new'){
+      const fn=(vals.mNewFile||'').trim();
+      if(!fn){ setStatus('请填写新文件名','err'); return false; }
+      appendToDoc(t,vals.mFile,fn,name);
+      return;
+    }
+    appendToDoc(t,vals.mFile,null,name);
+  });
+  if(m){
+    const sel=m.querySelector('#mFile'), nf=m.querySelector('#mNewFile'), nfField=nf&&nf.closest('.field');
+    const sync=()=>{ if(nfField) nfField.style.display=(sel&&sel.value==='__new')?'':'none'; };
+    if(sel){ sel.addEventListener('change',sync); sync(); }
+  }
+  return true;
+}
+
+/* 追加一段（新建文件时先建再追加）。返回后把 tab 绑到新段上，之后保存就是段落级写回。 */
+async function appendToDoc(t,path,newFileName,name){
+  let target=path;
+  if(newFileName){
+    const c=await DOCS.store.createCollection(newFileName);
+    if(!c.ok){ setStatus('创建文件失败：'+(c.reason||''),'err'); return; }
+    target=c.path;
+  }
+  const req=storeReqFromTab(t); req.name=name; req.title=name;
+  let res;
+  try{ res=await DOCS.store.appendRequest(target,req); }
+  catch(e){ setStatus('写入失败：'+(e.message||e),'err'); return; }
+  if(!res.ok){ setStatus('写入失败：'+(res.reason||'')+(res.error?(' · '+res.error):''),'err'); return; }
+  t.name=name; t.dirty=false;
+  const g=await patchGroup(target);
+  if(g&&g.requests[res.index]) setTabDocRef(t,target,g.requests[res.index]);
+  renderTabs(); renderSidebar();
+  setStatus('已写入「'+(g?g.name:STORE.baseName(target))+'」','ok');
+  toast('已保存「'+esc(name)+'」 <b>✓</b>');
+}
+
 function openSaved(r){
   const exist=state.tabs.find(t=>t.savedId===r.id); if(exist){ state.activeTab=exist.id; renderAll(); return; }
   const t=newTab({ name:r.name,savedId:r.id,method:r.method,url:r.url, params:JSON.parse(JSON.stringify(r.params||[blankRow()])), headers:JSON.parse(JSON.stringify(r.headers||[blankRow()])), bodyType:r.bodyType||'none',body:r.body||'',formBody:JSON.parse(JSON.stringify(r.formBody||[blankRow()])) });
   if(!t.params.length)t.params=[blankRow()]; if(!t.headers.length)t.headers=[blankRow()]; if(!t.formBody.length)t.formBody=[blankRow()];
+  if(r.httpSource) t.docRef={ file:r.httpSource.file, line:r.httpSource.line, interfaceId:r.interfaceId||null, name:r.name, method:r.method };
   state.tabs.unshift(t); state.activeTab=t.id; renderAll(); persist(); setStatus('已载入「'+r.name+'」');
 }
-function deleteSaved(g,r){ PD.confirm('删除已保存的请求「'+r.name+'」？',ok=>{ if(!ok)return; g.requests=g.requests.filter(x=>x.id!==r.id); state.tabs.forEach(t=>{ if(t.savedId===r.id){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }); }
-function renameGroup(g){ PD.ask('分组名称',{value:g.name},n=>{ if(n==null)return; g.name=n.trim()||g.name; persist(); renderSidebar(); }); }
+
+function deleteSaved(g,r){
+  if(DOCS.enabled && r.httpSource){
+    PD.confirm('从文件「'+g.name+'」里删掉请求「'+r.name+'」？\n这一段的文字会从磁盘文件移除，其余段原样保留。',async ok=>{
+      if(!ok) return;
+      const res=await DOCS.store.deleteRequest(r.httpSource.file,{line:r.httpSource.line,method:r.method,interfaceId:r.httpSource.interfaceId||null},{baseMtime:g.mtime});
+      if(!res.ok){ setStatus('删除失败：'+(res.reason||'写入被拒'),'err'); return; }
+      state.tabs.forEach(t=>{ if(t.savedId===r.id){t.savedId=null;t.docRef=null;t.dirty=true;} });
+      await patchGroup(g.path); renderSidebar(); renderTabs();
+      setStatus('已删除「'+r.name+'」','ok');
+    });
+    return;
+  }
+  PD.confirm('删除已保存的请求「'+r.name+'」？',ok=>{ if(!ok)return; g.requests=g.requests.filter(x=>x.id!==r.id); state.tabs.forEach(t=>{ if(t.savedId===r.id){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); });
+}
+
+function renameGroup(g){
+  PD.ask(DOCS.enabled&&g.path?'重命名 .http 文件':'分组名称',{value:g.name},async n=>{
+    if(n==null) return;
+    const name=(n||'').trim(); if(!name||name===g.name) return;
+    if(DOCS.enabled && g.path){
+      const r=await DOCS.store.renameCollection(g.path,name);
+      if(!r.ok){ setStatus('改名失败：'+(r.reason||'')+(r.reason==='EXISTS'?'（已有同名文件）':''),'err'); return; }
+      /* 文件路径变了，先把 tab 的 docRef.file 改过来，否则重扫后会被当成「已消失」 */
+      state.tabs.forEach(t=>{ if(t.docRef&&t.docRef.file===g.path) t.docRef.file=r.path; });
+      await refreshDocs(true); renderSidebar();
+      setStatus('已改名为「'+r.name+'」','ok');
+      return;
+    }
+    g.name=name; persist(); renderSidebar();
+  });
+}
+
 function renameSaved(g,r){
-  PD.ask('重命名请求',{value:r.name},n=>{
+  PD.ask('重命名请求',{value:r.name},async n=>{
     if(n==null) return;
     const name=(n||'').trim(); if(!name||name===r.name) return;
+    if(DOCS.enabled && r.httpSource){
+      /* 改名 = 改这一段里的 ### 标题，仍然只动这一段 */
+      const res=await DOCS.store.writeRequest(r.httpSource.file,{
+        line:r.httpSource.line, method:r.method, title:name, name:name,
+        interfaceId:r.httpSource.interfaceId||null
+      },{ baseMtime:g.mtime });
+      if(!res.ok){ setStatus('改名失败：'+(res.reason||''),'err'); return; }
+      const ng=await patchGroup(g.path);
+      if(ng&&ng.requests[res.segment]){
+        const nr=ng.requests[res.segment];
+        state.tabs.forEach(t=>{ if(t.savedId===r.id){ t.savedId=nr.id; t.name=name; setTabDocRef(t,g.path,nr); } });
+      }
+      renderSidebar(); renderTabs();
+      setStatus('已重命名为「'+name+'」','ok');
+      return;
+    }
     r.name=name;
     state.tabs.forEach(t=>{ if(t.savedId===r.id) t.name=name; });   // 同步已打开的 tab 标题
     persist(); renderSidebar(); renderTabs();
@@ -679,6 +960,7 @@ function renameSaved(g,r){
 /* 拖拽移动：把请求 rid 移到分组 toGid；beforeRid 指定插入到哪个请求之前，null = 追加到末尾 */
 function moveSaved(rid,toGid,beforeRid){
   if(!rid||beforeRid===rid) return;
+  if(DOCS.enabled){ setStatus('文件真源下暂不支持拖拽移动（会丢注释，留到 1.0.1 做原文搬移）','warn'); return; }
   const src=findSaved(rid); if(!src) return;
   const dst=state.collections.find(g=>g.id===toGid); if(!dst) return;
   const idx=src.g.requests.findIndex(x=>x.id===rid);
@@ -693,7 +975,21 @@ function moveSaved(rid,toGid,beforeRid){
 }
 /* 同一分组内 r 的下一个请求 id（拖到底部时用），没有则 null */
 function nextSavedId(g,rid){ const i=g.requests.findIndex(x=>x.id===rid); if(i<0) return null; const n=g.requests[i+1]; return n?n.id:null; }
-function deleteGroup(g){ PD.confirm('删除分组「'+g.name+'」及其中 '+g.requests.length+' 个请求？',ok=>{ if(!ok)return; const ids=g.requests.map(r=>r.id); state.collections=state.collections.filter(x=>x.id!==g.id); state.tabs.forEach(t=>{ if(ids.includes(t.savedId)){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); }); }
+
+function deleteGroup(g){
+  if(DOCS.enabled && g.path){
+    PD.confirm('删除文件「'+STORE.baseName(g.path)+'」及其中 '+g.requests.length+' 个请求？\n磁盘上的这个 .http 文件会被删掉，无法撤销。',async ok=>{
+      if(!ok) return;
+      const r=await DOCS.store.deleteCollection(g.path);
+      if(!r.ok){ setStatus('删除失败：'+(r.reason||''),'err'); return; }
+      state.tabs.forEach(t=>{ if(t.docRef&&t.docRef.file===g.path){ t.savedId=null; t.docRef=null; t.dirty=true; } });
+      await refreshDocs(true); renderTabs();
+      setStatus('已删除 '+STORE.baseName(g.path),'ok');
+    });
+    return;
+  }
+  PD.confirm('删除分组「'+g.name+'」及其中 '+g.requests.length+' 个请求？',ok=>{ if(!ok)return; const ids=g.requests.map(r=>r.id); state.collections=state.collections.filter(x=>x.id!==g.id); state.tabs.forEach(t=>{ if(ids.includes(t.savedId)){t.savedId=null;t.dirty=true;} }); persist(); renderSidebar(); renderTabs(); });
+}
 
 /* ===================== tab 操作 ===================== */
 function closeTab(t){
@@ -776,7 +1072,16 @@ function bindImportExport(){
   const eb=$('#exportBtn'); if(eb) eb.onclick=()=>{ const data=JSON.stringify({relay:2,exportedAt:new Date().toISOString(),collections:state.collections,envs:state.envs},null,2); const a=el('a'); a.href=URL.createObjectURL(new Blob([data],{type:'application/json'})); a.download='relay-export.json'; a.click(); setStatus('已导出集合与环境','ok'); };
   const ib=$('#importBtn'); if(ib) ib.onclick=()=>$('#fileInput').click();
   const fi=$('#fileInput'); if(fi) fi.onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader();
-    rd.onload=()=>{ try{ const d=JSON.parse(rd.result); const cols=Array.isArray(d)?d:d.collections; if(!Array.isArray(cols)) throw new Error('格式不符'); cols.forEach(g=>{ g.id=uid(); (g.requests||[]).forEach(r=>r.id=uid()); }); state.collections=state.collections.concat(cols); if(d.envs&&Array.isArray(d.envs)){ d.envs.forEach(en=>{en.id=uid();}); state.envs=state.envs.concat(d.envs); renderEnv(); } persist(); renderSidebar(); setStatus('已导入 '+cols.length+' 个分组','ok'); }catch(err){ setStatus('导入失败：'+err.message,'err'); } $('#fileInput').value=''; };
+    rd.onload=async()=>{ try{ const d=JSON.parse(rd.result); const cols=Array.isArray(d)?d:d.collections; if(!Array.isArray(cols)) throw new Error('格式不符'); cols.forEach(g=>{ g.id=uid(); (g.requests||[]).forEach(r=>r.id=uid()); });
+      /* 文件真源：导入 = 每个分组写成一个 .http 文件（同名不覆盖，旧数据留档 .warren-migrate/） */
+      if(DOCS.enabled){
+        const out=await STORE.migrateFromStorage(DOCS.store,cols,{});
+        if(d.envs&&Array.isArray(d.envs)){ d.envs.forEach(en=>{en.id=uid();}); state.envs=state.envs.concat(d.envs); renderEnv(); persist(); }
+        await refreshDocs(true);
+        setStatus('已导入：新建 '+out.created.length+' 个 .http 文件'+(out.skipped.length?('，'+out.skipped.length+' 个同名已留档'):''),'ok');
+        $('#fileInput').value=''; return;
+      }
+      state.collections=state.collections.concat(cols); if(d.envs&&Array.isArray(d.envs)){ d.envs.forEach(en=>{en.id=uid();}); state.envs=state.envs.concat(d.envs); renderEnv(); } persist(); renderSidebar(); setStatus('已导入 '+cols.length+' 个分组','ok'); }catch(err){ setStatus('导入失败：'+err.message,'err'); } $('#fileInput').value=''; };
     rd.readAsText(f);
   };
 }
@@ -805,7 +1110,25 @@ function bindEvents(){
   $$('#reqSubtabs .subtab').forEach(b=>b.onclick=()=>{ activeTab().reqTab=b.dataset.rt; renderReqEditor(); persist(); });
   $$('#resSubtabs .subtab').forEach(b=>b.onclick=()=>{ if(b.classList.contains('disabled'))return; activeTab().respView=b.dataset.rv; renderRespBody(); persist(); });
   const srch=$('#search'); if(srch) srch.addEventListener('input',renderSidebar);
-  const ng=$('#newGroup'); if(ng) ng.onclick=()=>{ PD.ask('新分组名称',{value:'新分组'},n=>{ if(!n)return; state.collections.push({id:uid(),name:n.trim(),collapsed:false,requests:[]}); persist(); renderSidebar(); }); };
+  const ng=$('#newGroup'); if(ng) ng.onclick=()=>{ PD.ask(DOCS.enabled?'新建 .http 文件（一个文件 = 一个 collection）':'新分组名称',{value:DOCS.enabled?'新集合':'新分组'},async n=>{
+    if(!n) return;
+    if(DOCS.enabled){
+      const r=await DOCS.store.createCollection(n.trim());
+      if(!r.ok){ setStatus('创建失败：'+(r.reason==='EXISTS'?'已有同名 .http 文件':(r.reason||'')),'err'); return; }
+      await refreshDocs(true);
+      setStatus('已创建 '+STORE.baseName(r.path),'ok');
+      return;
+    }
+    state.collections.push({id:uid(),name:n.trim(),collapsed:false,requests:[]}); persist(); renderSidebar();
+  }); };
+  const rf=$('#refreshDocs'); if(rf) rf.onclick=async()=>{
+    if(!DOCS.enabled){ setStatus('资源目录不可用（未连接宿主）','warn'); return; }
+    const ok=await refreshDocs(false);
+    if(ok) setStatus('已重新扫描 · '+DOCS.dir,'ok');
+  };
+  /* 从 IDEA / 记事本切回来时重扫，外部改动立即可见 */
+  window.addEventListener('focus',()=>scheduleDocsRefresh(250));
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) scheduleDocsRefresh(250); });
   const ts=$('#toggleSide'); if(ts) ts.onclick=()=>{ ui.sideCollapsed=!ui.sideCollapsed; $('#main').classList.toggle('collapsed',ui.sideCollapsed); persist(); };
   const tb=$('#tabbar'); if(tb) tb.addEventListener('scroll',updateTabFade);
   const lb=$('#layoutBtn'); if(lb) lb.onclick=()=>{ ui.layout = ui.layout==='h'?'v':'h'; applyLayout(); persist(); };
@@ -860,6 +1183,8 @@ async function initApi(){
   // 等 DBX 桥就绪后加载状态并首渲染
   await DBX.ready;
   await load();
+  /* 文件真源：把侧栏数据从 storage 切到资源目录（含一次性迁移）。失败则保持旧路径可用。 */
+  await initDocs();
   const main=$('#main'); if(main) main.classList.toggle('collapsed',ui.sideCollapsed);
   applyLayout();
   applyProxyBtn();
@@ -939,6 +1264,20 @@ window.POLARIS_API = {
       setStatus('请求失败：'+resp.error,'err');
     }
     return resp;
+  }
+};
+
+/* ===================== v0.9.0：文件真源给 .http 面板用的两个接口 =====================
+ * 两处必须认同一个「资源目录」，否则 .http 面板扫 A 目录、侧栏扫 B 目录，用户会看到两套集合。 */
+window.POLARIS_DOCS = {
+  enabled: function(){ return DOCS.enabled; },
+  dir: function(){ return DOCS.dir; },
+  refresh: function(quiet){ return refreshDocs(quiet !== false); },
+  setDir: async function(dir){
+    dir=String(dir||'').trim();
+    if(!DOCS.enabled||!dir||dir===DOCS.dir) return false;
+    DOCS.dir=dir; DOCS.store.setDir(dir);
+    return refreshDocs(true);
   }
 };
 

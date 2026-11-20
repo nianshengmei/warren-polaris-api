@@ -89,6 +89,8 @@
     if (!req) return -1;
     var rs = parsed.requests || [];
     var idx = -1;
+    /* 方法一律按大写比对：调用方传 'post' 也要认出来 */
+    var want = req.method ? String(req.method).toUpperCase() : '';
 
     if (req.interfaceId) {
       for (var i = 0; i < rs.length; i++) if (rs[i].interfaceId === req.interfaceId) { idx = i; break; }
@@ -96,21 +98,21 @@
     }
     if (req.line) {
       for (var j = 0; j < rs.length; j++) {
-        if (rs[j].line === req.line && (!req.method || rs[j].method === req.method)) { idx = j; break; }
+        if (rs[j].line === req.line && (!want || rs[j].method === want)) { idx = j; break; }
       }
       if (idx >= 0) return idx;
     }
-    if (req.method && req.url) {
+    if (want && req.url) {
       var hits = [];
       for (var k = 0; k < rs.length; k++) {
-        if (rs[k].method === req.method && rs[k].url === req.url) hits.push(k);
+        if (rs[k].method === want && rs[k].url === req.url) hits.push(k);
       }
       if (hits.length === 1) return hits[0];
     }
-    if (req.method && req.name) {
+    if (want && req.name) {
       var named = [];
       for (var m = 0; m < rs.length; m++) {
-        if (rs[m].method === req.method && rs[m].name === req.name) named.push(m);
+        if (rs[m].method === want && rs[m].name === req.name) named.push(m);
       }
       if (named.length === 1) return named[0];
     }
@@ -282,7 +284,8 @@
           : (cur.parsed.requests.length === 1 ? { start: Math.max(0, target.line - 1), end: geo.lines.length - 1 } : null);
         if (!seg) return { ok: false, reason: 'NOT_FOUND' };
         var merged = {
-          title: target.title || req.title || '',
+          /* title 显式给了就改（侧栏重命名走这条路），没给就沿用文件里的 ### 标题 */
+          title: req.title != null ? req.title : (target.title || ''),
           name: req.name || target.name,
           method: req.method || target.method,
           url: req.url != null ? req.url : target.url,
@@ -303,6 +306,78 @@
         var w = await store.writeText(path, next, { baseMtime: cur.mtime });
         if (!w.ok) return w;
         return { ok: true, segment: segIndex, interfaceId: merged.interfaceId || null, path: path };
+      },
+
+      /* 在文件末尾追加一段（「保存请求」落到某个 collection 时用）。
+       * 原有内容逐字节保留，唯一被规范化的是文件末尾的多余空行：
+       * 追加前先压掉尾部空行，再用一个空行把新段隔开，文件以单个换行收尾。 */
+      appendRequest: async function (path, req, o) {
+        o = o || {};
+        var H = requireFile();
+        var cur;
+        try {
+          cur = await store.read(path);
+        } catch (e) {
+          return { ok: false, reason: 'NOT_FOUND', error: String((e && e.message) || e) };
+        }
+        if (o.baseMtime != null && cur.mtime !== Math.round(o.baseMtime)) {
+          return { ok: false, reason: 'CONFLICT', current: cur.mtime };
+        }
+        var merged = {
+          title: req.title || req.name || '',
+          name: req.name || req.title || '',
+          method: String(req.method || 'GET').toUpperCase(),
+          url: req.url || '',
+          headers: req.headers || [],
+          body: req.body == null ? '' : String(req.body),
+          bodyType: req.bodyType || 'text',
+          bodyFromFile: req.bodyFromFile || null,
+          outputFile: req.outputFile || null,
+          preScript: req.preScript || null,
+          postScript: req.postScript || null,
+          interfaceId: o.interfaceId || req.interfaceId || null
+        };
+        var block = H.serializeRequest(merged, { eol: cur.eol }).split(/\r?\n/);
+        var sp = splitLines(cur.text);
+        var lines = sp.lines.slice();
+        while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+        var next = (lines.length ? lines.join(sp.eol) + sp.eol + sp.eol : '') + block.join(sp.eol) + sp.eol;
+
+        var w = await store.writeText(path, next, { baseMtime: cur.mtime });
+        if (!w.ok) return w;
+        return { ok: true, path: path, index: (cur.parsed.requests || []).length, interfaceId: merged.interfaceId || null };
+      },
+
+      /* 删掉某一段（侧栏的「删除请求」）。只摘掉这一段的行，其余行原样拼接。 */
+      deleteRequest: async function (path, req, o) {
+        o = o || {};
+        var cur;
+        try {
+          cur = await store.read(path);
+        } catch (e) {
+          return { ok: false, reason: 'NOT_FOUND', error: String((e && e.message) || e) };
+        }
+        if (o.baseMtime != null && cur.mtime !== Math.round(o.baseMtime)) {
+          return { ok: false, reason: 'CONFLICT', current: cur.mtime };
+        }
+        var geo = segments(cur.text);
+        var reqIndex = locateSegment(cur.parsed, req, geo);
+        if (reqIndex < 0) return { ok: false, reason: 'NOT_FOUND' };
+
+        var target = cur.parsed.requests[reqIndex];
+        var segIndex = segIndexOfRequest(geo, target);
+        var seg = segIndex >= 0
+          ? geo.segs[segIndex]
+          : (cur.parsed.requests.length === 1 ? { start: Math.max(0, target.line - 1), end: geo.lines.length - 1 } : null);
+        if (!seg) return { ok: false, reason: 'NOT_FOUND' };
+
+        var lines = geo.lines.slice(0, seg.start).concat(geo.lines.slice(seg.end + 1));
+        while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+        var next = lines.length ? lines.join(geo.eol) + geo.eol : '';
+
+        var w = await store.writeText(path, next, { baseMtime: cur.mtime });
+        if (!w.ok) return w;
+        return { ok: true, path: path, segment: segIndex };
       },
 
       createCollection: async function (name) {

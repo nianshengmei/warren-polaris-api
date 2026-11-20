@@ -179,6 +179,119 @@ async function main() {
     assert.deepEqual(leftovers, []);
   });
 
+  /* ---------- 追加 / 删除一段（侧栏「保存到 collection」「删除请求」） ---------- */
+  await ok('appendRequest：新段接在末尾，原有段一字不动，段间正好一个空行', async () => {
+    const p = path.join(dir, 'append.http');
+    const before = '# 手写文件\n\n### 第一段\nGET https://a/1\nX-A: 1\n';
+    fs.writeFileSync(p, before, 'utf8');
+    const res = await store.appendRequest(p, { name: '第二段', method: 'POST', url: 'https://a/2', headers: [{ k: 'Content-Type', v: 'application/json' }], body: '{"a":1}', bodyType: 'json' });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.index, 1);
+
+    const after = fs.readFileSync(p, 'utf8');
+    assert.equal(segTexts(after)[0], segTexts(before)[0], '第一段必须逐字节不变');
+    assert.ok(after.includes('\n\n### 第二段\nPOST https://a/2\nContent-Type: application/json\n\n{"a":1}\n'), '新段要等于序列化结果');
+    assert.equal(H.parseHttpFile(after).requests.length, 2);
+    assert.ok(after.endsWith('\n') && !after.endsWith('\n\n'), '文件只留一个收尾换行');
+  });
+
+  await ok('appendRequest：CRLF 文件追加后仍是纯 CRLF，不混裸 LF', async () => {
+    const p = path.join(dir, 'messy.http');
+    const res = await store.appendRequest(p, { name: '追加段', method: 'GET', url: 'https://example.com/new' });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    const text = fs.readFileSync(p, 'utf8');
+    assert.ok(text.includes('https://example.com/new'));
+    assert.equal((text.match(/\r\n/g) || []).length, (text.match(/\n/g) || []).length, '不能混进裸 LF');
+  });
+
+  await ok('appendRequest：baseMtime 过期 → CONFLICT，文件不被改', async () => {
+    const p = path.join(dir, 'append.http');
+    const before = fs.readFileSync(p, 'utf8');
+    const res = await store.appendRequest(p, { name: 'x', method: 'GET', url: 'https://a/3' }, { baseMtime: 1 });
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, 'CONFLICT');
+    assert.equal(fs.readFileSync(p, 'utf8'), before);
+  });
+
+  await ok('deleteRequest：只摘掉目标段，前后段字节完全一致', async () => {
+    const p = path.join(dir, 'del.http');
+    fs.writeFileSync(p, '### 一\nGET https://d/1\n\n\n### 二\nGET https://d/2\nX-B: 2\n\n### 三\nGET https://d/3\n', 'utf8');
+    const before = fs.readFileSync(p, 'utf8');
+    const doc = H.parseHttpFile(before);
+    const res = await store.deleteRequest(p, { line: doc.requests[1].line, method: 'GET', url: 'https://d/2' });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    const after = fs.readFileSync(p, 'utf8');
+    const a = segTexts(before), b = segTexts(after);
+    assert.equal(b.length, 2, '段数要少一段');
+    assert.equal(b[0], a[0], '第一段被误改');
+    assert.equal(b[1], a[2], '第三段被误改');
+    assert.ok(!after.includes('https://d/2'));
+  });
+
+  await ok('deleteRequest：单请求文件删完只剩头部注释，不留空 ###', async () => {
+    const p = path.join(dir, 'only.http');
+    fs.writeFileSync(p, '# 只有一段\n### 唯一\nGET https://o/1\n', 'utf8');
+    const doc = H.parseHttpFile(fs.readFileSync(p, 'utf8'));
+    const res = await store.deleteRequest(p, { line: doc.requests[0].line, method: 'GET', url: 'https://o/1' });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    const after = fs.readFileSync(p, 'utf8');
+    assert.equal((after.match(/###/g) || []).length, 0);
+    assert.ok(after.startsWith('# 只有一段'));
+  });
+
+  /* ---------- 字段隔离：只改一处，别的地方一个字节都不能动 ---------- */
+  await ok('只改 URL：body 里的 Tab 缩进、> 输出文件 行都原样保留', async () => {
+    const p = path.join(dir, 'iso.http');
+    fs.writeFileSync(p,
+      '### 上传\n# @interface_id abcd1234\nPOST https://up.example.com/v1\nContent-Type: application/json\nX-Trace: 1\n\n{\n\t"a": 1\n}\n> out/result.json\n\n### 引用文件\nPOST https://up.example.com/v2\n\n< payload.json\n', 'utf8');
+    const doc = H.parseHttpFile(fs.readFileSync(p, 'utf8'));
+    assert.equal(doc.requests[0].outputFile, 'out/result.json');
+    assert.equal(doc.requests[1].bodyFromFile, 'payload.json');
+
+    const r = await store.writeRequest(p, { line: doc.requests[0].line, method: 'POST', url: 'https://up.example.com/v1?x=1' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const t = fs.readFileSync(p, 'utf8');
+    assert.ok(t.includes('https://up.example.com/v1?x=1'));
+    assert.ok(t.includes('{\n\t"a": 1\n}'), 'body 必须逐字节保留（含 Tab 缩进）');
+    assert.ok(t.includes('> out/result.json'), '> 输出文件 行不能丢');
+    assert.ok(t.includes('< payload.json'), '< 文件引用 行不能丢');
+  });
+
+  await ok('只改 header：不传 body 时 body 与其它头保持原样', async () => {
+    const p = path.join(dir, 'iso.http');
+    const doc = H.parseHttpFile(fs.readFileSync(p, 'utf8'));
+    const before = fs.readFileSync(p, 'utf8');
+    const r = await store.writeRequest(p, {
+      line: doc.requests[0].line, method: 'POST',
+      headers: [{ k: 'Content-Type', v: 'application/json' }, { k: 'X-Trace', v: '2' }]
+    });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const t = fs.readFileSync(p, 'utf8');
+    assert.ok(t.includes('X-Trace: 2'), '新头要写进去');
+    assert.ok(t.includes('{\n\t"a": 1\n}'), 'body 不能被动');
+    assert.ok(t.includes('# @interface_id abcd1234'), '身份行要留着');
+    assert.equal(segTexts(t)[1], segTexts(before)[1], '第二段被误改');
+  });
+
+  await ok('只改 body：不传 headers 时头部保持原样', async () => {
+    const p = path.join(dir, 'iso.http');
+    const doc = H.parseHttpFile(fs.readFileSync(p, 'utf8'));
+    const r = await store.writeRequest(p, { line: doc.requests[0].line, method: 'POST', body: '{"a":2}', bodyType: 'json' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const t = fs.readFileSync(p, 'utf8');
+    assert.ok(t.includes('{"a":2}'));
+    assert.ok(!t.includes('"a": 1'));
+    assert.ok(t.includes('Content-Type: application/json') && t.includes('X-Trace: 2'), '头不能被吞');
+  });
+
+  await ok('方法大小写不敏感：写进去统一大写', async () => {
+    const p = path.join(dir, 'iso.http');
+    const doc = H.parseHttpFile(fs.readFileSync(p, 'utf8'));
+    const r = await store.writeRequest(p, { line: doc.requests[1].line, method: 'post', url: 'https://up.example.com/v3' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.ok(fs.readFileSync(p, 'utf8').includes('\nPOST https://up.example.com/v3'));
+  });
+
   /* ---------- CRUD ---------- */
   await ok('createCollection：中文名保留，重名不覆盖', async () => {
     const a = await store.createCollection('用户中心');
