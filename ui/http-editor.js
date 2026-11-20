@@ -321,9 +321,9 @@
        * 这样它不遮响应区/滚动条，也不压住 footer 的字。 */
       '.pa-fe-grip{flex:none;height:9px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;touch-action:none;background:var(--surface,#1e2028);border-top:1px solid var(--line,rgba(255,255,255,.1))}',
       '.pa-fe-grip.off{display:none}',
-      '.pa-fe-grip i{display:block;width:44px;height:3px;border-radius:2px;background:rgba(255,255,255,.2);transition:background .12s,width .12s}',
-      '.pa-fe-grip:hover i,.pa-fe.resizing .pa-fe-grip i{background:var(--brand,#ff7a59);width:68px}',
-      '[data-dbx-theme="light"] .pa-fe-grip i{background:rgba(0,0,0,.2)}',
+      '.pa-fe-grip i{display:block;width:54px;height:4px;border-radius:2px;background:rgba(255,255,255,.26);transition:background .12s,width .12s}',
+      '.pa-fe-grip:hover i,.pa-fe.resizing .pa-fe-grip i{background:var(--brand,#ff7a59);width:78px}',
+      '[data-dbx-theme="light"] .pa-fe-grip i{background:rgba(0,0,0,.26)}',
       '.pa-fe.resizing{transition:none}',
       '.pa-fe.resizing,.pa-fe.resizing *{user-select:none}',
       /* 收起后的入口：贴右边缘的灰色半透明箭头（可上下拖动，单击展开，右键彻底关闭） */
