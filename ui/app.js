@@ -717,6 +717,16 @@ function renderFolderNode(f,q,stat){
 }
 
 /* 映射里的一个文件节点 → 一行文件分组；找不到的给灰色占位，绝不当成没登记 */
+/* 侧栏文件 → .http 源码浮层。打开即挂载，openPath 内部会 register。 */
+async function openSourceForFile(g){
+  const E=window.POLARIS_EDITOR;
+  if(!E||!E.openPath){ setStatus('.http 源码视图暂不可用（未连接）','warn'); return; }
+  if(!g||!g.path){ setStatus('这个分组还没有对应的 .http 文件','warn'); return; }
+  let ok=false;
+  try{ ok=await E.openPath(g.path); }catch(e){ ok=false; }
+  if(!ok) setStatus('打开 .http 源码失败：文件可能已被移动','warn');
+}
+
 function renderMapFile(node,q,stat){
   if(node.dup) return null;             // 同一文件登记两次：只认第一条
   const g=node.exists===false?null:groupOfPath(node.path);
@@ -756,6 +766,12 @@ function renderFileGroup(g,q,stat){
     if(g.error){ head.title='解析失败：'+g.error; head.querySelector('.gcount').textContent='!'; }
     else if(g.path){ head.title=g.path; }
     const act=el('span','gact');
+    /* 文件 → 源码：这是浮层现在唯一的入口（浮层里已经没有文件列表） */
+    if(DOCS.enabled&&g.path){
+      const src=el('button','x src','&lt;/&gt;'); src.title='在 .http 源码里打开这个文件';
+      src.onclick=e=>{e.stopPropagation();openSourceForFile(g);};
+      act.appendChild(src);
+    }
     const ren=el('button','x','✎'); ren.title=DOCS.enabled&&g.path?'重命名 .http 文件':'重命名'; ren.onclick=e=>{e.stopPropagation();renameGroup(g);};
     const del=el('button','x','🗑'); del.title=DOCS.enabled&&g.path?'删除 .http 文件':'删除分组'; del.onclick=e=>{e.stopPropagation();deleteGroup(g);};
     act.append(ren,del); head.appendChild(act);

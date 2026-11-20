@@ -71,7 +71,6 @@
     parsed: { requests: [], warnings: [], variables: {} },
     responses: {},     /* 请求名 -> 最近响应，供 {{name.response.body.$.x}} 跨请求引用 */
     lastRun: {},       /* 请求行号 -> ''|busy|ok|warn|err */
-    files: [],
     gutterSig: '',
     saveCount: 0,      /* 本次打开后成功保存的次数（UI 上显示 ×N，证明「点多次都能存」） */
     lastOpenAt: 0,     /* 防抖：HTML5 drop 与宿主 onDrop 同时到达 */
@@ -228,17 +227,29 @@
     if (!s) return s;
     return /\.[A-Za-z0-9]{1,8}$/.test(fileNameOf(s)) ? s : s + '.http';
   }
-  /* 在工作目录扫描结果里按「同名 + 同大小」认领原文件（拖入时没有绝对路径的补救） */
-  function matchScanned(name, size) {
-    var list = S.files || [];
+  /* 拖入时拿不到绝对路径的补救：在侧栏映射里按文件名认领已登记的文件。
+   * 不扫目录 —— 侧栏只认 wpa-workspace.json，扫描既扫不到外部文件，也会让口径回退。 */
+  function matchRegistered(name) {
     var lower = String(name || '').toLowerCase();
     if (!lower) return '';
+    var M = window.POLARIS_MAP, D = window.POLARIS_DOCS;
+    if (!M || !D || !D.map) return '';
+    var map = D.map();
+    var dir = D.dir();
+    if (!map || !dir) return '';
+    var list = M.entries(map);
     for (var i = 0; i < list.length; i++) {
-      var f = list[i];
-      if (String(f.name || '').toLowerCase() !== lower) continue;
-      if (size && f.size && Number(f.size) !== Number(size)) continue;
-      return f.path;
+      var abs = M.toAbs(dir, list[i]);
+      if (fileNameOf(abs).toLowerCase() === lower) return abs;
     }
+    return '';
+  }
+
+  /* 工作目录：当前文件所在目录 → 映射文件所在目录（浮层没有「文件目录」输入框了）。 */
+  function workspaceDir() {
+    if (S.dir) return S.dir;
+    var D = window.POLARIS_DOCS;
+    if (D && D.dir) { var d = D.dir(); if (d) return d; }
     return '';
   }
   /* 把内容写成工作目录下的副本；重名时自动加 (2)(3)…，绝不覆盖已有文件 */
@@ -327,7 +338,7 @@
       '.pa-fe-drop .t1{margin-top:8px;font-size:15px;font-weight:700;color:var(--ink,#d8dae2)}',
       '.pa-fe-drop .t2{margin-top:5px;font-size:11.5px;color:var(--dim,#a8acba)}',
       '.pa-fe-env{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:5px;border:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg-2,#1a1c24);color:var(--ink,#d8dae2);max-width:130px}',
-      '.pa-fe-main{flex:1;min-height:0;display:flex;overflow:hidden}',
+      '.pa-fe-main{flex:1;min-height:0;display:flex;overflow:hidden;position:relative}',
       '.pa-fe-side{width:238px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg-2,#1a1c24);min-height:0}',
       '.pa-fe-side.collapsed{display:none}',
       '.pa-fe-shead{display:flex;align-items:center;gap:2px;padding:7px 7px 4px;font-size:10.5px;color:var(--dim,#a8acba);letter-spacing:.04em;flex:none;user-select:none}',
@@ -477,25 +488,15 @@
       '  <span class="sp"></span>',
       '  <select class="pa-fe-env" id="paFeEnv" title="http-client.env.json 环境"></select>',
       '  <span class="pa-fe-save" id="paFeSaveState">—</span>',
-      '  <button class="pa-fe-btn primary" id="paFeOpen" title="只弹系统文件对话框（资源管理器），选中确认后才打开浮层">📂 打开</button>',
       '  <button class="pa-fe-btn" id="paFeSave" title="立即写入磁盘（Ctrl+S）；可反复点击，每次都真正落盘">保存</button>',
       '  <button class="pa-fe-btn" id="paFeSaveAs" title="另存为新的 .http 文件（系统保存对话框）">另存为</button>',
       '  <button class="pa-fe-btn" id="paFeRunAll" title="按顺序运行本文件全部请求">▶▶ 全部运行</button>',
       '  <button class="pa-fe-btn on" id="paFeAuto" title="切换自动保存">自动保存：开</button>',
+      '  <button class="pa-fe-btn on" id="paFeSideBtn" title="显示/隐藏左侧的接口一览">≡ 接口一览</button>',
       '  <button class="pa-fe-btn ghost" id="paFeClose" title="向右收起成右缘悬浮箭头（点箭头原样回来；右键箭头可彻底关闭）">⇥ 收起</button>',
       '</div>',
       '<div class="pa-fe-main">',
       '  <div class="pa-fe-side" id="paFeSide">',
-      '    <div class="pa-fe-fwrap" id="paFeFWrap">',
-      '      <div class="pa-fe-shead" id="paFeFHead"><span id="paFeFToggle" title="收起/展开文件列表"><i class="car">▾</i>文件</span>',
-      '        <button class="pa-fe-mini" id="paFeScan" title="重新扫描 .http 文件">⟳</button>',
-      '        <button class="pa-fe-mini" id="paFeNew" title="在此目录新建 .http">＋</button>',
-      '        <button class="pa-fe-mini" id="paFeImport" title="从本机导入 .http（会写入工作目录）">⇣</button>',
-      '        <button class="pa-fe-mini" id="paFeHide" title="收起整个左侧栏">‹</button>',
-      '      </div>',
-      '      <input class="pa-fe-dir" id="paFeDir" spellcheck="false" placeholder="C:\\path\\to\\apis" />',
-      '      <div class="pa-fe-flist" id="paFeList"><div class="pa-fe-empty">填写工作目录后点 ⟳ 扫描</div></div>',
-      '    </div>',
       '    <div class="pa-fe-owrap">',
       '      <div class="pa-fe-shead"><span id="paFeOToggle" title="当前 .http 文件里的全部接口，点一条跳到对应位置"><i class="car">▾</i>接口一览<b id="paFeOCount">0</b></span></div>',
       '      <div class="pa-fe-oq"><input id="paFeOq" spellcheck="false" placeholder="过滤 名称 / URL / 方法" /></div>',
@@ -628,8 +629,6 @@
     S.collapsed = false;
     if (pane) pane.classList.remove('off');
     if (edge) edge.classList.remove('on');
-    /* 恢复态启动时故意没扫目录：真正展开时补一次，左栏立刻有文件可点 */
-    if (!S.files.length && S.dir) scan();
     setTimeout(function () { if (ta) ta.focus(); }, 140);
     setTimeout(syncGutter, 400);
   }
@@ -1476,11 +1475,11 @@
    * 所以用 window focus 兜一次，避免 Promise 永远挂着。 */
   function pickByInput() {
     return new Promise(function (resolve) {
-      var inp = byId('paFeImportInput');
+      var inp = byId('paFePickInput');
       if (!inp) {
         inp = document.createElement('input');
         inp.type = 'file';
-        inp.id = 'paFeImportInput';
+        inp.id = 'paFePickInput';
         inp.accept = '.http,.rest,text/plain';
         inp.style.display = 'none';
         document.body.appendChild(inp);
@@ -1518,7 +1517,7 @@
     if (!pick || pick.cancelled) return false;
     if (pick.content != null) {
       /* 宿主只能给内容，没有路径：写进工作目录 */
-      var dir0 = S.dir || (E.dir && E.dir.value || '').trim();
+      var dir0 = workspaceDir();
       if (!dir0) { toast('没有可用工作目录，无法另存'); return false; }
       try {
         var np = await writeCopy(dir0, ensureHttpExt(pick.name || S.name || 'new.http'), docText());
@@ -1554,13 +1553,11 @@
     S.name = fileNameOf(p);
     if (E.name) E.name.textContent = S.name;
     if (E.path) { E.path.textContent = S.path; E.path.title = S.path; }
-    if (E.dir) E.dir.value = S.dir;
     if (E.idle) E.idle.hidden = true;
     S.dirty = false;
     S.savedAt = Date.now();
     savePrefs();
     try { await loadEnvs(S.dir); } catch (e) { }
-    if (S.dir) scan();
   }
 
   function afterSave(manual) {
@@ -1728,7 +1725,6 @@
       if (E.name) E.name.textContent = S.name || '(未命名)';
       if (E.path) { E.path.textContent = S.path; E.path.title = S.path; }
       if (E.idle) E.idle.hidden = true;
-      if (E.dir) E.dir.value = S.dir;
       S.saveCount = 0;
       S.loadedText = S.text;
       S.conflict = null;
@@ -1743,17 +1739,11 @@
        * 已登记过就是 no-op（registerDocFile 去重），不会打乱现有文件夹与顺序。 */
       try { if (window.POLARIS_DOCS && window.POLARIS_DOCS.register) window.POLARIS_DOCS.register(S.path); } catch (e) { }
       if (opts.restore) {
-        /* 恢复：只留入口。目录不扫（用户下次展开时才扫），也不聚焦。 */
-        renderFiles(true);
+        /* 恢复：只留右缘入口，不展开、不聚焦。 */
         armEdge();
         return true;
       }
       enterMode();
-      renderFiles(true);
-      /* 目录列表可能落后（刚拖入的副本、外部新建的文件）：当前文件不在列表里就重扫一次，
-       * 这样「再次拖入同名文件」才能按同名+同大小认领回原文件，而不是又造一份副本。 */
-      var known = (S.files || []).some(function (f) { return f.path === S.path; });
-      if (!S.files.length || !known) scan();
       if (ta) ta.focus();
       return true;
     } catch (e) {
@@ -1796,7 +1786,7 @@
   }
 
   /* 载入一份「只有内容、没有路径」的文本（拖入 / 宿主 fileTransfer / 导入）：
-   *   1) 先用「同名 + 同大小」在工作目录里认领原文件 → 命中就原地编辑；
+   *   1) 侧栏映射里已有同名文件 → 直接打开它，不造第二份；
    *   2) 否则写一份工作目录副本（重名自动加序号，绝不覆盖）；
    *   3) 连工作目录都没有 → 纯内存编辑，保存时弹「另存为」。 */
   async function openContent(name, text, opts) {
@@ -1804,16 +1794,10 @@
     enterMode();
     if (opts.path) { await openPath(opts.path); return; }
 
-    var hit = matchScanned(name, opts.size);
-    if (hit) { await openPath(hit); toast('已对应到工作目录里的同名文件，原地编辑'); return; }
+    var hit = matchRegistered(name);
+    if (hit) { await openPath(hit); toast('侧栏里已有同名文件，直接打开它：<b>' + esc(fileNameOf(hit)) + '</b>'); return; }
 
-    var dir = S.dir || (E.dir && E.dir.value || '').trim();
-    /* 列表可能还没扫过或是旧的：先刷一次再认领，能命中就别造副本 */
-    if (dir && !hit) {
-      await refreshFiles(dir);
-      hit = matchScanned(name, opts.size);
-      if (hit) { await openPath(hit); toast('已对应到工作目录里的同名文件，原地编辑'); return; }
-    }
+    var dir = workspaceDir();
     if (dir) {
       try {
         var p = await writeCopy(dir, String(name || 'imported.http'), text);
@@ -1844,56 +1828,6 @@
     setSaveState('dirty');
     toast('已载入 <b>' + esc(S.name) + '</b>（未绑定磁盘，保存时会让你选位置）');
     if (ta) ta.focus();
-  }
-
-  /* 拉一次目录列表（不做 UI 提示，给拖入时的「认领原文件」用） */
-  async function refreshFiles(dir) {
-    var d = String(dir || '').trim();
-    if (!d) return false;
-    try {
-      var r = await invoke('http/listFiles', { dir: d, recursive: true });
-      S.dir = r.dir || d;
-      S.files = r.files || [];
-      if (E.dir) E.dir.value = S.dir;
-      renderFiles(true);
-      savePrefs();
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  async function scan() {
-    var dir = (E.dir && E.dir.value || '').trim();
-    if (!dir) { toast('请先填写工作目录'); if (E.dir) E.dir.focus(); return; }
-    if (E.list) E.list.innerHTML = '<div class="pa-fe-empty">扫描中…</div>';
-    try {
-      var r = await invoke('http/listFiles', { dir: dir, recursive: true });
-      S.dir = r.dir || dir;
-      S.files = r.files || [];
-      if (E.dir) E.dir.value = S.dir;
-      renderFiles();
-      savePrefs();
-      if (!S.files.length && E.list) E.list.innerHTML = '<div class="pa-fe-empty">该目录下没有 .http / .rest 文件。<br>点 ＋ 新建，或点 📂 打开。</div>';
-    } catch (e) {
-      S.files = [];
-      if (E.list) E.list.innerHTML = '<div class="pa-fe-empty">扫描失败：' + esc(e.message || e) + '</div>';
-    }
-  }
-
-  function renderFiles(keepEmpty) {
-    if (!E.list) return;
-    if (!S.files.length) {
-      if (!keepEmpty) E.list.innerHTML = '<div class="pa-fe-empty">该目录下没有 .http / .rest 文件。</div>';
-      return;
-    }
-    var out = [];
-    S.files.forEach(function (f) {
-      var rel = relPath(S.dir, f.path);
-      out.push('<button class="pa-fe-fitem' + (f.path === S.path ? ' on' : '') + '" data-path="' + esc(f.path) +
-        '" title="' + esc(f.path) + '">' + esc(f.name) + '<small>' + esc(rel) + '</small></button>');
-    });
-    E.list.innerHTML = out.join('');
   }
 
   async function loadEnvs(dir) {
@@ -2057,25 +1991,8 @@
     toast('已运行 ' + list.length + ' 个请求');
   }
 
-  /* ===================== 新建 / 打开 / 拖入 ===================== */
-  function newFile() {
-    var dir = (E.dir && E.dir.value || '').trim();
-    if (!dir) { toast('请先填写工作目录'); if (E.dir) E.dir.focus(); return; }
-    PD.ask('新建 .http 文件', { label: '文件名（自动补 .http）', value: 'new.http', okText: '创建' }, function (v) {
-      if (v == null) return;
-      var name = String(v).trim();
-      if (!name) return;
-      if (!/\.(http|rest)$/i.test(name)) name += '.http';
-      var p = pathJoin(dir, name);
-      var tpl = '### 新建请求\n# @name request1\nGET https://httpbin.org/get\nAccept: application/json\n\n';
-      invoke('http/writeFile', { path: p, content: tpl })
-        .then(function () { return scan(); })
-        .then(function () { return openPath(p); })
-        .catch(function (e) { toast('创建失败：' + esc(e.message || e)); });
-    });
-  }
-
-  /* 主入口：只弹系统文件对话框选一个文件（顶栏按钮 / 面板「📂 打开」都走这里）。
+  /* ===================== 打开 / 拖入 ===================== */
+  /* 主入口：只弹系统文件对话框选一个文件（顶栏「▤ 打开 .http」与侧栏「＋ 挂载 .http」都走这里）。
    * v0.6.1：**不先展开浮层** —— 取消就什么都不发生，选中确认后才由 openPath 展开。 */
   async function pickAndOpen() {
     var pick;
@@ -2086,7 +2003,7 @@
       return;
     }
     if (!pick) {
-      toast('当前环境没有可用的文件选择器，请填写工作目录后点 ⟳ 扫描，或直接拖入文件');
+      toast('当前环境没有可用的文件选择器：请把文件直接拖进来，或用侧栏底部「＋ 挂载 .http」');
       return;
     }
     if (pick.cancelled) return;
@@ -2232,7 +2149,6 @@
         S.dir = d.workDir || d.homeDir || '';
       } catch (e) { }
     }
-    if (E.dir && !E.dir.value) E.dir.value = S.dir || '';
     return p;
   }
 
@@ -2246,11 +2162,7 @@
   async function open() {
     enterMode();
     if (!S.path && E.idle) E.idle.hidden = false;
-    if (!S.files.length && S.dir) scan();
-    setTimeout(function () {
-      if (S.path && ta) ta.focus();
-      else if (E.dir) E.dir.focus();
-    }, 60);
+    setTimeout(function () { if (S.path && ta) ta.focus(); }, 60);
   }
 
   /* ===================== 事件绑定 ===================== */
@@ -2260,17 +2172,13 @@
     E.saveState = byId('paFeSaveState');
     E.foot = byId('paFeFoot');
     E.env = byId('paFeEnv');
-    E.dir = byId('paFeDir');
-    E.list = byId('paFeList');
     E.idle = byId('paFeIdle');
     E.auto = byId('paFeAuto');
     E.save = byId('paFeSave');
     E.saveAs = byId('paFeSaveAs');
-    E.open = byId('paFeOpen');
     var side = byId('paFeSide');
 
     /* 工具条 */
-    E.open.onclick = function () { pickAndOpen(); };
     E.save.onclick = function () { doSave(true); };
     E.saveAs.onclick = function () { saveAs(); };
     byId('paFeRunAll').onclick = function () { runAll(); };
@@ -2331,7 +2239,9 @@
     var tree = byId('tree');
     if (tree) tree.addEventListener('pointerdown', function (e) {
       var it = e.target && e.target.closest ? e.target.closest('.req-item,.group-head') : null;
-      if (it && S.open && !S.collapsed) collapse(true);
+      /* 点分组头上的 ✎ / 🗑 / </> 不要先收起浮层：前者是重命名删除，后者正要打开源码 */
+      var act = e.target && e.target.closest ? e.target.closest('.gact') : null;
+      if (it && !act && S.open && !S.collapsed) collapse(true);
     }, true);
     E.auto.onclick = function () {
       S.autoSave = !S.autoSave;
@@ -2346,23 +2256,14 @@
       updateFoot();
     };
 
-    /* 文件栏 */
-    byId('paFeScan').onclick = function () { scan(); };
-    byId('paFeNew').onclick = function () { newFile(); };
-    byId('paFeImport').onclick = function () { pickAndOpen(); };
-    byId('paFeHide').onclick = function () { if (side) side.classList.add('collapsed'); };
-
-    E.dir.addEventListener('change', function () { S.dir = E.dir.value.trim(); savePrefs(); });
-    E.dir.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); S.dir = E.dir.value.trim(); scan(); }
-    });
-
-    E.list.addEventListener('click', function (e) {
-      var b = e.target.closest ? e.target.closest('.pa-fe-fitem') : null;
-      if (!b) return;
-      var p = b.getAttribute('data-path');
-      if (p) openPath(p);
-    });
+    /* 左栏只剩接口一览：收起整栏的按钮挂在它的标题上 */
+    /* 左栏只有一个「接口一览」，开关放顶栏：收起后仍要有唯一入口，不能靠看不见的细条 */
+    var sideBtn = byId('paFeSideBtn');
+    function setSide(on) {
+      if (side) side.classList.toggle('collapsed', !on);
+      if (sideBtn) sideBtn.classList.toggle('on', !!on);
+    }
+    if (sideBtn) sideBtn.onclick = function () { setSide(!side || side.classList.contains('collapsed')); };
 
     /* ---- 接口一览 ---- */
     E.olist = byId('paFeOList');
@@ -2558,8 +2459,6 @@
       pickNative: pickNative,
       save: function () { return doSave(true); },
       saveAs: saveAs,
-      scan: scan,
-      matchScanned: matchScanned,
       /* v0.5.0：接口一览 / 高亮 / 折叠 的调试与验证入口 */
       outline: renderOutline,
       gotoLine: gotoLine,

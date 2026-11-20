@@ -142,8 +142,8 @@ ok('README 记录了编辑器能力与限制', () => {
 
 ok('v0.4.0：打开（系统对话框）/ 拖入 / 可反复保存 就位', () => {
   const ed = read('ui/http-editor.js');
-  ['http/pickFile', 'paFeOpen', 'paFeSaveAs', 'saveAs', 'pickNative', 'dropFiles', 'bindDrop',
-    'onDrop', 'matchScanned', 'writeCopy', 'saveCount'].forEach(k => assert(ed.includes(k), '缺少 ' + k));
+  ['http/pickFile', 'paFeSaveAs', 'saveAs', 'pickNative', 'dropFiles', 'bindDrop',
+    'onDrop', 'matchRegistered', 'writeCopy', 'saveCount'].forEach(k => assert(ed.includes(k), '缺少 ' + k));
   assert(/doSave\([\s\S]{0,200}!S\.path[\s\S]{0,120}saveAs\(\)/.test(ed), '未绑定磁盘时 doSave 必须转另存为');
   assert(ed.includes("noClobber"), '复制副本需 noClobber 防覆盖');
   const bk = read('backend/src/main.rs');
@@ -152,6 +152,22 @@ ok('v0.4.0：打开（系统对话框）/ 拖入 / 可反复保存 就位', () =
   /* Ctrl+S 不得在 .http 模式下再触发请求 tab 保存 */
   const app = read('ui/app.js');
   assert(/inEditor[\s\S]{0,80}saveCurrent/.test(app), 'app.js 的 Ctrl+S 需为编辑器让路');
+});
+
+ok('S2.5c：浮层只剩「接口一览 + 源码」，文件入口收归侧栏', () => {
+  const ed = read('ui/http-editor.js');
+  const app = read('ui/app.js');
+  /* 浮层里不该再有文件列表与被删掉的扫目录 API */
+  ['paFeDir', 'paFeList', 'paFeScan', 'paFeNew', 'paFeImport', 'paFeOpen',
+    'http/listFiles', 'renderFiles', 'refreshFiles', 'matchScanned'].forEach(k => {
+    assert(!ed.includes(k), '浮层里不应再有 ' + k);
+  });
+  /* 工作目录改为从映射文件所在目录推导，另存为 / 副本仍要有落点 */
+  assert(ed.includes('function workspaceDir'), '缺少 workspaceDir()');
+  assert(/workspaceDir\(\)[\s\S]{0,80}POLARIS_DOCS/.test(ed), 'workspaceDir 需回落到映射目录');
+  /* 侧栏文件分组要有进源码的入口 */
+  assert(app.includes('openSourceForFile'), '缺少侧栏 → 源码入口');
+  assert(/openSourceForFile[\s\S]{0,200}openPath/.test(app), 'openSourceForFile 需调 openPath');
 });
 
 ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
@@ -244,8 +260,8 @@ ok('v0.6.1：打开 .http 只弹对话框；启动只挂箭头', () => {
   assert(/function armEdge\(/.test(ed), '缺少 armEdge');
   assert(/\{ restore: true \}/.test(ed), '启动恢复需要传 restore 标记');
 
-  /* 展开时才补扫目录 */
-  assert(/function expand\(\)[\s\S]{0,600}scan\(\)/.test(ed), '展开时应按需扫描目录');
+  /* S2.5c：展开也不再扫目录 —— 侧栏是唯一文件入口，浮层只读当前文件 */
+  assert(!/function expand\(\)[\s\S]{0,600}scan\(\)/.test(ed), '展开时不应再扫描目录');
 });
 
 ok('v0.6.2：自带示例 + SSE 流式', () => {

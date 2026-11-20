@@ -110,6 +110,7 @@
 .pa-root .group-head:hover .gcount{display:none}
 .pa-root .gact .x{width:20px;height:20px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--dimmer);font-size:12px}
 .pa-root .gact .x:hover{color:var(--brand);background:var(--surface-2)}
+.pa-root .gact .x.src{width:24px;font-size:9.5px;letter-spacing:-.4px;font-family:var(--mono,Consolas,monospace)}
 .pa-root .group.collapsed .reqs{display:none}
 .pa-root .reqs{padding:2px 0 4px 8px}
 .pa-root .req-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r-sm);cursor:pointer;transition:.12s;position:relative}
