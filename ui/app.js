@@ -1308,7 +1308,7 @@ async function send(){
       resp = {
         status: r.status, statusText: r.statusText || '', ok: !!r.ok,
         timeMs: r.timeMs || (t1 - t0), size: r.size || respSize(ct, text, r.isBase64) || 0,
-        contentType: ct, headers: r.headers || {}, text, isBinary: isBin, blobUrl, url,
+        contentType: ct, headers: r.headers || {}, text, isBinary: isBin, isBase64: !!r.isBase64, blobUrl, url,
         parsed: parsed.ok ? parsed.value : undefined,
         sse: !!r.sse, sseTruncated: !!r.sseTruncated,
       };
@@ -1361,7 +1361,11 @@ function recordHistory(t,resp,method,url){
     DOCS.history.record({
       path:ref.file,
       req:{ line:ref.line, method:method, url:t.url.trim(), name:ref.name, interfaceId:ref.interfaceId||null },
-      response:{ status:resp.status, ok:resp.ok, timeMs:resp.timeMs, size:resp.size },
+      response:{ status:resp.status, ok:resp.ok, timeMs:resp.timeMs, size:resp.size,
+                 contentType:resp.contentType||'', isBinary:!!resp.isBinary },
+      /* S4.3：二进制响应的 body 在 resp.text 里是 base64，交给 record 挪去 .bin。
+         文本响应不传，jsonl 里连正文都不留（只留 size）。 */
+      bodyBase64:(resp.isBinary&&resp.isBase64)?(resp.text||''):'',
       url:url
     }).then(r=>{
       if(!r) return;
@@ -2037,7 +2041,7 @@ window.POLARIS_API = {
         status:r.status, statusText:r.statusText||'', ok:!!r.ok,
         timeMs:r.timeMs||(performance.now()-t0),
         size:r.size||respSize(ct,text,r.isBase64)||0,
-        contentType:ct, headers:r.headers||{}, text:text, isBinary:isBin, blobUrl:blobUrl,
+        contentType:ct, headers:r.headers||{}, text:text, isBinary:isBin, isBase64:!!r.isBase64, blobUrl:blobUrl,
         url:url, parsed:parsed.ok?parsed.value:undefined
       };
       window.POLARIS_API.showResponse(resp);

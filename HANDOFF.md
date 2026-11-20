@@ -9,11 +9,11 @@
 
 ## 0. 一句话现状
 
-1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）+ S4.1（身份纯函数）+ S4.2（赋予时机）已完成**，
-`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1/4.2` 全绿，**下一步是 M4 的 S4.3 调用历史本体**（轮转 / 读取 / 二进制外置 / .gitignore），
-之后是 S4.4 → S4.5 → S4.6 → M5 → M6 → M7。
-S4.2 于 2026-11-20 收官：发送成功后 `record()` 先把 `# @file_id` / `# @interface_id` 写进 .http 并等写盘成功，
-再追加 `_history/<collection>/<interfaceId>.jsonl` 一行；写身份失败就不写历史。
+1.0.0 的 **M1（文件真源）+ M2（双视图）+ M3（交互）+ S4.1/4.2/4.3（身份与历史）已完成**，
+`S2.5a/b/c/d + S2.6 + S3.1/2/3 + S4.1/4.2/4.3` 全绿，**下一步是 M4 的 S4.4「接入发送链路收尾」**，
+之后是 S4.5 → S4.6 → M5 → M6 → M7。
+S4.3 于 2026-11-20 收官：**历史每个接口保留 10 条（用户拍板）**，超了就地轮转；
+二进制响应挪去 `_history/<collection>/<id>-<at>.bin`，jsonl 只留 `bodyRef`。
 
 ---
 
@@ -29,9 +29,9 @@ node -v        # 需要 >= 18，建议 22
 #    再把 .workbuddy/memory/ 解压到该工作区的 .workbuddy/ 下
 #    （Mac 上双击用「归档实用工具」解压即可；包内中文文件名的 UTF-8 标志已校验过）
 
-# 3) 自检：应当全绿，且 git 历史完整（37 个提交，最新一条是 S4.1）
+# 3) 自检：应当全绿，且 git 历史完整（40 个提交，最新一条是 S4.3）
 cd warren-polaris-api
-git log --oneline | head -3      # 最新一条应是 S4.1 身份纯函数
+git log --oneline | head -3      # 最新一条应是 S4.3 调用历史本体
 git status --short               # 应为空（或只有 HANDOFF.md）
 node tools/all.mjs               # 13 个文件全绿
 
@@ -43,7 +43,7 @@ node dev/dev-server.mjs
 `verify-ui/check-*.mjs` 里写的是 `path.resolve(..., '..', 'warren-polaris-api')`，
 靠的是相对位置，不是绝对路径。
 
-> **⚠ 仓库里没有的东西**：`verify-ui/`（十二个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
+> **⚠ 仓库里没有的东西**：`verify-ui/`（十三个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
 > - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261120.zip` 里
@@ -51,7 +51,7 @@ node dev/dev-server.mjs
 >   `dev-workspace` 缺失时代码会自己种一份，只是侧栏初始状态跟现在不同。
 
 **新会话开场白建议直接说**：
-> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M4 的 S4.1 开始。口径不许改。
+> 读 `warren-polaris-api/HANDOFF.md` 和 `docs/plan-v1.0.0.md`，从 M4 的 S4.4 开始。口径不许改。
 
 ---
 
@@ -88,49 +88,45 @@ node dev/dev-server.mjs
 | S3.2 字号缩放 | ✅ | `--pa-fs`/`--pa-lh` 挂在 `.pa-fe`，textarea / 高亮层 / 行号 / 折叠箭头 / ▶ 同源；`LINE_H` 常量换成 `lineH(fs)`；Ctrl+滚轮 12–28px、Ctrl+0 复位、`fontSize` 落偏好。**踩到真坑**：`app.css` 的 `.pa-root textarea{font-size:inherit}` 特异性 (0,1,1) 压过单类 `.pa-fe-text`，textarea 一直 12.5px、高亮层却变大 —— 规则改 `.pa-fe .pa-fe-text` 才压住。`verify-ui/check-s32.mjs` 25 项 |
 | S3.1 浮层拖拽 | ✅ | 标题条拖动 → `--fe-dx/--fe-dy` 位移（不改 left/top，宽度不会被压变形），rAF 合帧 + `setPointerCapture`；整块夹在 `.work` 内，双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，scrollLeft 被顶偏 26px 导致浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S2.6 示例自动挂载 | ✅ | 含 `POLARIS_MAP.save` 并发写修复（tmp 名唯一 + 串行） |
+| S4.3 调用历史本体 | ✅ | `ui/http-history.js` 补四件事：① **轮转** —— `MAX_LINES = 10`（用户 2026-11-20 拍板），追加时超限就在同一次写里扔掉最旧的；同路径 read-modify-write 串成一条链（`serial`），连发不会互相踩（宿主共用 `<path>.tmp`）。② **读取** —— `parseJsonl` 坏行（截断 JSON / 不是对象）跳过并计 `bad`，一行坏不拖垮整份；文件不存在返回空数组。③ **二进制外置** —— `contentType` 命中 image/audio/video/font 或 `application/(octet-stream\|zip\|gzip\|pdf\|rar…)` 时，body 落 `_history/<collection>/<id>-<at>.bin`，jsonl 只留 `bodyRef` / `bodyEncoding` / `bodyBytes`；**宿主只有文本写**，所以 `.bin` 里是 base64（靠 `bodyEncoding` 标明），重名往后找序号不覆盖；上限是 `maxBodyBytes` 旋钮（**默认不设限，等拍板**），超了记 `bodyOmitted: TOO_LARGE`。④ **`.gitignore`** —— 只补一行 `_history/`，已有就不动、末尾缺换行也接得上。`app.js` 的 `recordHistory` 把 `contentType/isBinary/isBase64/bodyBase64` 传下去（只有真 base64 才外置）。`tools/history.test.mjs` 20 项 + `verify-ui/check-s43.mjs` 30 项 |
 | S4.2 赋予时机 | ✅ | 新增 `ui/http-history.js` 的 `record()`：原文上插身份 → `writeText(baseMtime)` 成功 → 才追加 `_history/<collection>/<interfaceId>.jsonl`。写身份失败（READONLY / 冲突重试 2 次 / NO_SEGMENT）一律不写历史。`send()` 里 `recordHistory()` 异步旁路调用，成功后回填 `docRef.interfaceId/fileId` 并对齐 `baseMtime`。**定位顺序**：先在原文本定位段、再插 file_id（反了行号就漂）。顺带修 `patchGroup` 丢 `fileVars` 的老 bug。`tools/history.test.mjs` 9 项 + `verify-ui/check-s42.mjs` 23 项 |
 | S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（`crypto` 优先、可注入 rnd）；`insertFileId` 落在第一个 `###` 之前并与 `###` 隔一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` / `index` 两种定位）；`dedupe` 同文件重复 id 后一个换新；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口/重复斜杠/末尾斜杠/fragment 抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接、不重序列化**，插入行沿用文件自己的行尾（CRLF 不掺裸 LF）。`tools/identity.test.mjs` 9 项 |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → 13 文件全绿（`verify.mjs` 52 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项、`identity.test.mjs` 9 项、`history.test.mjs` 9 项等）
-- `verify-ui/` 十二个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23
+- `node tools/all.mjs` → 13 文件全绿（`verify.mjs` 52 项、`map.test.mjs` 22 项、`store.test.mjs` 31 项、`identity.test.mjs` 9 项、`history.test.mjs` **20** 项等）
+- `verify-ui/` 十三个端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30
 
 ---
 
-## 4. 下一步：M4 身份与历史 · S4.3 `HttpHistory` 本体
+## 4. 下一步：M4 · S4.4「接入发送链路收尾」
 
-> 目标：一个接口一个 jsonl；追加第 11 条时轮转（**条数等用户拍板**：3 / 10 / 30）；
-> 二进制响应外置成 `.bin`，jsonl 只留 `bodyRef`；坏行跳过不报错。
-> 验收：`tools/history.test.mjs` 追加 12 条后行数 == 上限且首条是第 3 次；
-> 写 2 MB 二进制后 jsonl 行 < 8 KB 且 `.bin` 存在；截断的 JSON 不影响其余行。
+> 目标：每次**拿到响应**都落一条历史，且历史出问题绝不拖累请求本身。
+> 这一节大部分已经随 S4.2/S4.3 提前落地了，剩下的不是写新功能，是**把边界钉死并补验**：
+>
+> 1. **两条路并存不打架**：`send()` 里 `POLARIS_HTTP_WS.onResponse`（旧，写 `_results/`）与
+>    `recordHistory()`（新，写 `_history/`）同时被调用。两者写到不同目录，目前不冲突；
+>    1.0.0 保持并存，**1.0.1 再删旧的**。别在这步手痒删 `onResponse`，`http-workspace.js` 还靠它。
+> 2. **非 2xx 记不记**：现在的实现是"拿到响应就记"（`4xx/5xx` 进历史，`status` 字段原样留着），
+>    只有**网络异常 / 用户中途停止**才不记（那时没有响应可记）。这条写进 README 的行为说明。
+> 3. **连发 5 次 = 5 行**：`check-s43` 已经跑到 12 次，S4.4 只需要一个小 e2e 覆盖
+>    「5 连发（含一次 500）→ 5 行、状态各异、文件只改一次（首次插身份）」。
+> 4. **只读只提示一次**：`check-s42` 已覆盖，别重复造轮子，跑一遍确认没退化即可。
 
-现在已有的零件（别重复造）：
-- `ui/http-history.js` 已有 `createHistory({store,dir}).record()`（S4.2）、`appendLine()`、`historyPath()`、`entryFor()`。
-  **record 已经把"先 id 后历史"的顺序做完了**，S4.3 只在 `appendLine` 前后补轮转与二进制外置，
-  不要把顺序逻辑搬来搬去。
-- `ui/http-identity.js`：`insertFileId / insertInterfaceId / dedupe / fingerprint`。
-- `ui/http-store.js`：`createStore(host)`、`writeText(path,text,{baseMtime})`、`readOne`、`locateSegment`。
-  Node 里用 `tools/fs-host.mjs` 的 `fsHost()` 造宿主。
-- **只读夹具不要用 `chmod 0444`**：测试常在 root 下跑，root 无视权限位会写出假绿；
-  用 `fsHost({ write: async () => { throw new Error('EACCES') } })` 注入，语义等价且稳定。
+现成零件（别重复造）：
+- `ui/http-history.js`：`createHistory({store, dir, max, maxBodyBytes})` → `record / read / rotate / ensureGitignore`；
+  模块级还有 `parseJsonl / rotateText / writeBody / isBinaryContentType / b64Bytes`。
 
-S4.3 要做的事：
-1. `append()` 里加轮转（读全文 → 取后 N 行 → tmp+rename），N 取用户拍板值；
-2. `read(collection, iface)` 解析 jsonl，坏行跳过；
-3. 二进制判定（`contentType` 命中 image/audio/octet-stream/zip）→ 落 `_history/<collection>/<id>-<seq>.bin`，
-   jsonl 记 `bodyRef`（大小上限那一项也等拍板）；
-4. `ensureGitignore()` 只往资源目录 .gitignore 追加 `_history/` 一行（已存在就不动）。
+之后按 `docs/plan-v1.0.0.md` 顺序：**S4.5 历史面板 → S4.6 询问式接回 → M5 示例与文档 → M6 → M7**。
 
-之后按 `docs/plan-v1.0.0.md` 顺序：**S4.4 接入发送链路收尾 → S4.5 历史面板 → S4.6 询问式接回 → M5 → M6 → M7**。
-
-> ⚠ S4.3 开工前先问用户「历史保留条数」，这个数决定轮转与测试断言，猜错要返工。
+> ⚠ S4.5 开工前先看这一条：历史文件里现在**没有正文**（只有 `size` 与二进制的 `bodyRef`），
+> 面板要显示"响应预览"得自己回读 `.bin` 或干脆不显示正文 —— 这是 S4.3 定下的取舍，别在面板里偷偷改回去。
 
 ---
 
 ## 5. 待用户拍板（**别自己决定，问**）
 
 1. `.pa-fe` 浮层偏矮，是否加「⤢ 铺满」按钮？
-2. 历史保留条数：3 / 10 / 30？
+2. ~~历史保留条数 3 / 10 / 30？~~ **已定：10 条**（2026-11-20 拍板，已落进 `MAX_LINES`）
 3. 二进制响应（`.bin`）单文件 5 MB 上限是否合适？
 4. 后端 4 个新命令**只在 Mac/Linux 侧编译验证过吗**——若是，需等 CI 或本机 `cargo` 跑一次。
    Windows 侧没有 `cargo`，产物一直靠 GitHub Actions 构建。
