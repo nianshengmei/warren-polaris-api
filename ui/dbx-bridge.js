@@ -92,5 +92,9 @@
     get backendInfo() { return state.backendInfo; },
     set backendInfo(v) { state.backendInfo = v; },
   };
-  Object.assign(bridge, getters);
+  /* 必须用 defineProperties：Object.assign 只搬「当前值」，访问器会在这一瞬间被求值成常量。
+   * 之前写成 Object.assign(bridge, getters)，导致 readyOk 永远等于加载那一刻的 false，
+   * 于是 http-workspace 的 hostAvailable() 恒为假 —— 结果保存（_results）与扫描整条链路静默失效。
+   * 这不是 1.0.0 的改动，是 v0.6.x 起就躺着的老坑，S4.4 收口时按真实链路摸出来的。 */
+  Object.defineProperties(bridge, Object.getOwnPropertyDescriptors(getters));
 })();
