@@ -23,7 +23,9 @@ const UI_DIR = path.join(ROOT, 'ui');
 const WORK = path.resolve(process.env.WORKDIR || path.join(ROOT, '..', 'dev-workspace'));
 const RESULTS = path.join(WORK, '_results');
 const PORT = Number(process.env.PORT || 8899);
-const HOST = '127.0.0.1';
+/* 绑定 0.0.0.0 才能被反向代理/公网隧道接到；本机 127.0.0.1:PORT 照样能开。
+ * 想只在本机用，起服务时给 HOST=127.0.0.1。 */
+const HOST = process.env.HOST || '0.0.0.0';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
