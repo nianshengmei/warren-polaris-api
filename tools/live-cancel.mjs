@@ -22,7 +22,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -44,11 +44,13 @@ function findBin() {
   if (process.env.BIN) return process.env.BIN;
   const exe = process.platform === 'win32' ? '.exe' : '';
   const name = 'dbx-plugin-warren-polaris-api' + exe;
-  for (const p of [
+  /* 取最新编出来的那个：debug 刚编、release 还停在旧版本时，别拿旧产物测新代码 */
+  const hits = [
     path.join(root, 'backend/target/release', name),
     path.join(root, 'backend/target/debug', name),
-  ]) if (existsSync(p)) return p;
-  return null;
+  ].filter((p) => existsSync(p)).map((p) => ({ p, t: statSync(p).mtimeMs }))
+    .sort((a, b) => b.t - a.t);
+  return hits.length ? hits[0].p : null;
 }
 
 const BIN = findBin();

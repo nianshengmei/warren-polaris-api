@@ -335,11 +335,13 @@ Accept: application/json
 
 ### SSE（`text/event-stream`）
 
-- 请求头写了 `Accept: text/event-stream`，或响应 `Content-Type` 是 `text/event-stream` 时按流式处理：边收边攒，**最多读 10 秒 / 512 KiB**，到点或对端断开就收尾；
-- 收到的 `data:` 行原样贴进响应框（raw 视图），响应区标「SSE 已结束 / SSE 已截断」；
-- 流式只在 sidecar 侧生效，不影响普通请求；SSE 请求固定 10 秒上限，避免长连接把界面一直挂住；
-- **界面不是逐字蹦出来的**：sidecar 收完（对端断开或到 10 秒上限）才把整段正文交回，所以看到的是一次性贴好的一段 `data:`；
-- 想验证「流是通的」：示例 6 号（`httpbingo.org/sse?count=3`）推 3 条就结束，正常情况下响应区标「SSE 已结束」；标「已截断」说明对端还在推、只是被 10 秒上限收尾了——流本身没问题。
+- 请求头写了 `Accept: text/event-stream`，或响应 `Content-Type` 是 `text/event-stream` 时按流式处理；
+- **界面是逐块蹦出来的**：sidecar 每切出一个完整事件（空行结尾）就用 `polaris/http/stream` 事件推给 UI，响应区边收边画、自动滚到底，⏹ 随时能停；
+- 走的是宿主的 **`host.events`** 通道（`manifest.json` 已声明）。单条事件只有几 KB，**总量不受「单条 JSON 消息 8 MiB」限制** —— 流多长都行，「10 秒 / 512 KiB」这两道墙没有了；
+- 时长改由**「请求超时」**控制（默认 120 秒），不再固定 10 秒；到点仍会标「SSE 已截断」；
+- 老宿主没转发事件时会**自动退回** `512 KiB / sseMs` 的一次性返回：界面至少还有内容，不会空白（状态栏会提示「流式事件没到界面」）；
+- 收到的 `data:` 行原样贴进响应框（raw 视图），结束标「SSE 已结束 / SSE 已截断」；
+- 想验证「流是通的」：示例 6 号（`httpbingo.org/sse?count=3`）推 3 条就结束，正常标「SSE 已结束」。
 
 ### 支持的 IDEA `.http` 语法
 

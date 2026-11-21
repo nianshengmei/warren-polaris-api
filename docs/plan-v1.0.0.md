@@ -87,7 +87,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 | **M3 交互** | S3.1–S3.4 | 浮层可拖可拉大、字号可缩、身份行可辨 | 可与 M1 并行 |
 | **M4 身份与历史** | S4.1–S4.6 | 每次调用落一行 jsonl，接口身份可追溯 | M1（需文件写入） |
 | **M5 示例与文档** | S5.1–S5.4 | 一套 demo、README 写明代价、seed 退役 | M4 |
-| **M6 取消** | S6.1–S6.3 | 点停止能在 2 秒内断开大响应 ✅ | 独立 |
+| **M6 取消与流式** | S6.1–S6.4 | 点停止能在 2 秒内断开大响应；SSE 边收边推 ✅ | 独立 |
 | **M7 格式冻结与发版** | S7.0–S7.4 | 撤回 0.6.4 上架、冻结数据格式、1.0.0 出包并新开商店 PR | 全部 |
 
 并行建议：M3 与 M1/M2 无代码交集（一个动 `http-editor.js`/`app.css`，一个动 `http-store.js`/`http-file.js`），可穿插做。
@@ -326,7 +326,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 
 ---
 
-## M6 取消（L1）✅ 2026-11-21 完成
+## M6 取消与订阅式流（L1）✅ 2026-11-21 完成
 
 ### S6.1 backend 分块读 ✅
 
@@ -356,6 +356,33 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 - **实际**：`tools/live-cancel.mjs` 在真二进制上跑 —— 512 KiB 二进制响应 SHA-256 一致、
   784 KiB 上传体（随机字节，与那支 wav 同量级）SHA-256 一致、SSE 11 事件完整且 `sseTruncated=false`、
   `/hang` 在 800 ms 超时设定下 816 ms 报错。`verify-ui` 的 s42（23）/s43（30）也照旧全绿。
+
+### S6.4 订阅式流：SSE 不再攒到最后 ✅ 2026-11-21
+
+- **目标**：打破「SSE 攒到 512 KiB / 10 秒再一次性给」的两道墙，改成边收边推。
+- **为什么必须换通道**：`invoke` 是同步 RPC，一次只能回一个结果；把整个流塞进那一条
+  JSON 消息，就必然撞上宿主 8 MiB 的单消息上限（实测：文本 8 MB、二进制 6 MB 直接失败，
+  而且失败形态是**静默挂死**——SDK 只往 stderr 打一行，客户端永远等不到响应）。
+- **做法**：SDK 的 handler 本来就拿得到 `emitter`，用 `emitter.event` 推 JSON-RPC 通知；
+  宿主 `pluginHostBridge.forwardEvent` 校验 `host.events` 权限后
+  `postMessage({source:"dbx-host",version:1,type:"event",method,params})` 给 iframe。
+  单条事件几 KB，总量不受限 —— 这就是「订阅式」而非「攒包式」。
+- **改动**：
+  - `backend/src/main.rs`：`handle_request(params, emitter)`；SSE 分支按空行切完整事件后逐块发
+    `polaris/http/stream`；先发 `phase:"open"` 探测，发不出去就退回老的 512 KiB 路径；
+    流式返回体**不带 body**，只给 `size` / `timeMs` / `streamed:true`；
+    `sse_ms` 默认改用 `timeoutMs`（120 秒），不再固定 10 秒。
+  - `manifest.json`：加 `host.events`；`PluginMetadata` 加 `"events"` capability。
+  - `ui/dbx-bridge.js`：`onEvent(method, cb)`，只认 `source:"dbx-host" && type:"event"`。
+  - `ui/app.js`：发送带 `stream/streamRequestId`；收到块就追加到 `t.streamBuf` 并以 80 ms 节流
+    画到独立的流式视图（不动响应子页）；**等 `done` 事件再定稿**（事件与 RPC 响应是两条路）。
+  - `dev/`：演示站假宿主也走同一条路（`/__dev/invoke` 回 `text/event-stream`，`mock-host.js` 转 postMessage）。
+- **验收**：
+  - `DS_KEY=... node tools/live-sse-stream.mjs`（真 sidecar + 真 DeepSeek）：62 块、16.9 KB、
+    open 107 ms、首块 108 ms、done 1058 ms、块间跨度 950 ms，7 项全过；
+  - `verify-ui/check-s62.mjs` 10 项（真浏览器：220 ms 内已有内容、内容持续增长、结束交回普通视图、
+    别的 requestId 不串台）；
+  - 演示站全链路实测：64 条事件、首块 143 ms、`streamed:true`、`body` 为空。
 
 ---
 

@@ -84,6 +84,38 @@
     if (plugin && plugin.setTitle) { try { await plugin.setTitle(title); } catch (e) { /* ignore */ } }
   };
 
+  /* ---------- 宿主事件订阅（manifest 需声明 host.events） ----------
+   * 后端（sidecar）用 JSON-RPC 通知发事件，宿主 `pluginHostBridge.forwardEvent`
+   * 校验过 host.events 权限后，以 `postMessage({source:"dbx-host", version:1,
+   * type:"event", method, params})` 投递给 iframe。
+   *
+   * 这就是「订阅式传输」的落点：SSE 的每一块都走这里，单条只有几 KB，
+   * 总量不再受「单条 JSON 消息 8 MiB」的限制 —— 流多长都行。
+   *
+   * 收不到事件（老宿主 / 没授权）时不会报错，onEvent 返回的退订函数照常可用；
+   * 后端探测不到消费者会自己退回一次性返回，所以这里静默降级即可。
+   */
+  const evtListeners = new Map();
+  function onHostMessage(e) {
+    const d = e && e.data;
+    if (!d || d.source !== "dbx-host" || d.version !== 1 || d.type !== "event") return;
+    const set = evtListeners.get(d.method);
+    if (!set || !set.size) return;
+    for (const fn of Array.from(set)) {
+      try { fn(d.params || {}); } catch (err) { /* 一个订阅者抛错不影响其它订阅者 */ }
+    }
+  }
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("message", onHostMessage);
+  }
+  bridge.onEvent = function (method, fn) {
+    if (typeof method !== "string" || typeof fn !== "function") return function () {};
+    let set = evtListeners.get(method);
+    if (!set) { set = new Set(); evtListeners.set(method, set); }
+    set.add(fn);
+    return function () { set.delete(fn); if (!set.size) evtListeners.delete(method); };
+  };
+
   const getters = {
     get locale() { return state.locale; },
     get appearance() { return state.appearance; },

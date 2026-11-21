@@ -17,6 +17,10 @@ S7.1 于同日收官：**数据格式冻结成 v1**，写在 `docs/data-format.m
 `_history/_meta.json` 只建不覆盖、读到更高版本只读展示并且一行都不追加。
 S3.4 于同日补上（自用验收反馈）：**浮层下边界可拖**——把手往下拖就吃掉响应区，最多铺满 `.work`，
 双击复位、拉开量落偏好；左右分栏时把手自动隐藏。
+S6.4 同日收官：**SSE 改成订阅式流**。后端每切出一个完整事件就用 `polaris/http/stream` 推给 UI，
+走宿主 `host.events` → iframe `postMessage`，单条几 KB、**总量不受 8 MiB 单消息上限约束**；
+界面边收边画（实测 DeepSeek 首块 108 ms、62 块陆续到），「10 秒 / 512 KiB」两道墙没了。
+老宿主不转发事件时自动退回一次性返回，不会空白。
 
 **0.9.0 自用包已就绪（2026-11-21）**：`node tools/selfuse-pack.mjs` 摊出 `dist/polaris-0.9.0-<os>-<arch>/`
 （manifest + ui/ + bin/），有官方 CLI 再跑 `dbx-plugin package .` 出 `.dbxp`。
@@ -61,7 +65,7 @@ node dev/dev-server.mjs
 `verify-ui/check-*.mjs` 里写的是 `path.resolve(..., '..', 'warren-polaris-api')`，
 靠的是相对位置，不是绝对路径。
 
-> **⚠ 仓库里没有的东西**：`verify-ui/`（二十个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
+> **⚠ 仓库里没有的东西**：`verify-ui/`（二十一个端到端脚本）和 `dev-workspace/` 一直放在项目目录**外面**，
 > 从来没进过 `nianshengmei/warren-polaris-api`。所以：
 > - 只想接着写代码 / 跑 `node tools/all.mjs` → `git clone` 就够，什么都不缺；
 > - 要跑真浏览器验收（`check-s25*.mjs`）→ 得从迁移包 `polaris-handoff-20261121-r14.zip` 里
@@ -121,9 +125,10 @@ node dev/dev-server.mjs
 | S4.1 身份纯函数 | ✅ | 新增 `ui/http-identity.js`（`POLARIS_IDENTITY`）：`newId` 8 位 base36（`crypto` 优先、可注入 rnd）；`insertFileId` 落在第一个 `###` 之前并与 `###` 隔一个空行，空文件即第 1 行；`insertInterfaceId` 落在该段 `###` 紧下一行（`line` / `index` 两种定位）；`dedupe` 同文件重复 id 后一个换新；`fingerprint` = 方法大写 + URL 归一（scheme/host 小写、默认端口/重复斜杠/末尾斜杠/fragment 抹掉，**query 保持原序**、`{{var}}` 不展开）。**只在原文上做行级拼接、不重序列化**，插入行沿用文件自己的行尾（CRLF 不掺裸 LF）。`tools/identity.test.mjs` 9 项 |
 
 测试现状（改完必须保持）：
-- `node tools/all.mjs` → **14 文件全绿**（`verify.mjs` **62** 项、`map.test.mjs` 22、`store.test.mjs` 31、`identity.test.mjs` 13、`history.test.mjs` **29**、`sample.test.mjs` 46、`cancel.test.mjs` **14** 等）
-- `verify-ui/` **二十个**端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15、**s61=22**、**s71=12**、**s72=25**
-- Rust 侧（沙箱里现在能跑）：`cargo check` / `clippy` **零警告**；`node tools/live-cancel.mjs` **11 项全过**
+- `node tools/all.mjs` → **14 文件全绿**（`verify.mjs` **63** 项、`map.test.mjs` 22、`store.test.mjs` 31、`identity.test.mjs` 13、`history.test.mjs` **29**、`sample.test.mjs` 46、`cancel.test.mjs` **14** 等）
+- `verify-ui/` **二十一个**端到端：s15=17、s22=29、s23=20、s24=10、s25=21、s25c=21、s25d=23、s26=8、s31=20、s32=25、s33=24、s42=23、s43=30、s44=13、s45=16、s46=18、s53=15、**s61=22**、**s71=12**、**s72=25**、**s62=10**
+- Rust 侧（沙箱里现在能跑）：`cargo check` / `clippy` **零警告**；`node tools/live-cancel.mjs` **11 项全过**；
+  `DS_KEY=... node tools/live-sse-stream.mjs` **7 项全过**（真 sidecar + 真 DeepSeek，验订阅式流）
 
 ---
 
@@ -250,7 +255,7 @@ cd warren-polaris-api && git log --oneline -1   # 应能看到 a500446 及其后
 ```
 polaris-handoff-20261121-r14.zip   （7.6 MB，685 条目，已校验 UTF-8 文件名 + testzip）
 ├── warren-polaris-api/     完整项目，含 .git（已解压实测过：git status 干净、14/14 全绿）
-├── verify-ui/              端到端脚本 20 个（不含 node_modules，Mac 上 npm i playwright-core）
+├── verify-ui/              端到端脚本 21 个（不含 node_modules，Mac 上 npm i playwright-core）
 ├── dev-workspace/          调试目录（含 wpa-workspace.json 与两个 .http）
 └── .workbuddy/memory/      工作日志 + 长期约定（值得读 2026-11-21.md）
 ```

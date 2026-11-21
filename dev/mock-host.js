@@ -29,6 +29,49 @@
     return data.result;
   }
 
+  /* 订阅式流：/__dev/invoke 这时回的是 text/event-stream。
+   * 每块用 postMessage 冒充宿主转发（source:"dbx-host"），最后一条 `result` 才是返回值。
+   * 这与真宿主的 forwardEvent 走同一条路，UI 不需要知道是真是假。 */
+  async function callStream(method, params) {
+    var res;
+    try {
+      res = await fetch('/__dev/invoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method: method, params: params || {} }),
+      });
+    } catch (e) {
+      throw new Error('本地调试服务未响应（' + (e && e.message ? e.message : e) + '）');
+    }
+    if (!res.ok || !res.body) throw new Error('流式连接失败：HTTP ' + res.status);
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    var buf = '', result = null, failure = null;
+    for (;;) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buf += dec.decode(chunk.value, { stream: true });
+      var i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        var raw = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        var name = '', data = '';
+        raw.split('\n').forEach(function (line) {
+          if (line.indexOf('event:') === 0) name = line.slice(6).trim();
+          else if (line.indexOf('data:') === 0) data += line.slice(5).trim();
+        });
+        var obj = null;
+        try { obj = JSON.parse(data); } catch (e) { continue; }
+        if (name === 'result') result = obj;
+        else if (name === 'fail') failure = obj.error || '流式请求失败';
+        else window.postMessage({ source: 'dbx-host', version: 1, type: 'event', method: 'polaris/http/stream', params: obj }, '*');
+      }
+    }
+    if (failure) throw new Error(failure);
+    if (!result) throw new Error('流式连接结束但没有结果');
+    return result;
+  }
+
   var STATE_KEY = LS_PREFIX + 'warren-polaris-api.state.v2';
   var BOOT_KEY = LS_PREFIX + 'booted';
 
@@ -61,7 +104,10 @@
     theme: 'dark',
     context: { debug: true, mock: true },
 
-    invoke: function (method, params) { return call(method, params); },
+    invoke: function (method, params) {
+      if (method === 'http/request' && params && params.stream && params.streamRequestId) return callStream(method, params);
+      return call(method, params);
+    },
 
     setTitle: function (t) { document.title = t || 'warren-polaris-api'; },
 

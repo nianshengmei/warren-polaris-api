@@ -780,4 +780,30 @@ ok('0.9.0 收尾：.bin 封顶 5 MB，停止文案只留「已停止」', () => 
   assert(/5 MB/.test(doc) && /8 MiB/.test(doc), 'data-format 要写清 5 MB 的依据');
 });
 
+ok('S6.4 订阅式流：SSE 走事件通道，不再攒到最后', () => {
+  const mf = JSON.parse(read('manifest.json'));
+  assert((mf.permissions || []).includes('host.events'), 'manifest 必须声明 host.events，否则宿主 forwardEvent 直接丢');
+
+  const rs = read('backend/src/main.rs');
+  assert(/const STREAM_EVENT: &str = "polaris\/http\/stream"/.test(rs), '事件名要固定成 polaris/http/stream');
+  assert(/fn sse_event_end/.test(rs), '要按事件边界切，不能按任意字节切');
+  assert(/emitter\.event\(\s*STREAM_EVENT/.test(rs), '正文块必须经 emitter.event 推出去');
+  assert(/"streamed": true/.test(rs), '流式返回体要标 streamed，UI 才知道正文在事件里');
+  assert(/phase": "open"/.test(rs), '开流前要有 open 探测，宿主不支持时才好退回老路径');
+
+  const br = read('ui/dbx-bridge.js');
+  assert(/bridge\.onEvent\s*=/.test(br), 'dbx-bridge 要暴露 onEvent');
+  assert(/d\.source !== "dbx-host"/.test(br) && /d\.type !== "event"/.test(br), '只认宿主的事件消息，别把任意 postMessage 当事件');
+
+  const app = read('ui/app.js');
+  assert(/streamRequestId/.test(app) && /stream:\s*true/.test(app), '发送时要带 stream/streamRequestId');
+  assert(/DBX\.onEvent\('polaris\/http\/stream'/.test(app), 'UI 要订阅这个事件名');
+  assert(/function renderStreamPane/.test(app), '流式视图要单独渲染，别去动正常的响应子页');
+  assert(/t\.streamDone/.test(app), '要等 done 事件再定稿（事件与 RPC 响应是两条路）');
+  assert(/if\(!p\|\|p\.requestId!==streamId\) return;/.test(app), '多个 tab 同时流时要按 requestId 路由');
+
+  /* 老路径必须还在：宿主不支持事件时能退回，而不是空白 */
+  assert(/buf\.len\(\) >= 512 \* 1024/.test(rs), '512 KiB 兜底分支不能删，老宿主还得能看');
+});
+
 console.log('\n' + pass + ' checks passed');

@@ -225,3 +225,33 @@ Content-Type: application/json
 | 未知字段在合并后逐字节保留 | 同上（`unknown-field.jsonl`） |
 | `v:2` 只读、不追加、提示升级 | 同上（`v2-future.jsonl`） |
 | 文档里四类载体都有字段表 | `tools/verify.mjs` |
+
+---
+
+## 10. 附：SSE 事件协议（不落盘，但同样是契约）
+
+订阅式流把 SSE 的每一块从 sidecar 推到 UI，走的是宿主的 `host.events` 通道，
+**不写磁盘**。但它跨了三个进程（sidecar → 宿主 → iframe），字段名一改就断，
+所以一并冻结在这里。
+
+| 项 | 值 |
+|---|---|
+| 事件名 | `polaris/http/stream` |
+| 通道 | 插件 stdout（JSON-RPC 通知）→ 宿主 `host.events` → iframe `postMessage({source:"dbx-host",version:1,type:"event",method,params})` |
+| 权限 | `manifest.json` 必须声明 `host.events` |
+| 顺序 | 同一请求内严格按 `seq` 递增；`seq` 只用于排查，UI 按到达顺序拼接 |
+
+三条消息，靠 `phase` / `done` / `chunk` 区分：
+
+| 消息 | 字段 | 语义 |
+|---|---|---|
+| 开流 | `requestId, phase:"open", status, statusText, ok, contentType, headers` | 宿主确实在转发才继续流式；发不出去就退回一次性返回 |
+| 正文块 | `requestId, seq, chunk` | `chunk` 是一个完整 SSE 事件原文（含结尾空行）；单个事件过大时按 256 KiB 切开 |
+| 收尾 | `requestId, done:true, seq, status, statusText, ok, contentType, headers, size, timeMs, cancelled, truncated, error` | `size` 是字节总数，不是块数 |
+
+约束：
+
+1. **单条事件仍是 JSON 消息**，所以单条上限还是 8 MiB —— 实现上按 256 KiB 切块，正常 SSE 一条只有几百字节到几 KB。
+2. `chunk` 只保证「拼起来等于原始字节流」，不保证每块是合法 UTF-8；UI 只做文本拼接与显示。
+3. 收到 `done` 才允许定稿（事件与 RPC 响应是两条路，响应可能先到）。
+4. 改这里的字段名 = 改协议，`tools/verify.mjs` 与 `verify-ui/check-s62.mjs` 会红。

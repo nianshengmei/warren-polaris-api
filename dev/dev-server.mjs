@@ -258,6 +258,87 @@ const handlers = {
 
 const BIN_TYPE = /^(image|audio|video|font)\/|octet-stream|pdf|zip|gzip|wasm/i;
 
+/* 订阅式流（调试宿主）：把上游 SSE 的每一块用 `event: chunk` 推给浏览器，
+ * 页面侧 mock-host 再转成 dbx-host/event 的 postMessage —— 与真宿主同一条路径。 */
+async function streamRequest(res, p) {
+  const sid = p.streamRequestId;
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  const ev = (name, data) => { res.write('event: ' + name + '\ndata: ' + JSON.stringify(data) + '\n\n'); };
+  const t0 = Date.now();
+  try {
+    const url = p.url;
+    if (!url) throw new Error('缺少 url');
+    const method = String(p.method || 'GET').toUpperCase();
+    const headers = {};
+    for (const [k, v] of Object.entries(p.headers || {})) {
+      if (v == null || v === '') continue;
+      headers[k] = String(v);
+    }
+    let body;
+    if (p.bodyBase64) body = Buffer.from(p.bodyBase64, 'base64');
+    else if (p.body && !['GET', 'HEAD'].includes(method)) body = String(p.body);
+    const timeout = Number(p.timeoutMs) > 0 ? Number(p.timeoutMs) : 0;
+    const r = await fetch(url, {
+      method, headers, body, redirect: 'follow',
+      signal: timeout ? AbortSignal.timeout(timeout) : undefined,
+    });
+    const ct = r.headers.get('content-type') || '';
+    const resHeaders = {};
+    r.headers.forEach((v, k) => { resHeaders[k] = v; });
+    ev('open', {
+      requestId: sid, phase: 'open', status: r.status, statusText: r.statusText,
+      ok: r.ok, contentType: ct, headers: resHeaders,
+    });
+    if (!/text\/event-stream/i.test(ct)) {
+      /* 不是 SSE 就整包回：界面照常显示，只是没有「边到边看」 */
+      const buf = Buffer.from(await r.arrayBuffer());
+      const isBin = BIN_TYPE.test(ct);
+      ev('result', {
+        status: r.status, statusText: r.statusText, ok: r.ok, contentType: ct, headers: resHeaders,
+        body: isBin ? buf.toString('base64') : buf.toString('utf8'), isBase64: isBin,
+        size: buf.length, timeMs: Date.now() - t0, streamed: false,
+      });
+      res.end();
+      return;
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let acc = '', seq = 0, total = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.length;
+      acc += dec.decode(value, { stream: true });
+      let i;
+      while ((i = acc.indexOf('\n\n')) >= 0) {
+        const chunk = acc.slice(0, i + 2);
+        acc = acc.slice(i + 2);
+        ev('chunk', { requestId: sid, seq: ++seq, chunk });
+      }
+    }
+    if (acc) ev('chunk', { requestId: sid, seq: ++seq, chunk: acc });
+    const timeMs = Date.now() - t0;
+    ev('done', {
+      requestId: sid, done: true, seq: seq + 1, status: r.status, statusText: r.statusText,
+      ok: r.ok, contentType: ct, headers: resHeaders, size: total, timeMs,
+    });
+    ev('result', {
+      status: r.status, statusText: r.statusText, ok: r.ok, contentType: ct, headers: resHeaders,
+      body: '', isBase64: false, size: total, timeMs, sse: true, streamed: true,
+      cancelled: false, truncated: false,
+    });
+    res.end();
+  } catch (e) {
+    ev('fail', { requestId: sid, error: 'send: ' + ((e && e.cause && (e.cause.code || e.cause.message)) || (e && e.message) || e) });
+    res.end();
+  }
+}
+
 async function doRequest(p) {
   const url = p.url;
   if (!url) throw new Error('缺少 url');
@@ -381,6 +462,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     try {
+      /* 订阅式流：不返回 JSON，而是把每一块用 SSE 推回去。
+       * 页面侧 mock-host 收到后再 postMessage 成 dbx-host/event —— 与真宿主同一条路径。 */
+      if (payload.method === 'http/request' && payload.params && payload.params.stream && payload.params.streamRequestId) {
+        await streamRequest(res, payload.params);
+        return;
+      }
       const result = await fn(payload.params || {});
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, result: result === undefined ? null : result }));

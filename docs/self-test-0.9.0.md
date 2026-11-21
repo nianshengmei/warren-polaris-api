@@ -52,7 +52,8 @@ node tools/selfuse-pack.mjs   # dist/polaris-0.9.0-<os>-<arch>/ 与同名 .zip
 | 点请求左侧 ▶ | 响应区出状态码 / 耗时 / 大小；5 个子页（结果、原始、头、cURL、历史） | 后端 `http/request` |
 | 发一个 404 | 状态码红/橙色，响应体照常显示 | 状态色映射 |
 | 改 `@baseUrl` 再发 | 实际 URL 跟着变；历史里的 `url` 是展开后的，`urlTemplate` 保留模板 | `fingerprint` 规则 |
-| 发 SSE 那一节 | 事件一条条出现，结束标「SSE 已结束」；超过 10 秒或 512 KiB 标「已截断」 | `sse` / `sseTruncated` |
+| 发 SSE 那一节（示例 5 或 6） | **字是逐块蹦出来的**，头行显示「接收中 · N 字 · M 块已到」；结束标「SSE 已结束」 | 宿主是否给了 `host.events` |
+| 发一个超过 10 秒的长流（比如 LLM 对话） | 能一直流到结束，不再 10 秒被砍；点 ⏹ 能立刻停 | `sseMs` 现在跟随「请求超时」 |
 | 发 multipart 那一节（换成自己的小文件） | 上传成功，服务端收到字节与本地一致 | `bodyType: multipart` |
 | 连不上任何地址（把域名改错） | 明确报网络错误，不出现空白的 200 | `PluginError` 文案 |
 

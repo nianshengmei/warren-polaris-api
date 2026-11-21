@@ -41,10 +41,10 @@ impl PluginHandler for PolarisApi {
         _context: RequestContext,
         method: &str,
         params: Value,
-        _emitter: &PluginEmitter,
+        emitter: &PluginEmitter,
     ) -> Result<Value, PluginError> {
         match method {
-            "http/request" => handle_request(params),
+            "http/request" => handle_request(params, emitter),
             "warren-polaris-api/ping" => Ok(json!({
                 "ok": true,
                 "plugin": "com.warren.polaris.api",
@@ -750,6 +750,31 @@ fn handle_reveal_dir(params: Value) -> Result<Value, PluginError> {
  * 之前是 `resp.bytes()` 一口气读完 —— 50 MB 的下载在 UI 上点了停止，
  * sidecar 仍会把整包灌进内存，连接也不会断。 */
 const READ_CHUNK: usize = 64 * 1024;
+/// 单个 SSE 事件在内存里最多攒这么多：对端一直不发空行时先切一刀，避免无上限堆积。
+const MAX_PENDING: usize = 256 * 1024;
+/// 订阅式流的事件名。宿主按 `host.events` 权限转发到 iframe 的 message 事件。
+const STREAM_EVENT: &str = "polaris/http/stream";
+
+/// 在缓冲区里找一个完整 SSE 事件的结尾（含分隔空行），返回「切到哪」。
+/// 支持 LF LF 与 CRLF CRLF 两种写法。找不到返回 None。
+fn sse_event_end(buf: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i + 1 < buf.len() {
+        if buf[i] == b'\n' && buf[i + 1] == b'\n' {
+            return Some(i + 2);
+        }
+        if i + 3 < buf.len()
+            && buf[i] == b'\r'
+            && buf[i + 1] == b'\n'
+            && buf[i + 2] == b'\r'
+            && buf[i + 3] == b'\n'
+        {
+            return Some(i + 4);
+        }
+        i += 1;
+    }
+    None
+}
 
 /* 取消标志的约定：UI 在用户点「停止」时写 `<workspace>/_cancel/<requestId>.flag`，
  * 后端每读一块前 stat 一次，文件出现就收手。请求结束时（成功 / 失败 / 取消）由
@@ -792,7 +817,11 @@ impl Drop for CancelFlagGuard {
 }
 
 /// 处理 http/request：用 reqwest 发送任意 URL 请求。
-fn handle_request(params: Value) -> Result<Value, PluginError> {
+///
+/// `emitter` 用来把 SSE 的每一块推给 UI（宿主 `host.events` 权限 → iframe 的
+/// `message` 事件）。这是「订阅式」传输：单条事件只有几 KB，总量不再受
+/// 8 MiB 单消息上限约束，也不会攒到最后才给。
+fn handle_request(params: Value, emitter: &PluginEmitter) -> Result<Value, PluginError> {
     let method = params.get("method").and_then(Value::as_str).unwrap_or("GET").to_uppercase();
     let url = params
         .get("url")
@@ -802,6 +831,14 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
     let body_b64 = params.get("bodyBase64").and_then(Value::as_str).unwrap_or("");
     let body_type = params.get("bodyType").and_then(Value::as_str).unwrap_or("text");
     let timeout_ms = params.get("timeoutMs").and_then(Value::as_u64).unwrap_or(120_000);
+    /* 订阅式流：UI 给一个 streamRequestId 并置 stream=true，后端把 SSE 事件
+     * 逐块发到 `polaris/http/stream` 事件上。没有 id 或没开就照旧一次性返回。 */
+    let stream_id = params
+        .get("streamRequestId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let want_stream = params.get("stream").and_then(Value::as_bool).unwrap_or(false) && !stream_id.is_empty();
 
     /* 取消标志（可选）。UI 会传绝对路径；只认 `.flag` 结尾，传错路径不会误删别的文件。 */
     let cancel_path = params
@@ -845,7 +882,13 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
     let wants_sse = headers.iter().any(|(k, v)| {
         k.eq_ignore_ascii_case("accept") && v.to_ascii_lowercase().contains("text/event-stream")
     });
-    let sse_ms = params.get("sseMs").and_then(Value::as_u64).unwrap_or(10_000).max(1000);
+    /* 订阅式流没有「10 秒一刀切」的理由了：事件是陆续推给 UI 的，长流正是它要解决的场景。
+     * 所以开了流就按请求超时（默认 120 秒）算，UI 显式传 sseMs 仍可覆盖。 */
+    let sse_ms = params
+        .get("sseMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(if want_stream { timeout_ms.max(1000) } else { 10_000 })
+        .max(1000);
 
     // 构建 reqwest 请求
     let client = reqwest::blocking::Client::builder()
@@ -911,7 +954,131 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
      * 不再把整包灌进内存（S6.1）。 */
     let mut cancelled = false;
     let mut read_error: Option<String> = None;
-    let (bytes, sse_ended) = if is_sse {
+
+    /* 订阅式流只在「响应确实是 SSE」时才开。先发一个 open 事件探路：
+     * 宿主没给 host.events 权限、或版本太老不转发事件，这里就会失败，
+     * 直接退回老的「攒到 512 KiB 一次性返回」路径，行为与 0.9.0 一致。 */
+    let stream_ok = want_stream
+        && is_sse
+        && emitter
+            .event(
+                STREAM_EVENT,
+                json!({
+                    "requestId": &stream_id,
+                    "phase": "open",
+                    "status": status,
+                    "statusText": &status_text,
+                    "ok": ok,
+                    "contentType": &content_type,
+                    "headers": res_headers.clone(),
+                }),
+            )
+            .is_ok();
+
+    let (bytes, sse_ended) = if stream_ok {
+        /* 逐事件转发：不攒全文，只累计字节数 —— 总量再大也不会撞 8 MiB 单消息上限。 */
+        let mut seq: u64 = 0;
+        let mut total: u64 = 0;
+        let mut pending: Vec<u8> = Vec::new();
+        let mut tmp = vec![0u8; 8192];
+        let mut ended = false;
+        loop {
+            if cancel_requested(cancel_ref) {
+                cancelled = true;
+                break;
+            }
+            match resp.read(&mut tmp) {
+                Ok(0) => {
+                    ended = true;
+                    break;
+                }
+                Ok(n) => {
+                    total += n as u64;
+                    pending.extend_from_slice(&tmp[..n]);
+                    loop {
+                        let cut = sse_event_end(&pending)
+                            .unwrap_or(if pending.len() >= MAX_PENDING { pending.len() } else { 0 });
+                        if cut == 0 {
+                            break;
+                        }
+                        let ev: Vec<u8> = pending.drain(..cut).collect();
+                        seq += 1;
+                        if emitter
+                            .event(
+                                STREAM_EVENT,
+                                json!({
+                                    "requestId": &stream_id,
+                                    "seq": seq,
+                                    "chunk": String::from_utf8_lossy(&ev),
+                                }),
+                            )
+                            .is_err()
+                        {
+                            read_error = Some("stream: host stopped accepting events".into());
+                            break;
+                        }
+                    }
+                    if read_error.is_some() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    read_error = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+        /* 尾部没凑满一个事件的残余也别丢 */
+        if read_error.is_none() && !pending.is_empty() {
+            seq += 1;
+            let _ = emitter.event(
+                STREAM_EVENT,
+                json!({
+                    "requestId": &stream_id,
+                    "seq": seq,
+                    "chunk": String::from_utf8_lossy(&pending),
+                }),
+            );
+        }
+        let time_ms = start.elapsed().as_millis() as u64;
+        let truncated = !ended && !cancelled;
+        let _ = emitter.event(
+            STREAM_EVENT,
+            json!({
+                "requestId": &stream_id,
+                "done": true,
+                "seq": seq + 1,
+                "status": status,
+                "statusText": &status_text,
+                "ok": ok,
+                "contentType": &content_type,
+                "headers": res_headers.clone(),
+                "size": total,
+                "timeMs": time_ms,
+                "cancelled": cancelled,
+                "truncated": truncated,
+                "error": &read_error,
+            }),
+        );
+        /* 返回体不带 body：正文已经一块块推过去了。这样「多大都行」。 */
+        return Ok(json!({
+            "status": status,
+            "statusText": status_text,
+            "ok": ok,
+            "contentType": content_type,
+            "headers": res_headers,
+            "body": "",
+            "isBase64": false,
+            "size": total,
+            "timeMs": time_ms,
+            "sse": true,
+            "streamed": true,
+            "cancelled": cancelled,
+            "truncated": truncated,
+            "sseTruncated": !ended,
+        }));
+    } else if is_sse {
+        /* 老路径：宿主不支持事件通道时的兜底，512 KiB 或 sseMs 到点收尾。 */
         let mut buf: Vec<u8> = Vec::new();
         let mut tmp = [0u8; 8192];
         let mut ended = false;
@@ -970,6 +1137,8 @@ fn handle_request(params: Value) -> Result<Value, PluginError> {
         "timeMs": time_ms,
         "sse": is_sse,
         "sseTruncated": is_sse && !sse_ended,
+        /* 非流式路径恒 false；UI 据此决定「事件流已经画过」还是「用这次的 body」。 */
+        "streamed": false,
         /* S6.1：UI 点过停止 → true，body 只带已经收到的部分；truncated 表示「没读完」。 */
         "cancelled": cancelled,
         "truncated": if is_sse { !sse_ended } else { cancelled || read_error.is_some() },
@@ -1006,6 +1175,7 @@ use base64::prelude::{BASE64_STANDARD};
 use base64::Engine;
 
 fn main() -> std::io::Result<()> {
-    let metadata = PluginMetadata::new("com.warren.polaris.api", env!("CARGO_PKG_VERSION"));
+    let metadata = PluginMetadata::new("com.warren.polaris.api", env!("CARGO_PKG_VERSION"))
+        .with_capability("events");
     PluginServer::new(metadata, PolarisApi).serve()
 }

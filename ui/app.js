@@ -1278,6 +1278,26 @@ function syncUrlToParams(t){
   rows.push(blankRow()); t.params=rows;
 }
 
+/* ===================== 流式（订阅式传输） ===================== */
+/* S6.4：SSE 不再攒到最后一次性给 —— 后端每切出一个完整事件就推一次，
+ * 走宿主的 host.events 通道（dbx-bridge.onEvent）。这里只负责把已收到的块画出来；
+ * 结束后立刻交给正常的 renderResponse()，响应区、历史、复制都还是原来那套。 */
+function renderStreamPane(t,t0){
+  const pane=$('#resPane'); if(!pane) return;
+  let pre=$('#streamPre');
+  if(!pre){
+    pane.innerHTML='<div class="stream-box"><div class="stream-head"><span class="live-dot"></span><span>接收中</span><span class="stream-meta" id="streamMeta"></span></div><pre class="stream-pre" id="streamPre"></pre></div>';
+    pre=$('#streamPre');
+  }
+  if(!pre) return;
+  /* 只在用户本来就贴着底部时才自动滚：手动往上翻看内容时不要被拽回去 */
+  const atBottom=pre.scrollHeight-pre.scrollTop-pre.clientHeight<28;
+  pre.textContent=t.streamBuf||'';
+  if(atBottom) pre.scrollTop=pre.scrollHeight;
+  const m=$('#streamMeta');
+  if(m) m.textContent=(t.streamBuf||'').length+' 字 · '+ms(performance.now()-t0)+(t.streamCount?' · '+t.streamCount+' 块已到':'');
+}
+
 /* ===================== 发送 ===================== */
 
 /* S6.2：取消标志。invoke 是同步 RPC，点了停止也拦不住已经在跑的原生请求；
@@ -1344,12 +1364,33 @@ async function send(){
   // 等待计时
   const tick=setInterval(()=>{ const el=$('#waitTick'); if(el) el.textContent=' · 已等待 '+ms(performance.now()-t0); },1000);
 
+  /* S6.4：订阅后端推来的 SSE 块。streamId 与 cancelPath 同源（都用 rid），
+   * 一个请求一个 id —— 多个 tab 同时流也不会串。 */
+  const streamId='s'+rid;
+  let streamPaint=0;
+  t.streamBuf=''; t.streamCount=0; t.streamLive=false; t.streamDone=null;
+  const offStream=(DBX&&DBX.onEvent)?DBX.onEvent('polaris/http/stream',(p)=>{
+    if(!p||p.requestId!==streamId) return;
+    if(t.stopped||t.sendSeq!==seq) return;
+    if(p.phase==='open'){
+      t.streamLive=true; t.streamBuf=''; t.streamCount=0;
+      renderStreamPane(t,t0);
+      return;
+    }
+    if(p.done){ t.streamDone=p; return; }
+    t.streamBuf=(t.streamBuf||'')+(p.chunk||'');
+    t.streamCount=(t.streamCount||0)+1;
+    const now=performance.now();
+    if(now-streamPaint>80){ streamPaint=now; renderStreamPane(t,t0); }   /* 80ms 一帧：别为每个小片段重排 DOM */
+  }):(()=>{});
+
   // 停止处理：只有 seq 匹配（未发生新发送）才生效
   const doStop=()=>{
     if(t.sendSeq!==seq) return;               // 已被新请求覆盖，忽略
     t.sendSeq++;                               // 推进序号，废止在途回调
     t.stopped=true;
     clearInterval(tick);
+    try{ offStream(); }catch(e){}
     if(t.abortCtl){ t.abortCtl.abort(); t.abortCtl=null; }
     /* S6.2：先让原生请求停手。写标志是异步的，绝不 await —— 按钮要立刻复原。 */
     writeCancelFlag(cancelPath);
@@ -1380,11 +1421,23 @@ async function send(){
         timeoutMs: tmo > 0 ? tmo : 86400000,
         requestId: rid,
         cancelPath: cancelPath || undefined,
+        /* S6.4：订阅式流 —— 后端把 SSE 一块块推过来，返回体故意不带正文，
+         * 所以流多长都不会撞「单条 JSON 消息 8 MiB」那道闸。 */
+        stream: true,
+        streamRequestId: streamId,
       });
       if (t.stopped || t.sendSeq !== seq) return;
+      /* 事件与 RPC 响应是两条路，响应可能先到：等 done 事件（最多 500ms）再定稿，
+       * 否则会少最后几块。收不到就按已收到的画，不卡住界面。 */
+      if (r.streamed) {
+        const dl = Date.now() + 500;
+        while (!t.streamDone && Date.now() < dl) await new Promise(res => setTimeout(res, 16));
+        if (t.streamDone && t.streamDone.size != null) r.size = t.streamDone.size;
+        if (t.streamDone && t.streamDone.timeMs != null) r.timeMs = t.streamDone.timeMs;
+      }
       const ct = r.contentType || '';
       const isBin = BINARY.test(ct) || !!r.isBase64;
-      const text = r.body || '';
+      const text = r.streamed ? (t.streamBuf || '') : (r.body || '');
       let blobUrl = null;
       if (isBin && r.isBase64 && text) { const blob = b64ToBlob(text, ct); if (blob) blobUrl = URL.createObjectURL(blob); }
       const parsed = isBin ? { ok: false } : tryJSON(text);
@@ -1395,6 +1448,7 @@ async function send(){
         contentType: ct, headers: r.headers || {}, text, isBinary: isBin, isBase64: !!r.isBase64, blobUrl, url,
         parsed: parsed.ok ? parsed.value : undefined,
         sse: !!r.sse, sseTruncated: !!r.sseTruncated,
+        streamed: !!r.streamed, streamLive: !!t.streamLive,
       };
     }
     if(t.stopped||t.sendSeq!==seq){ if(resp&&resp.blobUrl) URL.revokeObjectURL(resp.blobUrl); return; }  // 在途响应丢弃
@@ -1411,13 +1465,15 @@ async function send(){
     /* 停在「历史」子页时不要被发送结果顶走 —— 那是用户主动选的视图（S4.5） */
     if(t.respView!=='history') t.respView = resp.parsed!==undefined ? (Array.isArray(resp.parsed)?'table':'object') : /text\/html/i.test(resp.contentType)?'preview' : (resp.isBinary&&/^image\//i.test(resp.contentType))?'preview':'raw';
     renderResponse();
-    setStatus(method+' '+resp.status+' '+resp.statusText+' · '+ms(resp.timeMs)+' · '+bytes(resp.size), resp.ok?'ok':'warn');
+    const streamNote=(resp.streamed&&!resp.streamLive)?' · 流式事件没到界面（宿主可能没开 host.events）':'';
+    setStatus(method+' '+resp.status+' '+resp.statusText+' · '+ms(resp.timeMs)+' · '+bytes(resp.size)+streamNote, resp.ok?'ok':'warn');
   }catch(err){
     if(t.stopped||t.sendSeq!==seq) return;   // 停止/被覆盖：吞吐异常
     const t1=performance.now(); t.response={error:err.message||String(err),timeMs:t1-t0,url}; renderResponse();
     setStatus('请求失败：'+(err.message||err),'err');
   }finally{
     clearInterval(tick);
+    try{ offStream(); }catch(e){}
     /* S6.2：这次请求结束了（成功 / 失败 / 中途停止），标志都该消失 */
     clearCancelFlag(cancelPath);
     if(btn.classList.contains('stop-mode')){
