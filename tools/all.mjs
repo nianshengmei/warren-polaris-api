@@ -15,6 +15,7 @@ const files = [
   'tools/serialize.test.mjs',
   'tools/store.test.mjs',
   'tools/map.test.mjs',
+  'tools/fs-contract.test.mjs',
   'tools/migrate.test.mjs',
   'tools/project.test.mjs',
   'tools/vars.test.mjs',

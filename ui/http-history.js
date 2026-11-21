@@ -90,8 +90,8 @@
     return String(text).split(/\r?\n/).filter(function (s) { return s.trim() !== ''; });
   }
 
-  /* 同一路径的 read-modify-write 串成一条链：连发两次时后一次能看见前一次的结果，
-   * 也不会因为共用 `<path>.tmp` 互相踩。 */
+  /* 同一路径的 read-modify-write 串成一条链：连发两次时后一次能看见前一次的结果。
+   * 光靠唯一 tmp 名只能防「写坏」，防不了「丢更新」，所以这里仍然串行。 */
   var chains = Object.create(null);
   function serial(key, fn) {
     var prev = chains[key] || Promise.resolve();

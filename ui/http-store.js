@@ -16,6 +16,7 @@
  */
 (function () {
   var root = typeof window !== 'undefined' ? window : globalThis;
+  var tmpSeq = 0;   /* 原子写的 tmp 后缀，保证并发写不共用同一个临时文件 */
 
   function requireFile() {
     if (root.POLARIS_HTTP) return root.POLARIS_HTTP;
@@ -313,7 +314,9 @@
         return item;
       },
 
-      /* 原子写：先 tmp 再 rename。baseMtime 给了就先比对，不一致直接 CONFLICT，不写任何东西。 */
+      /* 原子写：先 tmp 再 rename。baseMtime 给了就先比对，不一致直接 CONFLICT，不写任何东西。
+       * tmp 名必须唯一：固定 `<path>.tmp` 时两次写撞在一起，后一个 rename 会找不到 tmp
+       * （Windows 上还可能是「另一个进程正在使用」），workspace-map 那边踩过同一个坑。 */
       writeText: async function (path, text, o) {
         o = o || {};
         if (o.baseMtime != null) {
@@ -323,7 +326,8 @@
             return { ok: false, reason: 'CONFLICT', current: now };
           }
         }
-        var tmp = path + '.tmp';
+        tmpSeq = (tmpSeq + 1) % 100000;
+        var tmp = path + '.' + tmpSeq + '-' + Date.now().toString(36) + '.tmp';
         try {
           await host.write(tmp, text);
         } catch (e) {

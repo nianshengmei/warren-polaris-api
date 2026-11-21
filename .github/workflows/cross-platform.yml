@@ -1,0 +1,53 @@
+name: cross-platform
+
+# 0.9.0 之前所有真机验证都是在 Linux 上做的，但用户是 Windows + macOS。
+# 这里把「能自动跑的那部分」放到三个系统上各跑一遍：
+#   · node tools/all.mjs —— 路径契约、映射、历史、解析、序列化等纯逻辑；
+#   · cargo build --release —— sidecar 在 win/mac 上能不能编译过（native-dialog 等有平台分支）。
+# UI 端到端（verify-ui/*.mjs）要真 Chromium，留在本地跑，不在 CI 里装浏览器。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 路径与文件系统契约
+        run: node tools/all.mjs
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: sidecar 编译（平台分支是否齐全）
+        run: cargo build --release --manifest-path backend/Cargo.toml
+
+      - name: 二进制自检
+        shell: bash
+        run: |
+          ls -l backend/target/release/ | head -20

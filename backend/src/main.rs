@@ -346,7 +346,9 @@ fn handle_delete_file(params: Value) -> Result<Value, PluginError> {
     Ok(json!({ "path": path.to_string_lossy().to_string(), "removed": true }))
 }
 
-/// 改名 / 移动。Windows 上 fs::rename 不能覆盖已存在目标，故 overwrite 时先删目标再改名。
+/// 改名 / 移动。Windows 上 fs::rename 不能覆盖已存在目标，所以覆盖时要把旧目标腾开。
+/// 但**不能直接删**：万一紧接着的换名失败，用户的原文件就没了。做法是先把旧目标改名成
+/// 一个临时 `.bak`（目标不存在，任何平台都能改名），换名成功再删 bak，失败就把它挪回来。
 /// overwrite=false 且目标已存在 → 回 { exists:true, renamed:false }，由 UI 决定换名。
 fn handle_rename_file(params: Value) -> Result<Value, PluginError> {
     let from = param_str(&params, "from").ok_or_else(|| PluginError::new(-32602, "缺少 from"))?;
@@ -359,6 +361,7 @@ fn handle_rename_file(params: Value) -> Result<Value, PluginError> {
     if fp == tp {
         return Ok(json!({ "exists": true, "renamed": false, "path": to }));
     }
+    let mut stashed: Option<PathBuf> = None;
     if tp.exists() {
         if !overwrite {
             return Ok(json!({ "exists": true, "renamed": false, "path": to }));
@@ -366,15 +369,31 @@ fn handle_rename_file(params: Value) -> Result<Value, PluginError> {
         if tp.is_dir() {
             return Err(PluginError::new(-32602, "目标已存在且是目录，拒绝覆盖"));
         }
-        fs::remove_file(&tp).map_err(|e| io_err("覆盖前删除目标失败", e))?;
+        /* 用 OsString 拼后缀，不走 display()：路径里有非 UTF-8 字节时 display 会丢字符 */
+        let mut os = tp.clone().into_os_string();
+        os.push(format!(".bak{}", now_millis()));
+        let bak = PathBuf::from(os);
+        fs::rename(&tp, &bak).map_err(|e| io_err("覆盖前暂存目标失败", e))?;
+        stashed = Some(bak);
     }
     if let Some(dir) = tp.parent() {
         if !dir.as_os_str().is_empty() {
-            fs::create_dir_all(dir).map_err(|e| io_err("创建目录失败", e))?;
+            if let Err(e) = fs::create_dir_all(dir) {
+                if let Some(b) = stashed.take() { let _ = fs::rename(&b, &tp); }
+                return Err(io_err("创建目录失败", e));
+            }
         }
     }
-    fs::rename(&fp, &tp).map_err(|e| io_err("改名失败", e))?;
-    Ok(json!({ "exists": false, "renamed": true, "path": to }))
+    match fs::rename(&fp, &tp) {
+        Ok(_) => {
+            if let Some(b) = stashed.take() { let _ = fs::remove_file(&b); }
+            Ok(json!({ "exists": false, "renamed": true, "path": to }))
+        }
+        Err(e) => {
+            if let Some(b) = stashed.take() { let _ = fs::rename(&b, &tp); }
+            Err(io_err("改名失败", e))
+        }
+    }
 }
 
 /// 建目录（幂等）。资源目录、_history/、_cancel/ 都靠它。

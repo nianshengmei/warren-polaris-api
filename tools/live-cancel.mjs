@@ -8,11 +8,8 @@
  *   · SSE 11 个事件完整、不标 truncated
  *   · 超时仍然是超时（不是被分块读吞成空 body）
  *
- * 前置：先编出二进制（沙箱/本机都要，需联网拉 crate）：
- *     cd backend && cargo build
- * 本仓库的 `dbx-plugin-sdk` 不在 crates.io 上，本机编译时要么在 DBX 仓库的
- * workspace 里，要么用 patch 指向一份 SDK 源码：
- *     cargo build --config 'patch.crates-io.dbx-plugin-sdk.path="/path/to/dbx-plugin-sdk"'
+ * 前置：先编出二进制（需联网拉 crate；SDK 已 vendor，不需要任何 patch 参数）：
+ *     cd backend && cargo build --release
  *
  * 用法：
  *     node tools/live-cancel.mjs                 # 默认 50 MB

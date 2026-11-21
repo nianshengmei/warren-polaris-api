@@ -28,7 +28,14 @@
 
   function str(v) { return String(v == null ? '' : v); }
 
-  function normSlash(p) { return str(p).replace(/\\/g, '/'); }
+  /* 统一正斜杠，并把重复的斜杠折成一个。UNC 开头的 `//` 要保住，
+   * 否则 `//nas/share` 会被折成 `/nas/share`，从网络路径变成根目录下的路径。
+   * （`\\?\C:\...` 这种长路径前缀不在支持范围内：用户选文件拿不到这种形态。） */
+  function normSlash(p) {
+    var s = str(p).replace(/\\/g, '/');
+    if (s.indexOf('//') === 0) return '//' + s.slice(2).replace(/\/{2,}/g, '/');
+    return s.replace(/\/{2,}/g, '/');
+  }
 
   function isAbs(p) { return /^(?:[A-Za-z]:[\\/]|[\\/]{2}|[\\/])/.test(str(p)); }
 

@@ -153,17 +153,16 @@ node dev/dev-server.mjs
 
 发版前最后跑一次（沙箱里就能做的）：
 ```bash
-cd backend && cargo clippy --config 'patch.crates-io.dbx-plugin-sdk.path="/root/dbx-sdk"'   # 零警告
+cd backend && cargo clippy --all-targets -- -D warnings   # 零警告（SDK 已 vendor，无需 patch）
 cd .. && node tools/all.mjs && node tools/live-cancel.mjs
 cd ../verify-ui && node check-s61.mjs && node check-s71.mjs
 ```
 
-> **沙箱里怎么编 Rust**（这次摸出来的，Mac 上照做也行）：
-> ```bash
-> git clone --depth 1 https://github.com/t8y2/dbx /tmp/dbx   # 只用 plugins/sdk/rust/dbx-plugin-sdk
-> cd warren-polaris-api/backend
-> cargo check --config 'patch.crates-io.dbx-plugin-sdk.path="/tmp/dbx/plugins/sdk/rust/dbx-plugin-sdk"'
-> ```
+> **编 Rust**：`cd backend && cargo build --release`，不需要任何 `--config patch` 参数。
+> `dbx-plugin-sdk` 没发布到 crates.io，已按源码 vendor 到 `backend/vendor/dbx-plugin-sdk/`
+> （Apache-2.0，来源与同步方式见该目录的 README）。这是 0.9.0 之前必须修的一件事：
+> 原来靠机器上一份 `/root/dbx-sdk` + `--config patch` 才能编，换台机器（包括 GitHub
+> Actions 和用户的 Windows）第一步就报 `no matching package named dbx-plugin-sdk`。
 > 若 crates.io 慢，在 `~/.cargo/config.toml` 里把源换成 USTC 镜像（sparse）。
 
 ---
