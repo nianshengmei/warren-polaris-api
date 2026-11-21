@@ -814,16 +814,16 @@ ok('S6.4 订阅式流：SSE 走事件通道，不再攒到最后', () => {
   assert(/buf\.len\(\) >= 512 \* 1024/.test(rs), '512 KiB 兜底分支不能删，老宿主还得能看');
 });
 
-ok('S7.6 跨平台：干净机器上能直接构建，路径契约有测试兜着', () => {
-  /* SDK 从「机器上那份副本 + --config patch」改成仓库内 vendor：
-   * 否则换台机器（GitHub Actions、用户的 Windows）第一步 cargo build 就报
-   * no matching package named dbx-plugin-sdk。 */
+ok('S7.6 跨平台：SDK 可寻址，路径契约有测试兜着', () => {
+  /* Cargo.toml 必须留成**版本依赖**：官方 `dbx-plugin package` 打包时会注入
+   * patch.crates-io.dbx-plugin-sdk → 它自带的 sdk-root，并且加 --locked。
+   * 改成 path 依赖会让那条 patch「未使用」，cargo 要重写 Cargo.lock，--locked 直接拒绝
+   * —— 2026-11-21 v0.9.0 发布首跑五个平台全红就是这个原因。 */
   const ct = read('backend/Cargo.toml');
-  assert(/dbx-plugin-sdk\s*=\s*\{\s*path\s*=\s*"vendor\/dbx-plugin-sdk"\s*\}/.test(ct),
-    'Cargo.toml 里 dbx-plugin-sdk 必须是 vendor 下的 path 依赖');
-  assert(!/dbx-plugin-sdk\s*=\s*\{\s*version/.test(ct), '不能再回退成 crates.io 版本依赖');
-  assert(/exclude\s*=\s*\[\s*"vendor\/dbx-plugin-sdk"\s*\]/.test(ct),
-    'vendored SDK 要排除出 workspace，否则我们这边 clippy -D warnings 会去打上游代码');
+  assert(/dbx-plugin-sdk\s*=\s*\{\s*version\s*=\s*"0\.1\.0"\s*\}/.test(ct),
+    'Cargo.toml 里 dbx-plugin-sdk 要保持版本依赖');
+  assert(!/dbx-plugin-sdk\s*=\s*\{\s*path/.test(ct),
+    '不能改成 path 依赖：会和 CLI 注入的 patch 打架，--locked 下 lock 写不动');
 
   const vsdk = read('backend/vendor/dbx-plugin-sdk/Cargo.toml');
   assert(/name = "dbx-plugin-sdk"/.test(vsdk) && /version = "0.1.0"/.test(vsdk), 'vendored SDK 的包名与版本要对得上');
@@ -831,17 +831,14 @@ ok('S7.6 跨平台：干净机器上能直接构建，路径契约有测试兜�
   assert(read('backend/vendor/dbx-plugin-sdk/src/lib.rs').length > 20000, 'lib.rs 要被真的带进来');
   assert(/Apache-2\.0/.test(read('backend/vendor/dbx-plugin-sdk/README.md')), 'vendor 目录要写清来源与许可');
 
-  /* 文档里不许再教人用 --config patch（那是只有原机器能跑的命令） */
-  const rd = read('README.md');
-  assert(!/--config 'patch\.crates-io\.dbx-plugin-sdk/.test(rd), 'README 不该再出现 patch SDK 的构建命令');
-  assert(/cargo build --release/.test(rd), 'README 要保留可直接照抄的构建命令');
-
-  /* 三平台 CI：跑路径契约 + 编译 sidecar（UI 端到端要 Chromium，留在本地） */
+  /* 三平台 CI：跑路径契约 + 用仓库内 SDK 编译 sidecar（UI 端到端要 Chromium，留在本地） */
   const wf = read('.github/workflows/cross-platform.yml');
   ['ubuntu-latest', 'windows-latest', 'macos-latest'].forEach((os) =>
     assert(wf.includes(os), 'CI matrix 缺 ' + os));
   assert(/node tools\/all\.mjs/.test(wf), 'CI 要跑 node 测试');
-  assert(/cargo build --release --manifest-path backend\/Cargo\.toml/.test(wf), 'CI 要真编译 sidecar');
+  assert(/cargo build --release --locked/.test(wf), 'CI 要真编译 sidecar，且用 --locked 对齐发布构建');
+  assert(/patch\.crates-io\.dbx-plugin-sdk\.path="backend\/vendor\/dbx-plugin-sdk"/.test(wf),
+    'CI 编译要指向仓库内的 SDK 副本');
 
   /* 路径契约测试本身：必须并进 all.mjs，否则 CI 跑了也不会执行它 */
   assert(read('tools/all.mjs').includes('fs-contract.test.mjs'), 'all.mjs 要串上 fs-contract.test.mjs');

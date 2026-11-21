@@ -430,7 +430,8 @@ dbx-plugin dev --path . --port 5190
 dbx-plugin package .
 
 # 没有官方 CLI 时：摊出一份「自用插件目录」（manifest + ui/ + bin/），或给 0.9.0 验收用
-cd backend && cargo build --release && cd ..   # SDK 已 vendor 进 backend/vendor/，不需要任何 patch 参数
+cd backend && cargo build --release --config 'patch.crates-io.dbx-plugin-sdk.path="vendor/dbx-plugin-sdk"' && cd ..
+# ^ SDK 没发布到 crates.io，仓库里带了一份副本；patch 指向它即可，任何机器都能编
 node tools/selfuse-pack.mjs      # → dist/polaris-<version>-<os>-<arch>/
 ```
 

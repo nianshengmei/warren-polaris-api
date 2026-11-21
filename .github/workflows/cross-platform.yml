@@ -45,7 +45,13 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: sidecar 编译（平台分支是否齐全）
-        run: cargo build --release --manifest-path backend/Cargo.toml
+        shell: bash
+        run: |
+          # 仓库里没有 vendor 之外可用的 SDK：dbx-plugin-sdk 没发布到 crates.io。
+          # 官方 CLI 打包时会自己注入同样的 patch，这里没有 CLI，就手动指向 vendor。
+          cargo build --release --locked \
+            --manifest-path backend/Cargo.toml \
+            --config 'patch.crates-io.dbx-plugin-sdk.path="backend/vendor/dbx-plugin-sdk"'
 
       - name: 二进制自检
         shell: bash

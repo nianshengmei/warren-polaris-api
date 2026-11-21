@@ -10,10 +10,15 @@ license = "Apache-2.0"
 exclude = ["vendor/dbx-plugin-sdk"]
 
 [dependencies]
-# dbx-plugin-sdk 没有发布到 crates.io，只能按源码用。这里 vendor 了一份（Apache-2.0，
-# 来源见 vendor/dbx-plugin-sdk/README.md），这样 clone 下来直接 cargo build 就能过，
-# 不需要再 `--config patch.crates-io.dbx-plugin-sdk.path=...` 指到某台机器上的副本。
-dbx-plugin-sdk = { path = "vendor/dbx-plugin-sdk" }
+# dbx-plugin-sdk 没发布到 crates.io。这里必须写成版本依赖、不能写成 path 依赖：
+# 官方 `dbx-plugin package` 打包时会自带一份 SDK 并注入
+# `--config patch.crates-io.dbx-plugin-sdk.path=<cli>/sdk-root/...`，再加上 --locked。
+# 一旦改成 path 依赖，那条 patch 就「未使用」，cargo 要重新写 Cargo.lock，--locked 直接拒绝，
+# 五个平台全红（2026-11-21 v0.9.0 发布首跑就是这么挂的）。
+# 本地/CI 裸构建（没有 CLI 时）用仓库里那份副本：
+#   cargo build --release --locked \
+#     --config 'patch.crates-io.dbx-plugin-sdk.path="vendor/dbx-plugin-sdk"'
+dbx-plugin-sdk = { version = "0.1.0" }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots"] }
 base64 = "0.22"

@@ -3,19 +3,19 @@
 这是 DBX 官方 Rust sidecar SDK 的**原样副本**，放在仓库里只为一件事：让
 `cd backend && cargo build --release` 在**任何一台干净机器**上都能直接编译通过。
 
-## 为什么不走 crates.io
+## 它怎么被用上
 
-`dbx-plugin-sdk` 没有发布到 crates.io（`https://index.crates.io/db/xp/dbx-plugin-sdk` → 404）。
-之前本地构建靠一条隐式约定：
+这里有两套路径，**别混**：
 
-```bash
-cargo build --release --config 'patch.crates-io.dbx-plugin-sdk.path="/root/dbx-sdk"'
-```
+| 场景 | 谁提供 SDK | 命令 |
+|---|---|---|
+| 官方发布构建（GitHub Actions） | `dbx-plugin` CLI 自带的 `sdk-root` | `dbx-plugin package .`（CLI 自己注入 patch + `--locked`） |
+| 本地 / CI 裸构建（没有 CLI） | 本目录这份副本 | `cargo build --release --locked --config 'patch.crates-io.dbx-plugin-sdk.path="vendor/dbx-plugin-sdk"'` |
 
-这条命令只在「那台机器上刚好有一份 SDK 副本」时成立。换台机器 —— 包括 GitHub Actions
-的 runner 和用户的 Windows 笔记本 —— 都会在 `cargo build` 第一步报
-`no matching package named dbx-plugin-sdk found`。0.9.0 要发 Windows 和 macOS 包，
-这条隐式依赖必须先拆掉。
+两条路都要求 `backend/Cargo.toml` 里写成 **版本依赖** `dbx-plugin-sdk = { version = "0.1.0" }`。
+改成 path 依赖会让 CLI 注入的那条 patch 变成「未使用」，cargo 于是要重写 `Cargo.lock`，
+而 CLI 又传了 `--locked` —— 直接报 `cannot update the lock file`，五个平台全红。
+2026-11-21 的 v0.9.0 发布首跑就是这么挂的，别再改成 path。
 
 ## 来源与同步
 

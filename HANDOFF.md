@@ -153,16 +153,22 @@ node dev/dev-server.mjs
 
 发版前最后跑一次（沙箱里就能做的）：
 ```bash
-cd backend && cargo clippy --all-targets -- -D warnings   # 零警告（SDK 已 vendor，无需 patch）
+cd backend && cargo clippy --all-targets -- -D warnings \
+  --config 'patch.crates-io.dbx-plugin-sdk.path="vendor/dbx-plugin-sdk"'   # 零警告
 cd .. && node tools/all.mjs && node tools/live-cancel.mjs
 cd ../verify-ui && node check-s61.mjs && node check-s71.mjs
 ```
 
-> **编 Rust**：`cd backend && cargo build --release`，不需要任何 `--config patch` 参数。
-> `dbx-plugin-sdk` 没发布到 crates.io，已按源码 vendor 到 `backend/vendor/dbx-plugin-sdk/`
-> （Apache-2.0，来源与同步方式见该目录的 README）。这是 0.9.0 之前必须修的一件事：
-> 原来靠机器上一份 `/root/dbx-sdk` + `--config patch` 才能编，换台机器（包括 GitHub
-> Actions 和用户的 Windows）第一步就报 `no matching package named dbx-plugin-sdk`。
+> **编 Rust**：`dbx-plugin-sdk` 没发布到 crates.io，仓库里带了一份副本
+> （`backend/vendor/dbx-plugin-sdk/`，Apache-2.0，来源见该目录 README），裸构建时 patch 指向它：
+> ```bash
+> cd backend && cargo build --release --locked \
+>   --config 'patch.crates-io.dbx-plugin-sdk.path="vendor/dbx-plugin-sdk"'
+> ```
+> **Cargo.toml 里必须保持 `{ version = "0.1.0" }`，不能改成 path 依赖。**
+> 官方 `dbx-plugin package` 打包时会自带 SDK 并注入同一条 patch、再加 `--locked`；
+> 写成 path 依赖会让那条 patch 变成「未使用」，cargo 要重写 lock，`--locked` 直接拒绝
+> —— v0.9.0 发布首跑五平台全红就是这么挂的。
 > 若 crates.io 慢，在 `~/.cargo/config.toml` 里把源换成 USTC 镜像（sparse）。
 
 ---
