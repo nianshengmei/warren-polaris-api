@@ -397,6 +397,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 | S7.2 | 版本位齐改：`manifest.json`、`Cargo.toml`、`Cargo.lock`、`.dbx-store.json`、README 历史、`verify.mjs` 的 `VERSION` | `grep -r 0.6.4 src ui backend manifest.json` 无残留 |
 | S7.3 | tag `v1.0.0` + Release → CI 5 平台 | 6 个产物齐全 |
 | S7.4 | **新开**商店 PR（不复活 #557）：`candidates/com.warren.polaris.api.json` 指向 v1.0.0 五平台产物 + `publishers/warren.json` | 候选 sha256/size 与 release 一致；PR 里只有一个候选版本 |
+| S7.6 ✅ | **跨平台可构建**：`dbx-plugin-sdk` 没发布到 crates.io，原来靠本机一份副本 + `--config patch` 才能编，换台机器第一步就报 `no matching package`。vendor 进 `backend/vendor/`（Apache-2.0，仅删 `[workspace]`）并 `exclude` 出 workspace；覆盖写改成「旧目标先挪 `.bak`、失败挪回」；原子写 tmp 名唯一化；`normSlash` 折叠重复斜杠并保 UNC | 新增 `tools/fs-contract.test.mjs`（18 项）；`verify.mjs` 63 → 64；新增 `.github/workflows/cross-platform.yml`，ubuntu / windows / macos 三平台跑 `node tools/all.mjs` + `cargo build --release`。首跑 Windows 红了三处（缺 `eol=lf`、Cargo.lock 按 `\n` 分割、rename 覆盖语义假设错），已修 |
 | S7.5 ✅ | **浮层导航收口**（发版前的 UI 收尾）：删掉 `.http` 浮层里的「接口一览」整栏（DOM / CSS / `renderOutline` / `trackCaret` 连根拔），编辑器铺满；新增 `followSource()`——浮层开着时点侧栏接口 / 切 tab，源码换文件并跳到那一段的行（`openAt` 加 `quiet` 不重扫侧栏）；源码 → 表单链路用 `suppressFollow` 计数防回流 | `verify.mjs` 63 项；`verify-ui/check-s25c.mjs` 18 项（断言左栏与开关都已不存在、编辑器宽度 = 浮层宽度）、`check-s23.mjs` 19 项、新增 `check-s73.mjs` 15 项（跨文件跟随 / 切 tab 跟随 / 收起后不弹） |
 
 ### 数据格式冻结清单（1.0.0 之后只增不改）
