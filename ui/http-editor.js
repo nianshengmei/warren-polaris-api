@@ -67,8 +67,6 @@
     hide: {},          /* 被折叠隐藏的全文行 -> 折叠起点行 */
     tags: {},          /* 折叠起点行 -> 折叠了多少行 */
     hitLine: -1,
-    q: '',             /* 接口一览过滤词 */
-    activeReq: -1,
     autoSave: true,
     dirty: false,
     savedAt: 0,
@@ -365,47 +363,7 @@
       '.pa-fe-drop .t2{margin-top:5px;font-size:11.5px;color:var(--dim,#a8acba)}',
       '.pa-fe-env{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:5px;border:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg-2,#1a1c24);color:var(--ink,#d8dae2);max-width:130px}',
       '.pa-fe-main{flex:1;min-height:0;display:flex;overflow:hidden;position:relative}',
-      '.pa-fe-side{width:238px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg-2,#1a1c24);min-height:0}',
-      '.pa-fe-side.collapsed{display:none}',
-      '.pa-fe-shead{display:flex;align-items:center;gap:2px;padding:7px 7px 4px;font-size:10.5px;color:var(--dim,#a8acba);letter-spacing:.04em;flex:none;user-select:none}',
-      '.pa-fe-shead>span{flex:1;display:flex;align-items:center;gap:5px;cursor:pointer;min-width:0}',
-      '.pa-fe-shead>span:hover{color:var(--ink,#d8dae2)}',
-      '.pa-fe-shead b{font-weight:600;font-size:9.5px;color:var(--dimmer,#6e7282);background:var(--surface-2,#252830);border-radius:8px;padding:0 5px;line-height:14px;flex:none}',
-      '.pa-fe-shead .car{font-size:8px;color:var(--dimmer,#6e7282);transition:transform .15s;flex:none}',
-      '.pa-fe-shead.closed .car{transform:rotate(-90deg)}',
-      '.pa-fe-mini{font:inherit;font-size:12px;line-height:1;padding:3px 5px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--dim,#a8acba);cursor:pointer}',
-      '.pa-fe-mini:hover{color:var(--brand,#ff7a59);border-color:var(--line-2,rgba(255,255,255,.18))}',
-      '.pa-fe-dir{margin:0 7px 6px;font:inherit;font-size:11px;padding:4px 6px;border-radius:4px;border:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg,#16181e);color:var(--ink,#d8dae2);flex:none;min-width:0;font-family:var(--mono,Consolas,monospace)}',
-      '.pa-fe-fwrap{display:flex;flex-direction:column;flex:0 1 auto;min-height:0;max-height:40%}',
-      '.pa-fe-fwrap.closed .pa-fe-dir,.pa-fe-fwrap.closed .pa-fe-flist{display:none}',
-      '.pa-fe-flist{flex:1 1 auto;overflow:auto;padding:0 4px 6px;min-height:0}',
-      '.pa-fe-empty{padding:12px 9px;font-size:11.5px;color:var(--dimmer,#6e7282);line-height:1.7}',
-      '.pa-fe-fitem{display:block;width:100%;text-align:left;font:inherit;font-size:11.5px;padding:5px 7px;border-radius:4px;border:none;background:transparent;color:var(--dim,#a8acba);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.pa-fe-fitem:hover{background:var(--surface-2,#252830);color:var(--ink,#d8dae2)}',
-      '.pa-fe-fitem.on{background:var(--surface-3,#2c2f3a);color:var(--brand,#ff7a59)}',
-      '.pa-fe-fitem small{display:block;font-size:10px;color:var(--dimmer,#6e7282);margin-top:1px;overflow:hidden;text-overflow:ellipsis}',
-      /* ===== 接口一览（当前 .http 文件里的全部请求） ===== */
-      '.pa-fe-owrap{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--line,rgba(255,255,255,.1));margin-top:2px}',
-      '.pa-fe-owrap.closed .pa-fe-oq,.pa-fe-owrap.closed .pa-fe-oline{display:none}',
-      '.pa-fe-oq{padding:0 7px 5px;flex:none}',
-      '.pa-fe-oq input{width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:3px 6px;border-radius:4px;border:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg,#16181e);color:var(--ink,#d8dae2);font-family:var(--mono,Consolas,monospace)}',
-      '.pa-fe-oq input::placeholder{color:var(--dimmer,#6e7282)}',
-      '.pa-fe-oline{flex:1 1 auto;overflow:auto;padding:0 4px 8px;min-height:0}',
-      '.pa-fe-oi{display:flex;align-items:center;gap:7px;width:100%;text-align:left;font:inherit;padding:4px 6px;border-radius:4px;border:none;background:transparent;cursor:pointer;min-height:22px;transition:.1s}',
-      '.pa-fe-oi:hover{background:var(--surface-2,#252830)}',
-      '.pa-fe-oi.on{background:var(--surface-3,#2c2f3a);box-shadow:inset 2px 0 0 var(--brand,#ff7a59)}',
-      '.pa-fe-mb{flex:none;font-size:9px;font-weight:700;letter-spacing:.03em;width:38px;text-align:right;font-family:var(--mono,Consolas,monospace)}',
-      '.pa-fe-oin{flex:1;font-size:11.5px;color:var(--ink,#d8dae2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.pa-fe-oif{flex:none;font-size:9px;color:var(--dimmer,#6e7282);padding:0 3px;opacity:0;transition:.12s}',
-      '.pa-fe-oi:hover .pa-fe-oif{opacity:1}',
-      '.pa-fe-oif:hover{color:var(--brand,#ff7a59)}',
-      '.pa-fe-oi.on .pa-fe-oif{opacity:.55}',
-      '.pa-fe-oi.on .pa-fe-oin{color:var(--brand,#ff7a59)}',
-      '.pa-fe-ost{flex:none;width:5px;height:5px;border-radius:50%;background:var(--dimmer,#6e7282)}',
-      '.pa-fe-ost.ok{background:var(--ok,#3fb950)}',
-      '.pa-fe-ost.warn{background:var(--warn,#d29922)}',
-      '.pa-fe-ost.err{background:var(--err,#f85149)}',
-      '.pa-fe-ost.busy{background:var(--warn,#d29922);animation:paFePulse .8s infinite}',
+      /* S7.5：浮层左栏（接口一览）整栏移除 —— 导航只认侧栏那棵树 */
       /* ===== 语法着色（代码层） ===== */
       '.pa-fe .t-sep{color:var(--brand,#ff7a59);font-weight:700}',
       '.pa-fe .t-sepname{color:var(--brand-hi,#ff926f);font-weight:700}',
@@ -494,14 +452,8 @@
       '.pa-fe-foot{display:flex;align-items:center;gap:10px;padding:3px 9px;border-top:1px solid var(--line,rgba(255,255,255,.1));font-size:10.5px;color:var(--dimmer,#6e7282);flex:none;min-height:23px;background:var(--surface,#1e2028)}',
       '[data-dbx-theme="light"] .pa-fe{background:#fff;color:#1a1d2e}',
       '[data-dbx-theme="light"] .pa-fe-bar,[data-dbx-theme="light"] .pa-fe-foot{background:#f7f8fa}',
-      '[data-dbx-theme="light"] .pa-fe-side,[data-dbx-theme="light"] .pa-fe-gutter{background:#f2f4f8}',
-      '[data-dbx-theme="light"] .pa-fe-dir{background:#fff;color:#1a1d2e}',
+      '[data-dbx-theme="light"] .pa-fe-gutter{background:#f2f4f8}',
       '[data-dbx-theme="light"] .pa-fe-idle{background:#fff}',
-      '[data-dbx-theme="light"] .pa-fe-fitem:hover{background:#e6e9f0}',
-      '[data-dbx-theme="light"] .pa-fe-fitem.on{background:#dde2ec}',
-      '[data-dbx-theme="light"] .pa-fe-oq input{background:#fff}',
-      '[data-dbx-theme="light"] .pa-fe-oi:hover{background:#e6e9f0}',
-      '[data-dbx-theme="light"] .pa-fe-oi.on{background:#dde2ec}',
       '[data-dbx-theme="light"] .pa-fe-hl{color:#1a1d2e}',
       '[data-dbx-theme="light"] .pa-fe-foldtag{background:#e6e9f0}',
       '[data-dbx-theme="light"] .pa-fe-l.hit{background:rgba(232,96,42,.10)}',
@@ -534,17 +486,9 @@
       '  <button class="pa-fe-btn" id="paFeSaveAs" title="另存为新的 .http 文件（系统保存对话框）">另存为</button>',
       '  <button class="pa-fe-btn" id="paFeRunAll" title="按顺序运行本文件全部请求">▶▶ 全部运行</button>',
       '  <button class="pa-fe-btn on" id="paFeAuto" title="切换自动保存">自动保存：开</button>',
-      '  <button class="pa-fe-btn on" id="paFeSideBtn" title="显示/隐藏左侧的接口一览">≡ 接口一览</button>',
       '  <button class="pa-fe-btn ghost" id="paFeClose" title="向右收起成右缘悬浮箭头（点箭头原样回来；右键箭头可彻底关闭）">⇥ 收起</button>',
       '</div>',
       '<div class="pa-fe-main">',
-      '  <div class="pa-fe-side" id="paFeSide">',
-      '    <div class="pa-fe-owrap">',
-      '      <div class="pa-fe-shead"><span id="paFeOToggle" title="当前 .http 文件里的全部接口，点一条跳到对应位置"><i class="car">▾</i>接口一览<b id="paFeOCount">0</b></span></div>',
-      '      <div class="pa-fe-oq"><input id="paFeOq" spellcheck="false" placeholder="过滤 名称 / URL / 方法" /></div>',
-      '      <div class="pa-fe-oline" id="paFeOList"><div class="pa-fe-empty">打开 .http 文件后，这里列出文件里所有接口</div></div>',
-      '    </div>',
-      '  </div>',
       '  <div class="pa-fe-edit" id="paFeEdit">',
       '    <div class="pa-fe-gutter"><div class="pa-fe-ginner" id="paFeGinner"></div></div>',
       '    <div class="pa-fe-code"><div class="pa-fe-hl" id="paFeHl"></div></div>',
@@ -1029,7 +973,6 @@
     S.folded = {};
     S.hitLine = -1;
     S.hlKey = null;
-    S.activeReq = -1;
     /* 赋值后 textarea 的光标会落到末尾，随后的 focus() 会把视图滚到文件最后一行。
      * 打开一个文件应该从第 1 行看起，所以这里把光标和滚动都归零。 */
     if (ta) {
@@ -1151,9 +1094,6 @@
     paint();
     clearTimeout(hitTimer);
     hitTimer = setTimeout(function () { S.hitLine = -1; paint(); }, 1300);
-    if (ri != null) { S.activeReq = ri; markActive(); }
-    var on = E.olist && E.olist.querySelector('.pa-fe-oi.on');
-    if (on && on.scrollIntoView) { try { on.scrollIntoView({ block: 'nearest' }); } catch (e) { } }
   }
 
   function toggleFold(fi) {
@@ -1503,8 +1443,8 @@
     return { html: html, folds: ctx.folds, byOpen: byOpen, ids: ctx.ids, plain: false };
   }
 
-  /* ===================== 接口一览 ===================== */
-  /* URL 末两段（去掉协议/主机/query/hash）：
+  /* ===================== 请求命名 ===================== */
+  /* 侧栏条目与 gutter tooltip 共用的显示名。URL 末两段：（去掉协议/主机/query/hash）：
    * https://api.x.com/api/v1/users/42?x=1 → users/42 */
   function urlTail(u) {
     var s = String(u == null ? '' : u).trim();
@@ -1529,59 +1469,6 @@
     return urlTail(r && r.url);
   }
 
-  function renderOutline() {
-    if (!E.olist) return;
-    var reqs = (S.parsed && S.parsed.requests) || [];
-    var q = String(S.q || '').trim().toLowerCase();
-    var html = [], shown = 0;
-    for (var i = 0; i < reqs.length; i++) {
-      var r = reqs[i];
-      var nm = reqName(r);
-      var hay = (nm + ' ' + r.method + ' ' + r.url).toLowerCase();
-      if (q && hay.indexOf(q) < 0) continue;
-      shown++;
-      var st = S.lastRun[r.line] || '';
-      html.push('<button class="pa-fe-oi' + (i === S.activeReq ? ' on' : '') +
-        '" data-ri="' + i + '" data-line="' + r.line + '" title="' + esc(r.method + ' ' + r.url) + '">' +
-        '<span class="pa-fe-mb t-m-' + String(r.method || 'get').toLowerCase() + '">' + esc(r.method) + '</span>' +
-        '<span class="pa-fe-oin">' + esc(nm) + '</span>' +
-        '<span class="pa-fe-oif" data-ri="' + i + '" title="在表单里打开">▤</span>' +
-        (st ? '<i class="pa-fe-ost ' + st + '"></i>' : '') +
-        '</button>');
-    }
-    if (!shown) {
-      E.olist.innerHTML = '<div class="pa-fe-empty">' + (reqs.length
-        ? '没有匹配的接口'
-        : ((S.path || S.name)
-          ? '这个文件里还没有解析到请求<br>（请求行形如 <b>GET https://…</b>）'
-          : '打开 .http 文件后，这里列出文件里所有接口')) + '</div>';
-    } else {
-      E.olist.innerHTML = html.join('');
-    }
-    if (E.ocount) E.ocount.textContent = String(shown);
-  }
-
-  function markActive() {
-    if (!E.olist) return;
-    var nodes = E.olist.querySelectorAll('.pa-fe-oi');
-    for (var i = 0; i < nodes.length; i++) {
-      nodes[i].classList.toggle('on', Number(nodes[i].getAttribute('data-ri')) === S.activeReq);
-    }
-  }
-
-  /* 光标所在行 → 高亮接口一览里对应的那条 */
-  function trackCaret() {
-    if (!S.open || !ta) return;
-    clearTimeout(trackTimer);
-    trackTimer = setTimeout(function () {
-      var line = mapCaret().line + 1;
-      var reqs = (S.parsed && S.parsed.requests) || [];
-      var idx = -1;
-      for (var i = 0; i < reqs.length; i++) { if (reqs[i].line <= line) idx = i; else break; }
-      if (idx !== S.activeReq) { S.activeReq = idx; markActive(); }
-    }, 80);
-  }
-
   /* ===================== 解析 / 状态 ===================== */
   function reparse() {
     if (!H || !ta) return S.parsed;
@@ -1602,8 +1489,6 @@
     }
     S.parsed = parsed;
     renderGutter();
-    renderOutline();
-    trackCaret();
     updateFoot();
     return parsed;
   }
@@ -1942,7 +1827,6 @@
     S.dirty = true;
     setSaveState('dirty');
     rebuild();                 /* 立刻重绘高亮，打字不闪 */
-    trackCaret();
     clearTimeout(parseTimer);
     parseTimer = setTimeout(reparse, 200);
     scheduleSave();
@@ -1983,7 +1867,8 @@
     jump();                                     /* 先跳一次：此时解析已完成，选中立刻生效 */
     setTimeout(jump, 90);                       /* 布局刚张开时高度还没算好，再补一次滚动 */
     setTimeout(function () { if (!opts.keepFocus) return; if (ta) ta.focus(); }, 120);
-    setTimeout(function () { if (window.POLARIS_DOCS && window.POLARIS_DOCS.refresh) window.POLARIS_DOCS.refresh(true); }, 300);
+    /* 从表单跟过来的（quiet）不重扫侧栏：切 tab 是高频动作，每切一次扫一遍目录会白闪 */
+    if (!opts.quiet) setTimeout(function () { if (window.POLARIS_DOCS && window.POLARIS_DOCS.refresh) window.POLARIS_DOCS.refresh(true); }, 300);
     return true;
   }
 
@@ -2202,19 +2087,19 @@
     if (url && !/^[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//.test(url)) {
       if (/\{\{/.test(url)) {
         toast('URL 含未解析变量：' + esc(url));
-        S.lastRun[req.line] = 'err'; renderGutter(); renderOutline();
+        S.lastRun[req.line] = 'err'; renderGutter();
         return;
       }
       if (url.charAt(0) === '/') {
         toast('相对 URL 需要 env 里配置 baseUrl（http-client.env.json）');
-        S.lastRun[req.line] = 'err'; renderGutter(); renderOutline();
+        S.lastRun[req.line] = 'err'; renderGutter();
         return;
       }
       url = 'https://' + url;
     }
     if (!url) {
       toast('请求 URL 为空');
-      S.lastRun[req.line] = 'err'; renderGutter(); renderOutline();
+      S.lastRun[req.line] = 'err'; renderGutter();
       return;
     }
 
@@ -2243,7 +2128,7 @@
           });
         } catch (e) {
           toast('multipart 组装失败：' + esc(e.message || e));
-          S.lastRun[req.line] = 'err'; renderGutter(); renderOutline();
+          S.lastRun[req.line] = 'err'; renderGutter();
           return;
         }
       } else if (req.bodyFromFile) {
@@ -2274,7 +2159,7 @@
     }
 
     S.lastRun[req.line] = 'busy';
-    renderGutter(); renderOutline();
+    renderGutter();
     var resp = null;
     try {
       resp = await window.POLARIS_API.runRaw({
@@ -2289,7 +2174,7 @@
       toast('运行失败：' + esc(e.message || e));
     }
     S.gutterSig = '';
-    renderGutter(); renderOutline();
+    renderGutter();
     return resp;
   }
 
@@ -2505,7 +2390,6 @@
     E.auto = byId('paFeAuto');
     E.save = byId('paFeSave');
     E.saveAs = byId('paFeSaveAs');
-    var side = byId('paFeSide');
 
     /* 工具条 */
     E.save.onclick = function () { doSave(true); };    E.saveAs.onclick = function () { saveAs(); };
@@ -2589,67 +2473,7 @@
       updateFoot();
     };
 
-    /* 左栏只剩接口一览：收起整栏的按钮挂在它的标题上 */
-    /* 左栏只有一个「接口一览」，开关放顶栏：收起后仍要有唯一入口，不能靠看不见的细条 */
-    var sideBtn = byId('paFeSideBtn');
-    function setSide(on) {
-      if (side) side.classList.toggle('collapsed', !on);
-      if (sideBtn) sideBtn.classList.toggle('on', !!on);
-    }
-    if (sideBtn) sideBtn.onclick = function () { setSide(!side || side.classList.contains('collapsed')); };
-
-    /* ---- 接口一览 ---- */
-    E.olist = byId('paFeOList');
-    E.ocount = byId('paFeOCount');
-    E.oq = byId('paFeOq');
     E.edit = byId('paFeEdit');
-    if (E.oq) {
-      E.oq.addEventListener('input', function () {
-        S.q = E.oq.value || '';
-        renderOutline();
-      });
-      E.oq.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { E.oq.value = ''; S.q = ''; renderOutline(); e.stopPropagation(); }
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          var first = E.olist && E.olist.querySelector('.pa-fe-oi');
-          if (first) first.click();
-        }
-      });
-    }
-    if (E.olist) {
-      E.olist.addEventListener('click', function (e) {
-        var fi2 = e.target && e.target.closest ? e.target.closest('.pa-fe-oif') : null;
-        if (fi2) {                              /* ▭：直接去表单，不再只是滚动 */
-          e.preventDefault();
-          e.stopPropagation();
-          var ifr = Number(fi2.getAttribute('data-ri'));
-          if (isFinite(ifr)) openInForm(ifr);
-          return;
-        }
-        var b = e.target && e.target.closest ? e.target.closest('.pa-fe-oi') : null;
-        if (!b) return;
-        var line = Number(b.getAttribute('data-line'));
-        var ri = Number(b.getAttribute('data-ri'));
-        if (isFinite(line) && line > 0) gotoLine(line, isFinite(ri) ? ri : null);
-      });
-    }
-    /* 两个区块的折叠/展开 */
-    var fHead = byId('paFeFHead'), fWrap = byId('paFeFWrap'), fTog = byId('paFeFToggle');
-    if (fTog && fWrap) {
-      fTog.onclick = function () {
-        var closed = fWrap.classList.toggle('closed');
-        if (fHead) fHead.classList.toggle('closed', closed);
-      };
-    }
-    var oTog = byId('paFeOToggle'), oWrap = E.olist && E.olist.parentNode;
-    if (oTog && oWrap) {
-      oTog.onclick = function () {
-        var closed = oWrap.classList.toggle('closed');
-        var head = oTog.parentNode;
-        if (head && head.classList) head.classList.toggle('closed', closed);
-      };
-    }
 
     /* gutter 事件委托：折叠箭头 + 运行按钮 */
     ginner.addEventListener('click', function (e) {
@@ -2703,9 +2527,6 @@
 
     ta.addEventListener('input', onInput);
     ta.addEventListener('scroll', syncScroll, { passive: true });
-    ta.addEventListener('click', trackCaret);
-    ta.addEventListener('keyup', trackCaret);
-    ta.addEventListener('focus', trackCaret);
     /* 折叠时 textarea 里是投影：任何「会改动文本」的入口都先展开 */
     ta.addEventListener('compositionstart', expandFoldsForEdit);
     ta.addEventListener('paste', expandFoldsForEdit);
@@ -2821,8 +2642,7 @@
       pickNative: pickNative,
       save: function () { return doSave(true); },
       saveAs: saveAs,
-      /* v0.5.0：接口一览 / 高亮 / 折叠 的调试与验证入口 */
-      outline: renderOutline,
+      /* v0.5.0：跳行 / 折叠 的调试与验证入口 */
       gotoLine: gotoLine,
       toggleFold: toggleFold,
       reqName: reqName,

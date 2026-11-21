@@ -21,7 +21,7 @@
   "localizations": {
     "zh-CN": {
       "name": "HTTP 文件客户端（.http）",
-      "description": "polaris-api（com.polaris.api）的社区 fork，专注 .http 文件：直接打开本地 IDEA .http / .rest 文件，带语法高亮、JSON 折叠与接口一览，每个请求一点即发，结果显示在原响应框，改动自动保存回文件。在上游 v0.2.0 基础上新增原位 .http 编辑、自带可运行示例、multipart 上传体与 SSE 流式响应；请求由原生 Rust sidecar（reqwest）发出，无 CORS 与禁发头限制。"
+      "description": "polaris-api（com.polaris.api）的社区 fork，专注 .http 文件：直接打开本地 IDEA .http / .rest 文件，带语法高亮、JSON 折叠与侧栏目录树，每个请求一点即发，结果显示在原响应框，改动自动保存回文件。在上游 v0.2.0 基础上新增原位 .http 编辑、自带可运行示例、multipart 上传体与 SSE 流式响应；请求由原生 Rust sidecar（reqwest）发出，无 CORS 与禁发头限制。"
     }
   }
 }

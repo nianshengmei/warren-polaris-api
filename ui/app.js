@@ -549,6 +549,9 @@ function locateDocRequest(g,info){
 }
 
 async function openInFormForDoc(path,info){
+  /* 源码 → 表单这条链自己会把浮层收起来；期间不许 followSource 再把它拉回去 */
+  suppressFollow++;
+  try{
   info=info||{};
   if(!path){ setStatus('这段还没绑定文件','warn'); return false; }
   let g=state.collections.find(x=>x.path===path);
@@ -562,6 +565,7 @@ async function openInFormForDoc(path,info){
   openSaved(r);
   setStatus('已切到表单：'+r.name,'ok');
   return true;
+  } finally { suppressFollow--; }
 }
 
 async function openSourceForTab(){
@@ -1187,7 +1191,7 @@ function renderTabs(){
     }
     if(t.dirty) tab.appendChild(el('span','dirty'));
     const x=el('button','tx','×'); x.title='关闭'; x.onclick=e=>{e.stopPropagation();closeTab(t);}; tab.appendChild(x);
-    tab.onclick=()=>{ state.activeTab=t.id; renderAll(); persist(); };
+    tab.onclick=()=>{ state.activeTab=t.id; renderAll(); persist(); followSource(t); };
     tab.oncontextmenu=e=>{ e.preventDefault(); e.stopPropagation(); showTabCtxMenu(e,t); };
     tab.querySelector('.tn').ondblclick=e=>{ e.stopPropagation(); PD.ask('重命名 tab',{value:t.name},n=>{ if(n!=null){ t.name=n.trim()||t.name; renderTabs(); persist(); } }); };
     bar.appendChild(tab);
@@ -1858,8 +1862,24 @@ async function appendToDoc(t,path,newFileName,name){
   toast('已保存「'+esc(name)+'」 <b>✓</b>');
 }
 
+/* ---------- 表单 → 源码：跟着走 ----------
+ * 浮层开着的时候，侧栏点哪条、tab 切到哪条，源码就跳到那一段的行 —— 两边绑的是
+ * 同一段文字，没必要让人再找一次。浮层没开就什么都不做：不硬把浮层弹出来盖住表单。 */
+let suppressFollow=0;   /* 源码 → 表单的链路会自己收浮层，期间别反向跟随 */
+async function followSource(t){
+  if(suppressFollow) return;
+  const E=window.POLARIS_EDITOR;
+  if(!E||!E.isOpen||!E.isOpen()) return;
+  const ref=t&&t.docRef;
+  if(!ref||!ref.file||!ref.line) return;
+  const st=E.state||{};
+  /* 跨文件跳转前，先把浮层里那份没保存的改动落盘（关掉自动保存时才可能有） */
+  if(st.path&&st.path!==ref.file&&st.dirty){ try{ await E.save(); }catch(e){} }
+  try{ await E.openAt(ref.file, ref.line, { quiet:true }); }catch(e){}
+}
+
 function openSaved(r){
-  const exist=state.tabs.find(t=>t.savedId===r.id); if(exist){ state.activeTab=exist.id; renderAll(); return; }
+  const exist=state.tabs.find(t=>t.savedId===r.id); if(exist){ state.activeTab=exist.id; renderAll(); followSource(exist); return; }
   const t=newTab({ name:r.name,savedId:r.id,method:r.method,url:r.url, params:JSON.parse(JSON.stringify(r.params||[blankRow()])), headers:JSON.parse(JSON.stringify(r.headers||[blankRow()])), bodyType:r.bodyType||'none',body:r.body||'',formBody:JSON.parse(JSON.stringify(r.formBody||[blankRow()])) });
   if(!t.params.length)t.params=[blankRow()]; if(!t.headers.length)t.headers=[blankRow()]; if(!t.formBody.length)t.formBody=[blankRow()];
   if(r.httpSource){
@@ -1868,6 +1888,7 @@ function openSaved(r){
   }
   syncTabVars(t);
   state.tabs.unshift(t); state.activeTab=t.id; renderAll(); persist(); setStatus('已载入「'+r.name+'」');
+  followSource(t);
 }
 
 function deleteSaved(g,r){

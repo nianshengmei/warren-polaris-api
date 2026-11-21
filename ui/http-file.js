@@ -178,7 +178,7 @@
       if (testHits) cur.tests += testHits.length;
       if (!cur.name) {
         cur.name = (cur.method + ' ' + (cur.url || '未命名请求')).slice(0, 48);
-        cur.nameAuto = true;      /* 没有标题：侧栏/接口一览改用 URL 末两段显示 */
+        cur.nameAuto = true;      /* 没有标题：侧栏改用 URL 末两段显示 */
       } else {
         cur.nameAuto = false;
       }

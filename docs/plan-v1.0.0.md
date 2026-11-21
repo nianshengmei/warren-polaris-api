@@ -24,12 +24,12 @@
 | S1.5 侧栏改文件源 | ✅ | `app.js` 新增 DOCS 层（`initDocs/refreshDocs/applyDocs/patchGroup/rebindTabs`）；保存走 `writeRequest`、新建走 `appendRequest`、删除走 `deleteRequest`、改名走 `writeRequest(title)`；`persist()` 不再写 collections；资源目录与 `.http` 面板共用（`POLARIS_DOCS.setDir`）；`verify-ui/check-s15.mjs` 17 项真机端到端（假宿主 + 真 fs） |
 | S2.1 字段隔离验收 | ✅ | `store.test.mjs` +4 项（只改 URL / 只改 header / 只改 body / 方法大小写；`<` `>` 行与 Tab 缩进逐字节保留）、`locateSegment` 方法比对统一大写；共 26 项 |
 | S2.2 反向刷新 + 冲突 | ✅ | `app.js` 的 `syncTabsWithDocs`（扫完目录对齐 tab）+ `baseMtime`（基线跟着 tab 走，不再用刚扫出的 mtime，否则外部改动会被静默覆盖）+ `#docConflict` 冲突栏（加载磁盘版本 / 保留我的并覆盖 / 稍后）+ tab ⚠ 标记；`http-editor.js` 记 `mtime` + `loadedText`，保存前比对、冲突停手，底部「用本地覆盖 / 载入磁盘版本」；`verify-ui/check-s22.mjs` 26 项真机端到端（表单侧 + 编辑器侧） |
-| S2.3 双向跳转 | ✅ | 表单 → 源码：请求栏 `</>`（`openSourceForTab`，脏了先落盘）→ `POLARIS_EDITOR.openAt`（同一文件且磁盘变了会先 `ensureFresh` 重读）；源码 → 表单：gutter 请求行左侧 `▤` + 接口一览 `▤`（`openInForm` → `POLARIS_DOCS.openInForm`，按 id → 行号+方法 → 名称+方法 认段，切过去自动收起浮层）；`verify-ui/check-s23.mjs` 20 项 |
+| S2.3 双向跳转 | ✅ | 表单 → 源码：请求栏 `</>`（`openSourceForTab`，脏了先落盘）→ `POLARIS_EDITOR.openAt`（同一文件且磁盘变了会先 `ensureFresh` 重读）；源码 → 表单：gutter 请求行左侧 `▤`（接口一览里的那个 `▤` 于 S7.5 随整栏删除）（`openInForm` → `POLARIS_DOCS.openInForm`，按 id → 行号+方法 → 名称+方法 认段，切过去自动收起浮层）；`verify-ui/check-s23.mjs` 19 项 |
 | S2.4 变量统一 | ✅ | 表单侧 `resolveVars(str,t)` 不再自己实现一套，改走 `POLARIS_HTTP.resolveDeep`：文件级 `@var` → 环境 → 内置动态变量（`$guid/$timestamp/...`）→ 跨请求引用；`syncTabVars` 在打开/重绑/保存后对齐 `fileVars`；投影层透传 `fileVars`；跨请求引用正则改 `\p{L}`（`\w` 不认中文，也认空格）；**环境也以 `http-client.env.json` 为真源**（`loadEnvsFromFile` 启动读、`saveEnvsToFile` 改完写）；`vars.test.mjs` 19 项 + `verify-ui/check-s24.mjs` 10 项 |
 | S2.5a 映射层 | ✅ | `ui/workspace-map.js`（`POLARIS_MAP`）：读写 `wpa-workspace.json`（原子写）、目录内相对 / 目录外绝对路径归一、`register()` 挂载、`resolve()` 侧栏树（带 `exists`/`outside`）、`moveTo/relocate/unregister` 归位原语。**没有任何扫目录函数**；`app.js` boot 调 `loadWorkspaceMap()`（映射不存在就写一份空映射；坏 JSON 先留档 `.broken.json` 再重建），新建/改名/删除文件时同步映射；`tools/map.test.mjs` 22 项 |
 | S2.5b 侧栏文件夹树 | ✅ | `renderSidebar` 拆成 `renderSidebarMapped / renderFolderNode / renderMapFile / renderFileGroup`：文件夹 → 文件 → 请求，顺序与归属全来自映射；折叠态写回 `collapsed`；外部文件带「外部」标；找不到的显示灰色占位（↻ 重新定位 / ✕ 移除登记）；底部「＋ 挂载 .http」+「＋ 新建文件夹」，文件夹可改名/删除（文件退回根）。`collectDocsList()` 改成**只遍历映射**逐个 `store.readOne()`，一个目录都不扫。`verify-ui/check-s25.mjs` 21 项 |
 | S2.6 初始示例自动挂载 | ✅ | `ensureDefaultSample` 两个分支都调 `POLARIS_DOCS.register`（已存在也补登记，不再依赖「打开过一次」）；`loadWorkspaceMap` 首启建映射时若示例已在磁盘上就一并写进去，侧栏第一帧就有东西。顺带修 `POLARIS_MAP.save` 并发写：tmp 名唯一 + 写操作串行（启动期「首启建映射」与「示例挂载」会同时写，共用 tmp 会把映射文件撞掉）。`verify-ui/check-s26.mjs` 8 项 |
-| S2.5c 面板去文件树 | ✅ | 浮层左栏只剩「接口一览」，文件列表 / 目录输入框 / ⟳ 扫描 / ＋ 新建 / ⇣ 导入 / 📂 打开全部删除，扫目录逻辑（`scan`/`renderFiles`/`refreshFiles`/`matchScanned`/`S.files`）连根拔掉；工作目录改由 `workspaceDir()` 推导（当前文件 → 映射目录）；侧栏文件头新增 `</>` 进源码；顶栏新增「≡ 接口一览」开关（收起后仍有唯一入口）。`verify-ui/check-s25c.mjs` 21 项 |
+| S2.5c 面板去文件树 | ✅ | 浮层左栏只剩「接口一览」，文件列表 / 目录输入框 / ⟳ 扫描 / ＋ 新建 / ⇣ 导入 / 📂 打开全部删除，扫目录逻辑（`scan`/`renderFiles`/`refreshFiles`/`matchScanned`/`S.files`）连根拔掉；工作目录改由 `workspaceDir()` 推导（当前文件 → 映射目录）；侧栏文件头新增 `</>` 进源码；顶栏新增「≡ 接口一览」开关（收起后仍有唯一入口；S7.5 起整栏也拆了）。`verify-ui/check-s25c.mjs` 18 项 |
 | S2.5d 归位与排序 | ✅ | **文件级**：文件夹头 = 归入（追加到末尾）、文件行上/下半区 = 插到前/后（同组即排序）、根区 `.root-zone` = 退回根；落点下标按「先摘后插」算（`dropIndex`），一律 `POLARIS_MAP.moveTo` → `saveWorkspaceMap()`，**只改映射、不碰文件**；拖进折叠的文件夹会顺手展开；拖拽手柄只给 `.group-head`（`.gact` 上的按下不算拖拽，也不触发折叠）。**请求级**：恢复 S1.5 暂停的拖拽 —— 同一文件内调序 = 整段搬移（新增 `store.moveSegment` / 纯函数 `moveSegmentText`，按字符偏移切段重排，文件头与段内字节逐字节不变，`baseMtime` 冲突照旧）；跨文件搬段仍拒绝并提示（会丢注释，留 1.0.1）。`store.test.mjs` +5 项、`verify.mjs` +1 项、`verify-ui/check-s25d.mjs` 23 项 |
 | S3.1 浮层拖拽 | ✅ | 按住标题条拖浮层：位置记在 `--fe-dx/--fe-dy`（**不改 left/top**，基础盒贴着请求区算，改 left 会把宽度压变形），pointer + rAF 合帧 + `setPointerCapture`；夹取按「整块留在 `.work` 里」算；双击标题条归零；`feX/feY` 落偏好、启动恢复、缩放后重夹。顺带把 `.work` 的 `overflow:hidden` 改 `overflow:clip`（原来会变成可滚容器，`scrollLeft` 被顶偏 26px，浮层整体错位）。`verify-ui/check-s31.mjs` 20 项 |
 | S3.2 字号缩放 | ✅ | `--pa-fs` / `--pa-lh` 挂在 `.pa-fe` 上，textarea / 高亮层 / 行号 / 折叠箭头 / ▶ 全部同源引用；`LINE_H` 常量换成 `lineH(fs)`（字号 × 1.6），行号 `top` 跟着重算；`Ctrl+滚轮` 12–28px（步进 1，`passive:false` 拦整页缩放）、`Ctrl+0` 复位、`fontSize` 落偏好。**修掉一个真错位**：`app.css` 的 `.pa-root textarea{font-size:inherit}` 特异性 (0,1,1) 压过 `.pa-fe-text` (0,1,0)，textarea 一直继承 12.5px 而高亮层跟着变量变 —— 规则改成 `.pa-fe .pa-fe-text`。`verify.mjs` +1 组、`verify-ui/check-s32.mjs` 25 项 |
@@ -172,7 +172,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 
 ### S2.3 双向跳转
 
-> **已落地**：`</>` 在请求栏（表单 → 源码），`▤` 在 gutter 与接口一览（源码 → 表单）。
+> **已落地**：`</>` 在请求栏（表单 → 源码），`▤` 在 gutter（源码 → 表单）；接口一览里的 `▤` 随整栏在 S7.5 删除。
 > 关键坑：同一个文件被表单写回后，编辑器手里还是旧快照 —— `openAt` 发现「同一路径 + 不脏 + mtime 变了」必须重读，
 > 否则跳过去看到的是旧 URL。反过来，编辑器脏着的时候不重读，那是用户正在写的东西。
 
@@ -205,7 +205,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 |---|---|---|
 | **S2.5a 映射层** | `ui/workspace-map.js`：读写 `wpa-workspace.json`、相对/绝对路径归一、`register()` 挂载、**不提供任何扫目录函数** | `tools/map.test.mjs`：路径归一、挂载幂等、磁盘上有但没登记的不进树、丢失文件标 missing、不覆盖已有 folders |
 | **S2.5b 侧栏文件夹树** | 渲染改成「文件夹 → 文件 → 请求」；折叠态进映射；映射里找不到的文件显示灰色「找不到」+ 重新定位；底部「＋ 挂载 .http」入口 | `verify-ui/check-s25.mjs`：两个文件夹 + 外部文件 + 缺失文件 + 「未登记不出现 → 挂载后出现」 |
-| **S2.5c 面板去文件树** ✅ | 删掉 `.http` 浮层里的文件列表与「文件目录」输入框，只留「接口一览 + 源码」；所有打开入口收归侧栏 | 面板全程 `http/listFiles` 调用数为 0；侧栏 `</>` 能直接把文件开成源码视图 |
+| **S2.5c 面板去文件树** ✅ | 删掉 `.http` 浮层里的文件列表与「文件目录」输入框，只留「接口一览 + 源码」（S7.5 再把接口一览也删掉）；所有打开入口收归侧栏 | 面板全程 `http/listFiles` 调用数为 0；侧栏 `</>` 能直接把文件开成源码视图 |
 | **S2.5d 归位与排序** ✅ | 把外部文件拖进文件夹、文件夹内调顺序（写回映射）；恢复 S1.5 暂停的拖拽（同文件整段搬移，跨文件留 1.0.1） | 拖完映射文件变了、重启后顺序还在 |
 
 - **风险**：侧栏从扁平数组变树，牵动搜索 / 折叠 / tab 重绑 / 拖拽，是 M2 里改动面最大的一步。先做 a（纯数据层，可单测）再做 b（渲染），c 最后收口。
@@ -397,6 +397,7 @@ node dev/dev-server.mjs        # 打开 http://127.0.0.1:8899/ ；换端口用 P
 | S7.2 | 版本位齐改：`manifest.json`、`Cargo.toml`、`Cargo.lock`、`.dbx-store.json`、README 历史、`verify.mjs` 的 `VERSION` | `grep -r 0.6.4 src ui backend manifest.json` 无残留 |
 | S7.3 | tag `v1.0.0` + Release → CI 5 平台 | 6 个产物齐全 |
 | S7.4 | **新开**商店 PR（不复活 #557）：`candidates/com.warren.polaris.api.json` 指向 v1.0.0 五平台产物 + `publishers/warren.json` | 候选 sha256/size 与 release 一致；PR 里只有一个候选版本 |
+| S7.5 ✅ | **浮层导航收口**（发版前的 UI 收尾）：删掉 `.http` 浮层里的「接口一览」整栏（DOM / CSS / `renderOutline` / `trackCaret` 连根拔），编辑器铺满；新增 `followSource()`——浮层开着时点侧栏接口 / 切 tab，源码换文件并跳到那一段的行（`openAt` 加 `quiet` 不重扫侧栏）；源码 → 表单链路用 `suppressFollow` 计数防回流 | `verify.mjs` 63 项；`verify-ui/check-s25c.mjs` 18 项（断言左栏与开关都已不存在、编辑器宽度 = 浮层宽度）、`check-s23.mjs` 19 项、新增 `check-s73.mjs` 15 项（跨文件跟随 / 切 tab 跟随 / 收起后不弹） |
 
 ### 数据格式冻结清单（1.0.0 之后只增不改）
 

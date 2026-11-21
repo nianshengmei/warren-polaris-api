@@ -155,7 +155,7 @@ ok('v0.4.0：打开（系统对话框）/ 拖入 / 可反复保存 就位', () =
   assert(/inEditor[\s\S]{0,80}saveCurrent/.test(app), 'app.js 的 Ctrl+S 需为编辑器让路');
 });
 
-ok('S2.5c：浮层只剩「接口一览 + 源码」，文件入口收归侧栏', () => {
+ok('S2.5c/S7.5：浮层只剩源码，接口导航全归侧栏', () => {
   const ed = read('ui/http-editor.js');
   const app = read('ui/app.js');
   /* 浮层里不该再有文件列表与被删掉的扫目录 API */
@@ -163,6 +163,14 @@ ok('S2.5c：浮层只剩「接口一览 + 源码」，文件入口收归侧栏',
     'http/listFiles', 'renderFiles', 'refreshFiles', 'matchScanned'].forEach(k => {
     assert(!ed.includes(k), '浮层里不应再有 ' + k);
   });
+  /* S7.5：接口一览也拆掉了 —— 同一份请求列表在侧栏已经按真源排好，浮层里再列一遍是第二份 */
+  ['paFeOList', 'paFeOCount', 'paFeSide', 'paFeSideBtn', 'renderOutline', 'trackCaret']
+    .forEach(k => assert(!ed.includes(k), '浮层里不应再有 ' + k));
+  assert(!/pa-fe-side|pa-fe-oi\b/.test(ed), '浮层左栏样式应整块删除');
+  /* 外层点接口 / 切 tab：浮层开着就跳到那一段 */
+  assert(app.includes('function followSource'), '缺少 followSource()（表单 → 源码跟随）');
+  assert(/followSource\(exist\)/.test(app) && /followSource\(t\)/.test(app), '侧栏与 tab 切换都要跟随');
+  assert(/isOpen[\s\S]{0,60}followSource|followSource[\s\S]{0,120}isOpen/.test(app), '浮层关着时不能硬弹出来');
   /* 工作目录改为从映射文件所在目录推导，另存为 / 副本仍要有落点 */
   assert(ed.includes('function workspaceDir'), '缺少 workspaceDir()');
   assert(/workspaceDir\(\)[\s\S]{0,80}POLARIS_DOCS/.test(ed), 'workspaceDir 需回落到映射目录');
@@ -270,11 +278,10 @@ ok('S3.3：身份行配色只认两个键，且有四层视觉标记', () => {
   assert(/idKeys\.sort\(\)/.test(ed), '行号签名要纳入身份行，否则换文件后锚点残留');
 });
 
-ok('v0.5.0：接口一览 + 语法着色 + 折叠 就位', () => {
+ok('v0.5.0：语法着色 + 折叠 就位（接口一览已并入侧栏）', () => {
   const ed = read('ui/http-editor.js');
-  /* 一览 */
-  ['paFeOList', 'renderOutline', 'gotoLine', 'urlTail', 'reqName', 'nameAuto', 'paFeOCount']
-    .forEach(k => assert(ed.includes(k), '缺少 ' + k));
+  /* 跳行与命名还留着：折叠、gutter tooltip、表单认段都用它 */
+  ['gotoLine', 'urlTail', 'reqName', 'nameAuto'].forEach(k => assert(ed.includes(k), '缺少 ' + k));
   assert(/function urlTail\([\s\S]{0,600}slice\(-2\)/.test(ed), 'urlTail 需保留末两段');
   /* 着色 */
   ['.t-sepname', '.t-m-get', '.t-jkey', '.t-jstr', '.t-jnum', '.t-jbool', '.t-jnull', '.t-var']
@@ -403,7 +410,7 @@ ok('v0.6.2：自带示例 + SSE 流式', () => {
   /* multipart 路径支持变量 + 标题优先 */
   assert(/pathJoin\(base, rv\(p\.filePath\)\)/.test(ed), 'multipart 附件路径要支持变量');
   assert(/title: pendingTitle/.test(hf), '解析器需保留 ### 标题');
-  assert(/var ti = String\(\(r && r\.title\)/.test(ed), '接口一览优先显示标题');
+  assert(/var ti = String\(\(r && r\.title\)/.test(ed), 'reqName 优先显示标题（gutter 与表单共用）');
 });
 
 ok('README 带 .http 操作方式与完整示例', () => {
@@ -592,11 +599,10 @@ ok('S2.3 表单 → 源码：请求栏「</>」+ 编辑器 openAt', () => {
   assert(/ensureFresh\(path\)/.test(ed), '同文件跳转前要校验磁盘版本');
 });
 
-ok('S2.3 源码 → 表单：gutter ▤ + 接口一览 ▤', () => {
+ok('S2.3 源码 → 表单：gutter ▤（接口一览已移除）', () => {
   const ed = read('ui/http-editor.js');
   assert(/pa-fe-form/.test(ed), 'gutter 缺少 ▤ 入口');
-  assert(/pa-fe-oif/.test(ed), '接口一览缺少 ▤ 入口');
-  assert(/openInForm\(fr\)/.test(ed) && /openInForm\(ifr\)/.test(ed), '▤ 点击未接到 openInForm');
+  assert(/openInForm\(fr\)/.test(ed), '▤ 点击未接到 openInForm');
   assert(/openInForm: function/.test(read('ui/app.js')), 'POLARIS_DOCS 要暴露 openInForm');
   /* 认段顺序必须是 id → 行号+方法 → 名称+方法（唯一），不许靠 URL 猜 */
   const s = read('ui/app.js');
