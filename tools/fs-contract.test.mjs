@@ -171,18 +171,20 @@ await ok('文件系统大小写敏感度（按平台断言，macOS 只记录）'
   if (IS_MAC) console.log('        macOS 现场：' + (hit ? '不区分大小写（APFS 默认）' : '区分大小写（敏感卷）'));
 });
 
-await ok('rename 覆盖语义：Windows 上原生 rename 拒绝覆盖已存在目标', () => {
+await ok('rename 覆盖语义：三个平台都能覆盖，所以「先删目标」才留下丢数据窗口', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpa-fsc-'));
   const a = path.join(dir, 'a.txt'), b = path.join(dir, 'b.txt');
   fs.writeFileSync(a, 'A'); fs.writeFileSync(b, 'B');
   let err = null;
   try { fs.renameSync(a, b); } catch (e) { err = e; }
+  const after = fs.existsSync(b) ? fs.readFileSync(b, 'utf8') : null;
   fs.rmSync(dir, { recursive: true, force: true });
-  if (IS_WIN) {
-    assert.ok(err, 'Windows 上应当抛错——这正是 sidecar 覆盖前必须先腾开目标的原因');
-  } else {
-    assert.equal(err, null, 'POSIX 上 rename 可以直接覆盖');
-  }
+  /* Node/libuv 在 Windows 上走 MoveFileExW(MOVEFILE_REPLACE_EXISTING)，也是覆盖的。
+   * 所以「Windows 不能覆盖」这个说法是错的 —— 真正的风险是 sidecar 原来的做法
+   * 「先 remove 目标、再 rename」：remove 成功而 rename 失败（占用 / 权限 / 跨盘）
+   * 就把用户文件弄丢了。这条断言记录下来，免得下次又按错的前提改代码。 */
+  assert.equal(err, null, '三个平台的 rename 都应能覆盖已存在目标');
+  assert.equal(after, 'A', '目标内容应被覆盖');
 });
 
 console.log('\n' + pass + ' passed');

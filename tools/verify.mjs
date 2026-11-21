@@ -747,7 +747,9 @@ ok('0.9.0：四个版本位一致，自用包脚本与验收清单在位', () =>
   const m = JSON.parse(read('manifest.json'));
   const cargoVer = (read('backend/Cargo.toml').match(/^version\s*=\s*"([^"]+)"/m) || [])[1];
   const lock = read('backend/Cargo.lock');
-  const block = lock.split(/\n\[\[package\]\]\n/).find((b) => b.includes('name = "dbx-plugin-warren-polaris-api"')) || '';
+  /* Cargo.lock 在 Windows 上可能被 core.autocrlf 检出成 CRLF：分割要认 \r?\n，
+   * 否则整份 lock 被当成一个 block，读到的是 lock 自己的 format version。 */
+  const block = lock.split(/\r?\n\[\[package\]\]\r?\n/).find((b) => b.includes('name = "dbx-plugin-warren-polaris-api"')) || '';
   const lockVer = (block.match(/^version\s*=\s*"([^"]+)"/m) || [])[1];
   assert(cargoVer === m.version, `Cargo.toml=${cargoVer} manifest=${m.version}`);
   assert(lockVer === m.version, `Cargo.lock=${lockVer} manifest=${m.version}`);

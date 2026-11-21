@@ -1,3 +1,17 @@
+# 行尾统一按 LF 检出。
+# 不写这一行的话，Windows 上（core.autocrlf=true，GitHub Actions 的 windows runner
+# 就是默认值）所有文本文件会被检出成 CRLF：测试里按字节数的断言、按 '\n' 拼的正则
+# 立刻红一片，而且红的是测试、不是产品 —— 反而更难看出真正的问题。
+* text=auto eol=lf
+
 # 夹具里当场就要验 CRLF 换行风格：这个文件必须按 CRLF 检出，
 # 否则 Linux/macOS 上用默认 core.autocrlf 检出成 LF，fixtures/store 两个测试会红。
 tools/fixtures/messy.http text eol=crlf
+
+# 二进制不经任何行尾处理
+*.bin binary
+*.dbxp binary
+*.png binary
+*.ico binary
+*.jpg binary
+*.zip binary

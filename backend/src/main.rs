@@ -346,9 +346,11 @@ fn handle_delete_file(params: Value) -> Result<Value, PluginError> {
     Ok(json!({ "path": path.to_string_lossy().to_string(), "removed": true }))
 }
 
-/// 改名 / 移动。Windows 上 fs::rename 不能覆盖已存在目标，所以覆盖时要把旧目标腾开。
-/// 但**不能直接删**：万一紧接着的换名失败，用户的原文件就没了。做法是先把旧目标改名成
-/// 一个临时 `.bak`（目标不存在，任何平台都能改名），换名成功再删 bak，失败就把它挪回来。
+/// 改名 / 移动。同盘 rename 各平台都能覆盖已存在目标（Windows 走 MoveFileExW +
+/// MOVEFILE_REPLACE_EXISTING），所以**不需要**先删目标。真风险恰恰在「先删再改名」：
+/// remove 成功、rename 失败（文件被占用 / 权限 / 跨盘）时，用户的原文件已经没了。
+/// 做法是先把旧目标改名成一个 `.bak`（目标不存在，任何平台都能改名成功），
+/// 换名成功再删 bak，失败就把它挪回来 —— 任何时刻磁盘上都有一份完整文件。
 /// overwrite=false 且目标已存在 → 回 { exists:true, renamed:false }，由 UI 决定换名。
 fn handle_rename_file(params: Value) -> Result<Value, PluginError> {
     let from = param_str(&params, "from").ok_or_else(|| PluginError::new(-32602, "缺少 from"))?;
