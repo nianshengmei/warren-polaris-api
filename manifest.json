@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "com.warren.polaris.api",
   "name": "warren-polaris-api",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "warren",
   "description": "API 请求客户端（sidecar 版），misxzaiz/polaris-api 的社区 fork：专注本地 .http / .rest 文件的原位源码编辑——打开即显示请求源码，每个请求首行左侧有 ▶，点击即发，结果显示在原响应框；改动自动保存回原文件。支持 ### 分隔、@变量、插值、http-client.env.json、跨请求引用、multipart 上传与 SSE 流式响应。请求经 Rust sidecar（reqwest）发送，无 CORS/混合内容/禁发头限制，等效 cURL。",
   "icon": "assets/plugin.svg",

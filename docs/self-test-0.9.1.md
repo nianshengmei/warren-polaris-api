@@ -1,4 +1,4 @@
-# 0.9.0 自用验收清单
+# 0.9.1 自用验收清单
 
 > 目的：在自己机器上按真实场景跑一遍，确认「文件真源 + 双视图 + 身份 + 历史 + 取消」五件事扎实。
 > 这一版**不进商店**；跑完没问题、再把三个待定项拍板，才发 1.0.0。
@@ -18,7 +18,7 @@ dbx-plugin package .          # 产出 dist/*.dbxp
 dbx-plugin dev --path . --port 5190
 
 # C. 只想核对包内容（不出 .dbxp）
-node tools/selfuse-pack.mjs   # dist/polaris-0.9.0-<os>-<arch>/ 与同名 .zip
+node tools/selfuse-pack.mjs   # dist/polaris-0.9.1-<os>-<arch>/ 与同名 .zip
 ```
 
 装完打开插件，工作目录默认是 `~/warren-polaris-api`（首次会自动种 `examples.http`、`sample-upload.txt`、`http-client.env.json`）。
