@@ -12,6 +12,8 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 
 **v0.4.0：打开与保存都变成「系统对话框 + 可反复点」** —— 点「打开 .http」直接拉起资源管理器选文件；文件支持从应用外拖入；「保存」任意多次点击都真正落盘，并显示第几次。
 
+**未发布：WebSocket 和 HTTP 用同一套界面** —— 方法选 `WEBSOCKET`，URL / Headers / Body 全复用（Body 就是连上后发的第一条），按钮原地变「连接 / 断开」，下半区变成 `↓` 收 / `↑` 发 的消息流。不新开 tab 类型，也不多一套入口。
+
 **v0.9.1：multipart 也能当表单填了** —— Body 多一型「文件」（`multipart/form-data`）：一行一个字段，第三列选「文本 / 文件」，选文件直接弹系统对话框（访达 / 资源管理器 / zenity），格子里只显示文件名，`.http` 里存路径（在文件同目录下写相对路径，随仓库一起走）；表单与「文本」是同一段文字的两个视图，改哪边都算数。发送仍走原始字节，附件不经过文本化。
 
 **v0.9.0：文件成为唯一真源（1.0.0 预发）** —— 目录树只认 `wpa-workspace.json`，打开 `.http` 这个动作本身就是挂载；请求身份写进文件（`# @file_id` / `# @interface_id`），每次发送在 `_history/` 记一条（每个接口 10 条，二进制外置成 `.bin`）；响应体改 64 KiB 分块读，点「停止」两秒内真断。功能齐了，这一版只做自用验收，不上商店。
@@ -360,7 +362,30 @@ Accept: application/json
 | 跨请求引用 `{{login.response.body.$.token}}`、`{{x.response.headers.X-Token}}` | ✅（全部运行时） |
 | 内置 `{{$guid}}` `{{$timestamp}}` `{{$randomInt}}` `{{$datetimeIso}}` | ✅ |
 | **`multipart/form-data`**：手写 `--boundary` 分段，段内 `< 附件路径` 表示二进制文件（路径可用 `{{变量}}`） | ✅ 按字节拼装，附件原样上传；表单模式可一行一个字段、选「文本 / 文件」，文件走系统对话框只显示文件名 |
-| multipart 的 `<>` 简写、WebSocket / gRPC / GraphQL 专用块、`client.global` | ❌ 暂不支持 |
+| **`WEBSOCKET ws://…`**（也认 `WS` / `WSS` 简写）：空行之后是「连上就发」的第一条消息，多条用 `===` 分隔 | ✅ 长连接走 sidecar，收发帧在响应区下方滚动；握手头（Authorization / Cookie / 自定义）原样带上 |
+| multipart 的 `<>` 简写、gRPC / GraphQL 专用块、`client.global` | ❌ 暂不支持 |
+
+### WebSocket
+
+和 HTTP **共用同一个 tab、同一个请求条、同一个下半区**——方法选 `WEBSOCKET`，其余照写：
+
+```http
+### 订阅成交推送
+WEBSOCKET wss://stream.example.com/trades
+Authorization: Bearer {{token}}
+Sec-WebSocket-Protocol: json
+
+{"op":"subscribe","topic":"trades"}
+===
+{"op":"ping"}
+```
+
+- 请求行下面照常写握手头：`Authorization`、`Cookie`、`Sec-WebSocket-Protocol` 等**在握手时**发过去（连上之后再带就没用了）。
+- 空行之后那一段是**连上后立刻发的第一条消息**；再往下用 `===` 分隔的多条会收进 `wsMessages`，在消息面板逐条发。
+- 右上按钮在 `WEBSOCKET` 下变成 **连接 / 断开**（不再是「发送」）——同一个位置，不用记两套入口。
+- 连上后下半区变成消息流：`↓` 收、`↑` 发，带时间与 TXT/BIN 标记，底部输入框按 `Ctrl/⌘ ↵` 发送。
+- 收发的帧**都由后端回推**（包括你自己发出去的那条），所以顺序就是真实顺序，也不会重复显示。
+- 关闭 tab、断开、对端 close、拔网线（半开连接）都会让连接收尾；单帧超过 1 MB 会截断并标注。
 
 ### multipart / 文件上传
 
@@ -457,6 +482,13 @@ GitHub Release published → `.github/workflows/plugin-release.yml` 自动为所
 
 ## 版本历史
 
+- **未发布（0.9.2 待定）** — **WebSocket 长连接，和 HTTP 共用一套界面**：
+  - **`WEBSOCKET ws://…` 是一等公民**：方法下拉能选，侧栏照常列出，`WS` / `WSS` 简写也认；空行之后是「连上就发」的第一条消息，多条用 `===` 分隔。
+  - **不新开 tab 类型**：同一个 tab、同一个请求条、同一个下半区。按钮在 `WEBSOCKET` 下原地变成「连接 / 断开」，连上后下半区变成消息流（`↓` 收 / `↑` 发 + 时间 + TXT/BIN），底部输入框 `Ctrl/⌘ ↵` 发送。
+  - **握手头原样带上**：`Authorization` / `Cookie` / `Sec-WebSocket-Protocol` 在握手阶段发出去——真服务端侧验过，不是「界面上有、实际没带」。
+  - **帧由后端回推**：连自己发出去的那条也从后端回来，所以顺序是真实顺序、不会显示两遍；单帧超 1 MB 截断并标注。
+  - **收尾靠得住**：断开 / 关 tab / 对端 close / 半开连接都会让读线程退出（读超时 200 ms 一拍），关掉之后连接表里就不再有它。
+  - 顺带修掉一个老洞：**`WEBSOCKET` 行紧跟在某个 HTTP 请求后面时，以前会被静默吞进那条请求的 body**（GET 莫名背上 `WEBSOCKET ws://…`，连 warning 都没有）。现在两条请求会分开，普通 body 里出现方法名也不会被误切。
 - **v0.9.1** — **multipart 用表单编辑**（0.9.0 的补丁版，仍**不进商店**）：
   - **Body 第 5 型「文件」**：一行一个字段，第三列下拉选「文本 / 文件」；选「文件」后点值格直接拉起系统原生对话框（macOS 访达、Windows 资源管理器、Linux zenity/kdialog），格子里只显示 basename，鼠标悬停见完整路径。
   - **路径写进 `.http`**：文件在 `.http` 所在目录（含子目录）下写相对路径（`media/a.wav`），出了这个目录写绝对路径——把 `.http` 和 `media/` 一起提交，换台机器照样跑。

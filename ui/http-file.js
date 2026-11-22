@@ -20,8 +20,15 @@
 (function () {
   var root = typeof window !== 'undefined' ? window : globalThis;
 
-  var METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'];
-  var METHOD_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT)\s+(.+?)(?:\s+HTTP\/\d(?:\.\d)?)?\s*$/i;
+  /* WEBSOCKET 是 IntelliJ 的写法，WS / WSS 是常见简写，解析时统一归一成 WEBSOCKET。
+   * 它不是 HTTP 方法（没有语义上的请求行/状态行），但**共用同一条请求行语法**：
+   *   WEBSOCKET ws://host/path
+   *   Header: value
+   *
+   *   {"op":"sub"}          ← 空行之后是「连上后要发的第一条消息」
+   * 所以放在方法表里最省事：位置、高亮、写回、身份、历史全部复用，不用另开一套结构。 */
+  var METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT', 'WEBSOCKET'];
+  var METHOD_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT|WEBSOCKET|WSS|WS)\s+(.+?)(?:\s+HTTP\/\d(?:\.\d)?)?\s*$/i;
   var pendingPreScript = null;
 
   function trimRight(s) { return String(s).replace(/\s+$/, ''); }
@@ -270,6 +277,24 @@
     function finish() {
       if (!cur) return;
       if (bodyBuf.length) cur.body = bodyBuf.join('\n').replace(/\n+$/, '');
+      /* WebSocket：空行之后是「连上就发」的第一条消息；多条消息用 `===` 分隔
+       * （IntelliJ 2021.3+ 的写法，`=== 名称` 允许带标题）。
+       * body 保留第一条 —— 写回文件、跨请求引用、历史都按它走，不另立真源。 */
+      if (cur.isWs) {
+        var chunks = String(cur.body || '').split(/\n[ \t]*={3,}[^\n]*\n?/);
+        var msgs = [];
+        for (var ci = 0; ci < chunks.length; ci++) {
+          var one = chunks[ci].replace(/^\n+/, '').replace(/\n+$/, '');
+          if (one !== '') msgs.push(one);
+        }
+        cur.wsMessages = msgs;
+        cur.body = msgs.length ? msgs[0] : '';
+        if (!msgs.length) {
+          warnings.push('WebSocket 请求「' + (cur.name || cur.url) + '」没有首条消息：连上后只等对端推送');
+        } else if (msgs.length > 1) {
+          warnings.push('WebSocket 请求「' + (cur.name || cur.url) + '」有 ' + msgs.length + ' 条消息（=== 分隔），连上后先发第 1 条，其余可在消息面板逐条发');
+        }
+      }
       if (scriptBuf.length) {
         var s = scriptBuf.join('\n').trim();
         if (scriptKind === 'pre') cur.preScript = s; else cur.postScript = s;
@@ -318,16 +343,20 @@
 
     function startRequest(line, lineNo) {
       seq += 1;
+      var method = String(line.method || '').toUpperCase();
+      var isWs = method === 'WEBSOCKET';
       cur = {
         id: 'http-' + seq,
         interfaceId: pendingInterfaceId || undefined,
         interfaceIdLine: pendingInterfaceIdLine || undefined,
         name: pendingName || '',
         title: pendingTitle || '',
-        method: line.method,
+        method: method,
+        isWs: isWs,
         url: trimRight(line.url),
         headers: [],
         body: '',
+        wsMessages: isWs ? [] : undefined,
         bodyType: '',
         bodyFromFile: null,
         outputFile: null,
@@ -475,8 +504,17 @@
 
       /* --- 请求行 --- */
       var mm = trimmed.match(METHOD_RE);
-      if (mm && (phase === 'idle' || (cur && phase === 'headers' && cur.url === ''))) {
-        startRequest({ method: mm[1].toUpperCase(), url: mm[2] }, lineNo);
+      var wsLine = !!mm && /^(WEBSOCKET|WSS?)$/i.test(mm[1]);
+      /* body 里遇到 WEBSOCKET 行 = 上一条没写 ### 就接了下一条。
+       * 以前这里不认，整块被当成上一条的 body 静默吞掉（GET 莫名背上
+       * "WEBSOCKET ws://...\nhello"，连 warning 都没有）。
+       * 只为 WS 放宽：普通方法名出现在 body 里太常见（JSON 里有 "GET" 这种字符串），
+       * 一概切开会把正常的 body 切碎。 */
+      if (mm && (phase === 'idle' || (cur && phase === 'headers' && cur.url === '') || (cur && phase === 'body' && wsLine))) {
+        if (cur) finish();
+        var mmMethod = mm[1].toUpperCase();
+        if (mmMethod === 'WS' || mmMethod === 'WSS') mmMethod = 'WEBSOCKET';
+        startRequest({ method: mmMethod, url: mm[2] }, lineNo);
         if (pendingPreScript && pendingPreScript.length) {
           cur.preScript = pendingPreScript.join('\n');
           pendingPreScript = null;

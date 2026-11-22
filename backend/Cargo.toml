@@ -22,6 +22,10 @@ dbx-plugin-sdk = { version = "0.1.0" }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots"] }
 base64 = "0.22"
+# WebSocket：tungstenite 的同步版，与这里其余部分（reqwest blocking）同路子，
+# 不引入 tokio 运行时 —— 两套调度混在一起，出问题最难查。
+# TLS 用 rustls + native roots：五平台构建里只有它不需要额外系统库（openssl 在 Windows runner 上很麻烦）。
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
 
 # Keep plugin binaries close to the host app's size: default release settings
 # leave ~20MB of symbols and unoptimized generic code in an OpenDAL-sized backend.

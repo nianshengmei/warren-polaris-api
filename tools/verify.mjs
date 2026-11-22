@@ -100,6 +100,32 @@ ok('历史结果面板分两层：目录 ⇄ 快照，点「打开」不再直�
   assert(/scrollIntoView[\s\S]{0,120}?nearest/.test(s), '只有在行确实不可见时才补一次 scrollIntoView');
 });
 
+ok('WebSocket：与 HTTP 共用 tab，长连接走事件（S8.5）', () => {
+  const file = read('ui/http-file.js');
+  assert(/var METHODS = \[[^\]]*'WEBSOCKET'\]/.test(file), '解析器方法表要含 WEBSOCKET');
+  assert(/isWs/.test(file), '解析结果要标出 isWs');
+  assert(/wsMessages/.test(file), '=== 分隔的多条消息要落地');
+
+  const core = read('ui/core.js');
+  assert(/'WEBSOCKET'/.test(core), '方法下拉要能选 WEBSOCKET');
+
+  const app = read('ui/app.js');
+  ['renderWsPane', 'onWsEvent', 'wsToggle', 'wsConnect', 'wsClose', 'wsSendText', 'wsAppendFrame']
+    .forEach(k => assert(app.includes(k), '缺少 ' + k));
+  /* 不新开 tab 类型：WS 用的还是 activeTab / state.tabs */
+  assert(!/wsTab|type\s*:\s*['"]ws['"]/.test(app), 'WS 不该另立一种 tab 类型');
+  assert(/method==='WEBSOCKET'\)\s*return wsToggle/.test(app), '同一个按钮：WEBSOCKET 下走连接/断开');
+  /* 帧要增量 append：整块重建会把滚动位置和正在看的行冲掉 */
+  assert(/function wsAppendFrame[\s\S]{0,400}appendChild/.test(app), '帧必须 append，不能整块重建');
+
+  const rs = read('backend/src/main.rs');
+  ['"ws/connect"', '"ws/send"', '"ws/close"', '"ws/list"', 'polaris/http/ws']
+    .forEach(k => assert(rs.includes(k), '后端缺少 ' + k));
+  assert(/set_read_timeout/.test(rs), '读线程要有超时，否则断开后醒不过来');
+  assert(/WS_MAX_FRAME/.test(rs), '单帧要有上限（事件通道 8 MiB 硬顶）');
+  assert(/tungstenite/.test(read('backend/Cargo.toml')), 'Cargo.toml 要声明 tungstenite');
+});
+
 ok('http-editor.js 关键实现就位', () => {
   const s = read('ui/http-editor.js');
   /* 源码编辑 + gutter 运行按钮 + 自动保存 + 结果进原响应框 */

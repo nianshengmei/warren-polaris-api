@@ -222,4 +222,47 @@ ok('multipart 表单：boundary 认 header 优先，其次 body，都没有就�
   assert.match(body, /^--WarrenBoundary$/m, '空 boundary 要兜底成 WarrenBoundary');
 });
 
+/* ===================== WebSocket（S8.5） ===================== */
+ok('WS：WEBSOCKET / WS / WSS 三种写法都认，方法归一成 WEBSOCKET', () => {
+  const a = H.parseHttpFile('WEBSOCKET ws://h/e\n');
+  assert.equal(a.requests.length, 1);
+  assert.equal(a.requests[0].method, 'WEBSOCKET');
+  assert.equal(a.requests[0].isWs, true);
+  assert.equal(a.requests[0].url, 'ws://h/e');
+
+  const b = H.parseHttpFile('WS wss://h/e\n\nhi\n');
+  assert.equal(b.requests[0].method, 'WEBSOCKET', 'WS 简写要归一');
+  assert.equal(b.requests[0].url, 'wss://h/e');
+  assert.equal(b.requests[0].body, 'hi', '空行之后是首条消息');
+});
+
+ok('WS：body 之后跟 WEBSOCKET 不再被吞成上一条的 body（S8.5 修的老洞）', () => {
+  const r = H.parseHttpFile('### a\nGET http://x/ping\n\nWEBSOCKET ws://h/e\nhello\n');
+  assert.equal(r.requests.length, 2, '要切成两条，不是一条带怪 body 的 GET');
+  assert.equal(r.requests[0].body, '', 'GET 的 body 必须还是空的');
+  assert.equal(r.requests[1].method, 'WEBSOCKET');
+  assert.equal(r.requests[1].body, 'hello');
+});
+
+ok('WS：=== 分隔多条消息，body 保留第一条，其余进 wsMessages', () => {
+  const r = H.parseHttpFile('WEBSOCKET ws://h/e\n\n{"op":"sub"}\n===\n{"op":"ping"}\n');
+  const q = r.requests[0];
+  assert.equal(q.wsMessages.length, 2);
+  assert.equal(q.body, '{"op":"sub"}', 'body 就是第一条（写回文件按它走）');
+  assert.equal(q.wsMessages[1], '{"op":"ping"}');
+  assert.equal(r.warnings.length, 1, '多条消息要给一条提示');
+});
+
+ok('WS：普通 body 里出现方法名不会被误切', () => {
+  const r = H.parseHttpFile('### p\nPOST http://x/a\nContent-Type: application/json\n\n{"m":"GET"}\n');
+  assert.equal(r.requests.length, 1);
+  assert.equal(r.requests[0].body, '{"m":"GET"}');
+});
+
+ok('WS：没有首条消息时给提示，不静默', () => {
+  const r = H.parseHttpFile('WEBSOCKET ws://h/e\n');
+  assert.equal(r.requests[0].body, '');
+  assert.match(r.warnings[0], /没有首条消息/);
+});
+
 console.log('\n' + pass + ' assertions passed');

@@ -64,7 +64,7 @@ let _persistTimer=null;
 function persist(){
   clearTimeout(_persistTimer);
   _persistTimer=setTimeout(()=>{
-    const tabs=state.tabs.map(t=>{const c={...t};delete c.response;delete c.abortCtl;delete c.sendSeq;delete c.stopped;return c;});
+    const tabs=state.tabs.map(t=>{const c={...t};delete c.response;delete c.abortCtl;delete c.sendSeq;delete c.stopped;delete c.ws;return c;});
     const snap={tabs,activeTab:state.activeTab,envs:state.envs,activeEnv:state.activeEnv,ui};
     /* 文件真源启用后，集合不再进 storage —— 磁盘上的 .http 是唯一副本。
      * 双写会立刻出现「storage 与文件谁算数」的二义，所以这里直接不写。 */
@@ -1257,6 +1257,23 @@ function renderRequestBar(){
   const lbl=$('#methodLabel'); lbl.textContent=t.method; lbl.className=methodColor(t.method);
   const urlIn=$('#url'); if(document.activeElement!==urlIn) urlIn.value=t.url;
   updateResolvedPreview();
+  /* WEBSOCKET：同一个按钮位置，换成「连接 / 断开」——
+   * 不给 WS 另做一个按钮，否则请求条上同时存在「发送」和「连接」，人还得先判断该点哪个。 */
+  const sb=$('#sendBtn');
+  if(sb && !sb.classList.contains('stop-mode')){
+    if(t.method==='WEBSOCKET'){
+      /* 从「正在发送的 HTTP」切过来时，stop-mode 还挂在按钮上 —— WS 没有「停止发送」这回事，先摘掉 */
+      sb.classList.remove('stop-mode');
+      const live=wsLive(t);
+      sb.innerHTML=live?'<span class="stop-ico"></span> 断开':'连接 <span class="k">⌘↵</span>';
+      sb.classList.toggle('ws-live',live);
+      sb.title=live?'断开这条 WebSocket':'建立 WebSocket 连接';
+    }else if(sb.dataset.ws==='1'){
+      sb.innerHTML='发送 <span class="k">⌘↵</span>';
+      sb.classList.remove('ws-live'); sb.title=''; sb.dataset.ws='';
+    }
+    if(t.method==='WEBSOCKET') sb.dataset.ws='1';
+  }
 }
 function updateResolvedPreview(){
   const t=activeTab(); const box=$('#urlResolved');
@@ -1424,6 +1441,23 @@ function syncParamsToUrl(t){
   t.url = qs? base+'?'+qs : base;
   const urlIn=$('#url'); if(document.activeElement!==urlIn) urlIn.value=t.url;
   updateResolvedPreview();
+  /* WEBSOCKET：同一个按钮位置，换成「连接 / 断开」——
+   * 不给 WS 另做一个按钮，否则请求条上同时存在「发送」和「连接」，人还得先判断该点哪个。 */
+  const sb=$('#sendBtn');
+  if(sb && !sb.classList.contains('stop-mode')){
+    if(t.method==='WEBSOCKET'){
+      /* 从「正在发送的 HTTP」切过来时，stop-mode 还挂在按钮上 —— WS 没有「停止发送」这回事，先摘掉 */
+      sb.classList.remove('stop-mode');
+      const live=wsLive(t);
+      sb.innerHTML=live?'<span class="stop-ico"></span> 断开':'连接 <span class="k">⌘↵</span>';
+      sb.classList.toggle('ws-live',live);
+      sb.title=live?'断开这条 WebSocket':'建立 WebSocket 连接';
+    }else if(sb.dataset.ws==='1'){
+      sb.innerHTML='发送 <span class="k">⌘↵</span>';
+      sb.classList.remove('ws-live'); sb.title=''; sb.dataset.ws='';
+    }
+    if(t.method==='WEBSOCKET') sb.dataset.ws='1';
+  }
 }
 function syncUrlToParams(t){
   const [,query]=splitUrl(t.url); const rows=[];
@@ -1479,8 +1513,219 @@ function clearCancelFlag(p){
   Promise.resolve().then(()=>DBX.invoke('http/deleteFile',{path:p})).catch(()=>{});
 }
 
+/* ===================== WebSocket（S8.5） =====================
+ * 和 HTTP 共用同一个 tab、同一个请求条、同一个下半区，**不新开 tab 类型**：
+ *   · 方法选 WEBSOCKET：请求行、URL、Headers 全部复用，Body 就是「连上后发的第一条」；
+ *   · 「发送」按钮原地变成「连接 / 断开」；
+ *   · 下半区从「一次响应」变成「消息流 + 输入框」。
+ * 帧的真相在后端：连发出去的帧也由后端回推（dir=out），UI 不自己插 ——
+ * 自己插会和真实发送顺序不一致，也容易一帧显示两次。
+ */
+const WS_FRAME_CAP = 2000;
+
+function wsOf(t){
+  if(!t.ws) t.ws={state:'idle',connId:null,frames:[],err:null,sent:0,recv:0,openedAt:0,draft:''};
+  return t.ws;
+}
+function wsLive(t){ const w=wsOf(t); return w.state==='open'||w.state==='connecting'; }
+
+/* Body 就是首条消息；.http 里用 === 分隔的后续消息在源码里，这里只取第一条 */
+function wsFirstMessage(t){
+  if(t.body) return resolveVars(t.body,t);
+  return '';
+}
+
+async function wsToggle(t){
+  if(wsLive(t)) return wsClose(t);
+  return wsConnect(t);
+}
+
+async function wsConnect(t){
+  const w=wsOf(t);
+  let url=resolveVars(String(t.url||'').trim(),t);
+  if(!url){ setStatus('请先输入 WebSocket 地址','warn'); $('#url').focus(); return; }
+  if(/^https?:\/\//i.test(url)) url=url.replace(/^https?:\/\//i, m=>/^https$/i.test(m)?'wss://':'ws://');
+  if(!/^wss?:\/\//i.test(url)){ setStatus('WebSocket 地址要以 ws:// 或 wss:// 开头（http(s) 也行）','warn'); return; }
+
+  const headers={};
+  t.headers.filter(r=>r.on&&r.k).forEach(r=>{ headers[resolveVars(r.k,t)]=resolveVars(r.v,t); });
+
+  w.state='connecting'; w.err=null; w.frames=[]; w.sent=0; w.recv=0; w.connId=null; w.openedAt=0;
+  t.response=null;                       /* WS 没有「响应」：清掉上一条 HTTP 的，免得看着像 */
+  renderRequestBar(); renderResponse();
+  setStatus('WebSocket 连接中… '+url);
+  try{
+    const r=await DBX.invoke('ws/connect',{url:url,requestId:t.id,headers:headers});
+    w.connId=r.connId; w.state='open'; w.openedAt=Date.now();
+    renderRequestBar(); renderResponse();
+    setStatus('WebSocket 已连接 · '+url,'ok');
+    const first=wsFirstMessage(t);
+    if(first) await wsSendText(t,first,true);
+  }catch(e){
+    w.state='error'; w.err=(e&&e.message)||String(e); w.connId=null;
+    renderRequestBar(); renderResponse();
+    setStatus('WebSocket 连接失败：'+w.err,'err');
+  }
+}
+
+async function wsClose(t){
+  const w=wsOf(t);
+  const cid=w.connId;
+  w.state='closing';
+  renderRequestBar(); renderResponse();
+  if(cid){ try{ await DBX.invoke('ws/close',{connId:cid}); }catch(e){ /* 已经断了也算断 */ } }
+  w.state='closed'; w.connId=null;
+  renderRequestBar(); renderResponse();
+  setStatus('WebSocket 已断开','ok');
+}
+
+async function wsSendText(t,text,isFirst){
+  const w=wsOf(t);
+  if(w.state!=='open'||!w.connId){ setStatus('先连接再发送','warn'); return false; }
+  if(!text) return false;
+  try{
+    await DBX.invoke('ws/send',{connId:w.connId,kind:'text',data:text});
+    if(isFirst) setStatus('已发送首条消息（'+text.length+' 字）','ok');
+    return true;
+  }catch(e){ setStatus('发送失败：'+((e&&e.message)||e),'err'); return false; }
+}
+
+/* 后端推来的帧。按 requestId 找 tab（connId 可能还没回填），再按 connId 校验。 */
+function onWsEvent(p){
+  if(!p) return;
+  let t=state.tabs.find(x=>x.ws&&x.ws.connId===p.connId);
+  if(!t && p.requestId) t=state.tabs.find(x=>x.id===p.requestId);
+  if(!t) return;                         /* 这条连接属于已经关掉的 tab：让它自生自灭（后端会收到写失败） */
+  const w=wsOf(t);
+
+  if(p.phase==='open'){
+    if(w.connId!==p.connId){ w.connId=p.connId; w.state='open'; w.openedAt=Date.now(); }
+    renderRequestBar(); if(t.id===state.activeTab) renderResponse();
+    return;
+  }
+  if(p.phase==='frame'){
+    const f={dir:p.dir,kind:p.kind,data:p.data,size:p.size,at:p.at||Date.now(),seq:p.seq||0,truncated:!!p.truncated};
+    w.frames.push(f);
+    if(p.dir==='in') w.recv++; else w.sent++;
+    if(w.frames.length>WS_FRAME_CAP) w.frames.splice(0,w.frames.length-WS_FRAME_CAP);
+    if(t.id===state.activeTab) wsAppendFrame(t,f);
+    return;
+  }
+  if(p.phase==='close'){
+    if(w.connId!==p.connId) return;
+    w.state='closed'; w.connId=null;
+    w.err=(p.reason&&p.reason.indexOf('error:')===0)?p.reason.slice(6):null;
+    renderRequestBar(); if(t.id===state.activeTab) renderResponse();
+    const why=p.reason?(p.reason.indexOf('error:')===0?('异常：'+p.reason.slice(6)):('（'+p.reason+'）')):'';
+    setStatus('WebSocket 已断开'+why, w.err?'err':'warn');
+  }
+}
+
+function wsMetaText(w){ return '收 '+w.recv+' · 发 '+w.sent; }
+function wsTime(at){
+  const d=new Date(Number(at)||Date.now());
+  const p=n=>String(n).padStart(2,'0');
+  return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+function wsFrameEl(f){
+  const row=el('div','ws-row '+(f.dir==='in'?'in':'out'));
+  row.innerHTML='<span class="ws-dir">'+(f.dir==='in'?'↓':'↑')+'</span>'+
+    '<span class="ws-time">'+wsTime(f.at)+'</span>'+
+    '<span class="ws-kind">'+(f.kind==='binary'?'BIN':'TXT')+'</span>';
+  const body=el('div','ws-data');
+  if(f.kind==='binary'){
+    body.textContent='（二进制 '+(f.size||0)+' 字节）';
+    body.title=f.data||'';
+    body.onclick=()=>{ body.textContent=(body.dataset.open?('（二进制 '+(f.size||0)+' 字节）'):(f.data||'')); body.dataset.open=body.dataset.open?'':'1'; };
+  }else{
+    body.textContent=f.data||'';
+  }
+  if(f.truncated) body.textContent+='\n…（超过 1 MB 已截断）';
+  row.appendChild(body);
+  return row;
+}
+
+/* 增量追加：WS 一开可能几百上千帧，整块重建会把滚动位置和用户正在看的行一起冲掉 */
+function wsAppendFrame(t,f){
+  const list=$('#wsFrames');
+  if(!list){ renderResponse(); return; }
+  const stick=list.scrollHeight-list.scrollTop-list.clientHeight<48;
+  /* 第一帧到的时候要把「还没有消息」的占位撤掉，否则它一直杵在帧列表上面 */
+  const empty=list.querySelector('.ws-empty');
+  if(empty) empty.remove();
+  list.appendChild(wsFrameEl(f));
+  while(list.childElementCount>WS_FRAME_CAP) list.removeChild(list.firstElementChild);
+  if(stick) list.scrollTop=list.scrollHeight;
+  const meta=$('#wsMeta'); if(meta) meta.textContent=wsMetaText(t.ws);
+}
+
+function renderWsPane(t){
+  const w=wsOf(t);
+  const pane=$('#resPane'),sub=$('#resSubtabs'),sb=$('#resStatus'),tools=$('#resTools');
+  sub.style.display='none'; tools.style.display='none';
+  sb.style.display='flex';
+  const dot=w.state==='open'?'live':(w.state==='connecting'||w.state==='closing')?'wait':'off';
+  const label=w.state==='open'?'已连接':w.state==='connecting'?'连接中…':w.state==='closing'?'断开中…':w.state==='error'?'连接失败':'未连接';
+  sb.innerHTML='<span class="ws-chip '+dot+'"><span class="ws-dotp"></span>'+label+'</span>'+
+    '<span class="res-meta"><span class="ws-url" title="'+esc(t.url||'')+'">'+esc(resolveVars(t.url||'',t))+'</span>'+
+    '<span id="wsMeta">'+wsMetaText(w)+'</span>'+
+    (w.err?'<span style="color:var(--s5)">'+esc(w.err)+'</span>':'')+'</span>';
+
+  pane.innerHTML='';
+  const box=el('div','ws-panel');
+
+  const head=el('div','ws-head');
+  head.innerHTML='<span class="ws-hint">'+
+    (w.state==='open'?'连接开着：Body 是首条消息，其余在下框里逐条发':'点右上「连接」建立长连接；Headers 会作为握手头发过去')+
+    '</span>';
+  if(w.frames.length){
+    const clr=el('button','ws-clear','清空');
+    clr.title='只清界面上的帧，不影响连接';
+    clr.onclick=()=>{ w.frames=[]; w.sent=0; w.recv=0; renderResponse(); };
+    head.appendChild(clr);
+  }
+  box.appendChild(head);
+
+  const list=el('div','ws-frames'); list.id='wsFrames';
+  if(!w.frames.length){
+    list.innerHTML='<div class="ws-empty">'+(w.state==='open'?'已连接，还没有消息。':'还没有消息。')+'</div>';
+  }else{
+    /* 只画最后 400 条：切回来时没必要把 2000 条 DOM 全造一遍 */
+    w.frames.slice(-400).forEach(f=>list.appendChild(wsFrameEl(f)));
+  }
+  box.appendChild(list);
+
+  const comp=el('div','ws-compose');
+  const ta=el('textarea','ws-input'); ta.id='wsInput';
+  ta.placeholder=w.state==='open'?'输入消息，Ctrl/⌘ ↵ 发送':'连接后这里可发消息';
+  ta.value=w.draft||'';
+  ta.disabled=w.state!=='open';
+  ta.addEventListener('input',()=>{ w.draft=ta.value; });
+  ta.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); doSend(); }
+  });
+  const sendBtn=el('button','btn primary ws-send','发送');
+  sendBtn.id='wsSend';
+  sendBtn.disabled=w.state!=='open';
+  const doSend=async()=>{
+    const text=ta.value;
+    if(!text.trim()) return;
+    const ok=await wsSendText(t,text,false);
+    if(ok){ ta.value=''; w.draft=''; ta.focus(); }
+  };
+  sendBtn.onclick=doSend;
+  comp.append(ta,sendBtn);
+  box.appendChild(comp);
+
+  pane.appendChild(box);
+  if(w.state==='open'){ list.scrollTop=list.scrollHeight; }
+}
+
 async function send(){
   const t=activeTab();
+  /* WEBSOCKET 不是「发一次收一次」：同一个按钮，语义换成连接 / 断开 */
+  if(t && t.method==='WEBSOCKET') return wsToggle(t);
+
   /* S6.2：本次调用的取消标志路径。请求结束（含失败）就删，后端也会兜底删一次。 */
   const rid='q'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   const cancelPath=cancelPathFor(rid);
@@ -1741,6 +1986,9 @@ function apiResponseFields(data){
 /* ===================== 响应渲染 ===================== */
 function renderResponse(){
   const t=activeTab(); const r=t.response;
+  /* WebSocket 走下半区的第三种形态：不是「一次响应」，而是「连接 + 消息流」。
+   * 同一个 pane、同一个 tab，只是渲染器不同 —— 用户看到的位置没变。 */
+  if(t && t.method==='WEBSOCKET') { renderWsPane(t); return; }
   const pane=$('#resPane'),sub=$('#resSubtabs'),sb=$('#resStatus'),tools=$('#resTools');
   if(!r){ sub.style.display='none'; sb.style.display='none'; tools.style.display='none';
     pane.innerHTML='<div class="res-idle"><div class="big">准备就绪</div>输入 URL 点「发送」，或从左侧集合载入一个请求。</div>'; return; }
@@ -2207,7 +2455,10 @@ function deleteGroup(g){
 
 /* ===================== tab 操作 ===================== */
 function closeTab(t){
-  const doClose=()=>{ const i=state.tabs.indexOf(t); state.tabs.splice(i,1);
+  const doClose=()=>{
+    /* 连接跟着 tab 走：tab 没了还留着一条连接，用户就再也关不掉它了 */
+    if(t.ws&&t.ws.connId){ try{ DBX.invoke('ws/close',{connId:t.ws.connId}); }catch(e){} }
+    const i=state.tabs.indexOf(t); state.tabs.splice(i,1);
     if(!state.tabs.length){ const nt=newTab(); state.tabs.unshift(nt); state.activeTab=nt.id; }
     else if(state.activeTab===t.id) state.activeTab=state.tabs[Math.max(0,i-1)].id;
     renderAll(); persist(); };
@@ -2398,6 +2649,8 @@ async function initApi(){
   JV.configureViewHost({ persist, rerender: renderRespBody });
   // 等 DBX 桥就绪后加载状态并首渲染
   await DBX.ready;
+  /* WS 帧是异步推来的：全局订一次，按 tab 分发（连发出去的帧也从这里回来） */
+  if(DBX.onEvent) DBX.onEvent('polaris/http/ws', onWsEvent);
   await load();
   /* 文件真源：把侧栏数据从 storage 切到资源目录（含一次性迁移）。失败则保持旧路径可用。 */
   await initDocs();
@@ -2439,6 +2692,11 @@ window.POLARIS_API = {
     setStatus('已打开结果：'+resp.status+' '+(resp.statusText||''),'ok');
   },
   getActiveTab: activeTab,
+  /* 浮层里的 ▶ 要对 WS 也能用：那边没有消息面板，只能把请求交给这里再连 */
+  connectActiveWs: function(){
+    var t=activeTab();
+    if(t && t.method==='WEBSOCKET') return wsToggle(t);
+  },
 
   /* v0.3.2：文件编辑器执行一条 .http 请求，结果渲染进「原先的响应框」(#resPane)。
    * p: { method, url, headers:{k:v}, body, bodyType, timeoutMs }

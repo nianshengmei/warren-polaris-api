@@ -2112,6 +2112,29 @@
       lower[String(k).toLowerCase()] = true;
     });
 
+    /* WebSocket 不是「跑一次就完」：它是长连接，要一个能持续滚动的消息面板。
+     * 浮层下半部是响应区，塞不下帧流；所以这里的 ▶ 改成「在请求区打开并连接」——
+     * 位置还是那个 ▶，用户不用记住「WS 要去别处点」。 */
+    if (String(req.method || '').toUpperCase() === 'WEBSOCKET') {
+      var A = window.POLARIS_API;
+      if (!A || !A.addTab) { toast('主界面还没就绪，稍后再试'); return; }
+      var wsHeaders = (req.headers || []).map(function (h) {
+        return { k: rv(h.k), v: rv(h.v), on: true };
+      }).filter(function (h) { return String(h.k || '').trim(); });
+      A.addTab({
+        name: req.name || req.title || ('WebSocket ' + req.url),
+        method: 'WEBSOCKET',
+        url: rv(req.url),
+        headers: wsHeaders.length ? wsHeaders : [{ k: '', v: '', on: false }],
+        bodyType: 'text',
+        body: req.body || ''
+      });
+      S.lastRun[req.line] = 'ok'; renderGutter();
+      toast('WebSocket 已在请求区连接（长连接要看消息面板）');
+      if (A.connectActiveWs) A.connectActiveWs();
+      return;
+    }
+
     var noBody = ['GET', 'HEAD'].indexOf(String(req.method).toUpperCase()) >= 0;
     var body = '', bodyType = req.bodyType || 'text', bodyBase64 = '';
     if (!noBody) {
@@ -2190,6 +2213,14 @@
     var parsed = reparse();
     var list = (parsed.requests || []).slice();
     if (!list.length) { toast('文件里没有可运行的请求'); return; }
+    /* WS 是长连接：连着的时候还要发消息、看帧，「批量跑一遍」对它没有意义，
+     * 而且会跟后面的请求抢同一个面板。跳过并说清楚，别静默漏掉。 */
+    var wsCount = list.filter(function (x) { return String(x.method || '').toUpperCase() === 'WEBSOCKET'; }).length;
+    if (wsCount) {
+      list = list.filter(function (x) { return String(x.method || '').toUpperCase() !== 'WEBSOCKET'; });
+      toast('跳过 ' + wsCount + ' 个 WebSocket 请求（长连接请单独点 ▶）');
+      if (!list.length) return;
+    }
     S.responses = {};
     for (var i = 0; i < list.length; i++) {
       await runReq(list[i]);

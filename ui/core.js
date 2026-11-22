@@ -10,7 +10,8 @@
   const uid = () => 'id' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
-  const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+  /* WEBSOCKET 放在最后：它不是 HTTP 方法，但在请求条上占同一个位置（Postman 也这样）。 */
+  const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WEBSOCKET'];
   const bytes = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB';
   const ms = (n) => n < 1000 ? Math.round(n) + ' ms' : (n / 1000).toFixed(2) + ' s';
   /* methodColor 返回 CSS 类名（m-GET 等），与原版一致；配色由 app.css 的 .m-* 规则提供 */

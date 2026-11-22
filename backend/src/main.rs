@@ -22,15 +22,26 @@
 //   http/getResult         读取某次完整结果
 //   http/deleteResult      删除某次结果
 //   http/revealDir         在系统文件管理器中打开结果目录
+//   ws/connect             建立 WebSocket 长连接（帧走 polaris/http/ws 事件）
+//   ws/send                往连接里发一条消息
+//   ws/close               断开连接
+//   ws/list                列出还活着的连接（UI 重载后清点用）
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dbx_plugin_sdk::{PluginEmitter, PluginError, PluginHandler, PluginMetadata, PluginServer, RequestContext};
 use serde_json::{json, Value};
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::client::IntoClientRequest;
+use tungstenite::{Message, WebSocket};
+use tungstenite::Error as WsError;
 
 #[derive(Default)]
 struct PolarisApi;
@@ -65,6 +76,10 @@ impl PluginHandler for PolarisApi {
             "http/getResult" => handle_get_result(params),
             "http/deleteResult" => handle_delete_result(params),
             "http/revealDir" => handle_reveal_dir(params),
+            "ws/connect" => handle_ws_connect(params, emitter),
+            "ws/send" => handle_ws_send(params),
+            "ws/close" => handle_ws_close(params),
+            "ws/list" => handle_ws_list(),
             _ => Err(PluginError::method_not_found(method)),
         }
     }
@@ -1194,6 +1209,330 @@ fn is_binary_content_type(ct: &str) -> bool {
 // base64 编码（避免引入额外 crate）—— base64 0.22 用 BASE64_STANDARD 引擎
 use base64::prelude::{BASE64_STANDARD};
 use base64::Engine;
+
+/* ===================== WebSocket 长连接（S8.5） =====================
+ *
+ * 与 HTTP 的根本差别不在协议，在生命周期：
+ *   HTTP   —— 一次调用 = 一个结果，调完就结束；
+ *   WS     —— 一次「connect」之后连接还活着，双向、多帧、可能挂几小时。
+ *
+ * 所以 sidecar 必须有**跨调用存活的状态**（这是本项目第一次）：
+ *   ws/connect  建连、返回 connId；之后所有帧走 WS_EVENT 事件推给 UI
+ *   ws/send     往发送队列塞一条（立刻返回，不等对端）
+ *   ws/close    置关闭标志 + 发 close 帧
+ *   ws/list     清点还活着的连接（UI 重载后对账用）
+ *
+ * 线程模型：一条连接一个线程，读超时 200ms 当「拍」——
+ * 每拍先抽干发送队列，再读一帧。为什么不用 tokio：本项目其余部分是 blocking，
+ * 混两套调度后，「停止后连接没断」「帧丢了」这类问题会同时落在两个调度器里，最难查。
+ * 200ms 的代价是发送最多晚一拍，人感觉不到。
+ */
+
+/// 帧事件名。宿主按 `host.events` 权限转发到 iframe 的 message 事件。
+const WS_EVENT: &str = "polaris/http/ws";
+/// 读线程的「拍」：既要发送及时，也不能空转烧 CPU。
+const WS_TICK_MS: u64 = 200;
+/// 单帧上限。host.events 的单条消息有 8 MiB 硬顶，一条大二进制帧会把整条
+/// 事件通道撑爆（连后面所有帧一起丢），所以这里先截断并打标记。
+const WS_MAX_FRAME: usize = 1024 * 1024;
+
+enum WsCmd {
+    Text(String),
+    Binary(Vec<u8>),
+    Close,
+}
+
+struct WsSession {
+    tx: Sender<WsCmd>,
+    close: Arc<AtomicBool>,
+    url: String,
+    request_id: String,
+    opened_at: u64,
+}
+
+fn ws_sessions() -> &'static Mutex<HashMap<String, WsSession>> {
+    static CELL: OnceLock<Mutex<HashMap<String, WsSession>>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 连接表被 poison 也不能让整条连接链路瘫掉（panic 的那个线程已经不在了，
+/// 表本身仍是好的），所以统一走 into_inner。
+fn ws_lock() -> MutexGuard<'static, HashMap<String, WsSession>> {
+    ws_sessions().lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// ws:// / wss:// 之外也接受 http(s)://：用户从地址栏抄过来很常见，
+/// 直接把 scheme 换掉，不要报「地址不合法」让人去改。
+fn normalize_ws_url(raw: &str) -> String {
+    let s = raw.trim();
+    if let Some(rest) = s.strip_prefix("http://") {
+        return format!("ws://{rest}");
+    }
+    if let Some(rest) = s.strip_prefix("https://") {
+        return format!("wss://{rest}");
+    }
+    s.to_string()
+}
+
+fn set_ws_read_timeout(stream: &MaybeTlsStream<std::net::TcpStream>, d: Duration) {
+    match stream {
+        MaybeTlsStream::Plain(t) => {
+            let _ = t.set_read_timeout(Some(d));
+        }
+        MaybeTlsStream::Rustls(s) => {
+            let _ = s.sock.set_read_timeout(Some(d));
+        }
+        /* enum 是 non_exhaustive：以后若开 native-tls 会出现第三个变体。
+         * 那种流拿不到裸 TcpStream，就退化成「断开要等对端」——能接受，不该因此编译不过。 */
+        _ => {}
+    }
+}
+
+/// 超长帧截断到 WS_MAX_FRAME（按字符边界切，别切出半个 UTF-8）。
+fn clip_frame(s: &str) -> (String, bool) {
+    if s.len() <= WS_MAX_FRAME {
+        return (s.to_string(), false);
+    }
+    let mut cut = WS_MAX_FRAME;
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    (s[..cut].to_string(), true)
+}
+
+fn emit_ws(emitter: &PluginEmitter, payload: Value) {
+    /* UI 已经关了 / 重载了，事件写不进去是正常的：这时连接没有主人，
+     * 读线程看到 Err 会自己收尾，别在这里重试或 panic。 */
+    let _ = emitter.event(WS_EVENT, payload);
+}
+
+fn emit_ws_frame(
+    emitter: &PluginEmitter,
+    conn_id: &str,
+    request_id: &str,
+    dir: &str,
+    kind: &str,
+    data: &str,
+    seq: u64,
+) {
+    let (body, truncated) = clip_frame(data);
+    emit_ws(emitter, json!({
+        "connId": conn_id,
+        "requestId": request_id,
+        "phase": "frame",
+        "dir": dir,
+        "kind": kind,
+        "seq": seq,
+        "size": data.len(),
+        "truncated": truncated,
+        "at": now_millis(),
+        "data": body,
+    }));
+}
+
+fn handle_ws_connect(params: Value, emitter: &PluginEmitter) -> Result<Value, PluginError> {
+    let raw = param_str(&params, "url").unwrap_or("").to_string();
+    if raw.trim().is_empty() {
+        return Err(PluginError::new(-32602, "缺少 url"));
+    }
+    let url = normalize_ws_url(&raw);
+    if !(url.starts_with("ws://") || url.starts_with("wss://")) {
+        return Err(PluginError::new(-32602, format!("不是 WebSocket 地址：{raw}")));
+    }
+    let request_id = param_str(&params, "requestId").unwrap_or("").to_string();
+
+    /* 握手头照原样带过去：鉴权（Authorization / Cookie / 自定义 token）全在这一步，
+     * 连上之后再带就没用了。 */
+    let mut req = url
+        .as_str()
+        .into_client_request()
+        .map_err(|e| PluginError::new(-32602, format!("WebSocket 地址不合法：{e}")))?;
+    if let Some(Value::Object(hs)) = params.get("headers") {
+        let h = req.headers_mut();
+        for (k, v) in hs {
+            let Some(val) = v.as_str() else { continue };
+            if let (Ok(name), Ok(hv)) = (
+                tungstenite::http::HeaderName::from_bytes(k.as_bytes()),
+                tungstenite::http::HeaderValue::from_str(val),
+            ) {
+                h.insert(name, hv);
+            }
+        }
+    }
+
+    let (ws, resp) = tungstenite::connect(req)
+        .map_err(|e| PluginError::new(-32000, format!("WebSocket 连接失败：{e}")))?;
+    /* 没有这个超时，读线程会一直挂在 read 上：用户点断开、UI 关闭、host 停止收事件，
+     * 三种情况都醒不过来。 */
+    set_ws_read_timeout(ws.get_ref(), Duration::from_millis(WS_TICK_MS));
+    let status = resp.status().as_u16();
+
+    static WS_SEQ: AtomicU64 = AtomicU64::new(0);
+    let conn_id = format!("ws-{}-{}", now_millis(), WS_SEQ.fetch_add(1, Ordering::Relaxed));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let close = Arc::new(AtomicBool::new(false));
+    ws_lock().insert(
+        conn_id.clone(),
+        WsSession { tx, close: close.clone(), url: url.clone(), request_id: request_id.clone(), opened_at: now_millis() },
+    );
+
+    emit_ws(emitter, json!({
+        "connId": &conn_id,
+        "requestId": &request_id,
+        "phase": "open",
+        "status": status,
+        "url": &url,
+    }));
+
+    let em = emitter.clone();
+    let cid = conn_id.clone();
+    std::thread::spawn(move || ws_read_loop(ws, rx, close, em, cid, request_id));
+
+    Ok(json!({ "connId": conn_id, "status": status, "url": url }))
+}
+
+fn ws_read_loop(
+    mut ws: WebSocket<MaybeTlsStream<std::net::TcpStream>>,
+    rx: Receiver<WsCmd>,
+    close: Arc<AtomicBool>,
+    emitter: PluginEmitter,
+    conn_id: String,
+    request_id: String,
+) {
+    let mut seq: u64 = 0;
+
+    let reason: String = 'conn: loop {
+        /* 1) 先把发送队列抽干。放在读之前：读最多阻塞一拍（200ms），
+         * 用户在 UI 上点「发送」不该排队等到读超时之后。 */
+        loop {
+            match rx.try_recv() {
+                Ok(WsCmd::Text(t)) => {
+                    seq += 1;
+                    if ws.send(Message::Text(t.clone().into())).is_err() {
+                        break 'conn "send-failed".to_string();
+                    }
+                    emit_ws_frame(&emitter, &conn_id, &request_id, "out", "text", &t, seq);
+                }
+                Ok(WsCmd::Binary(b)) => {
+                    seq += 1;
+                    let b64 = BASE64_STANDARD.encode(&b);
+                    if ws.send(Message::Binary(b.into())).is_err() {
+                        break 'conn "send-failed".to_string();
+                    }
+                    emit_ws_frame(&emitter, &conn_id, &request_id, "out", "binary", &b64, seq);
+                }
+                Ok(WsCmd::Close) => {
+                    let _ = ws.close(None);
+                    break 'conn "closed".to_string();
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break 'conn "closed".to_string(),
+            }
+        }
+
+        /* 2) 用户点了「断开」。close(None) 之后对端通常会回一个 close 帧，
+         * 但不等它 —— 半开连接（拔网线、对面装死）不能让线程一直挂着。 */
+        if close.load(Ordering::Relaxed) {
+            let _ = ws.close(None);
+            break "closed".to_string();
+        }
+
+        /* 3) 读一帧。超时是正常的「拍」，不是错误。 */
+        match ws.read() {
+            Ok(Message::Text(t)) => {
+                seq += 1;
+                emit_ws_frame(&emitter, &conn_id, &request_id, "in", "text", t.as_str(), seq);
+            }
+            Ok(Message::Binary(b)) => {
+                seq += 1;
+                let b64 = BASE64_STANDARD.encode(&b);
+                emit_ws_frame(&emitter, &conn_id, &request_id, "in", "binary", &b64, seq);
+            }
+            /* 心跳由 tungstenite 自己回 pong，这里不用管，也不该出现在消息面板里。 */
+            Ok(Message::Ping(_) | Message::Pong(_)) => {}
+            Ok(Message::Close(f)) => {
+                break match f {
+                    Some(c) => {
+                        let why = c.reason.to_string();
+                        if why.is_empty() {
+                            format!("closed:{}", u16::from(c.code))
+                        } else {
+                            format!("closed:{} {}", u16::from(c.code), why)
+                        }
+                    }
+                    None => "closed".to_string(),
+                };
+            }
+            /* Frame 是内部分片，tungstenite 已经拼好了，不会走到这里。 */
+            Ok(Message::Frame(_)) => {}
+            Err(WsError::Io(e))
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(WsError::ConnectionClosed | WsError::AlreadyClosed) => {
+                break "closed".to_string();
+            }
+            Err(e) => break format!("error:{e}"),
+        }
+    };
+
+    ws_lock().remove(&conn_id);
+    emit_ws(&emitter, json!({
+        "connId": &conn_id,
+        "requestId": &request_id,
+        "phase": "close",
+        "reason": reason,
+    }));
+}
+
+fn handle_ws_send(params: Value) -> Result<Value, PluginError> {
+    let conn_id = param_str(&params, "connId")
+        .ok_or_else(|| PluginError::new(-32602, "缺少 connId"))?
+        .to_string();
+    let kind = param_str(&params, "kind").unwrap_or("text");
+    let data = param_str(&params, "data").unwrap_or("");
+
+    let tx = ws_lock()
+        .get(&conn_id)
+        .map(|s| s.tx.clone())
+        .ok_or_else(|| PluginError::new(-32000, "连接不存在或已关闭"))?;
+
+    let cmd = if kind == "binary" {
+        let raw = BASE64_STANDARD
+            .decode(data)
+            .map_err(|e| PluginError::new(-32602, format!("二进制内容不是合法 base64：{e}")))?;
+        WsCmd::Binary(raw)
+    } else {
+        WsCmd::Text(data.to_string())
+    };
+    tx.send(cmd)
+        .map_err(|_| PluginError::new(-32000, "连接已关闭（读线程已退出）"))?;
+    Ok(json!({ "ok": true }))
+}
+
+fn handle_ws_close(params: Value) -> Result<Value, PluginError> {
+    let conn_id = param_str(&params, "connId").unwrap_or("").to_string();
+    if let Some(s) = ws_lock().get(&conn_id) {
+        s.close.store(true, Ordering::Relaxed);
+        let _ = s.tx.send(WsCmd::Close);
+    }
+    /* 幂等：UI 可能在 close 事件之后才补这一下，不能因此报错。 */
+    Ok(json!({ "ok": true }))
+}
+
+fn handle_ws_list() -> Result<Value, PluginError> {
+    let items: Vec<Value> = ws_lock()
+        .iter()
+        .map(|(id, s)| {
+            json!({
+                "connId": id,
+                "url": s.url,
+                "requestId": s.request_id,
+                "openedAt": s.opened_at,
+            })
+        })
+        .collect();
+    Ok(json!({ "items": items }))
+}
 
 fn main() -> std::io::Result<()> {
     let metadata = PluginMetadata::new("com.warren.polaris.api", env!("CARGO_PKG_VERSION"))
