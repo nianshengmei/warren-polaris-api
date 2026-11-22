@@ -156,11 +156,12 @@
   function utf8(s) { return new TextEncoder().encode(String(s == null ? '' : s)); }
 
   /* 按 RFC 7578 组装 multipart/form-data 实体（字节级拼装，附件原样不动）。
-   * 返回 { base64, contentType, parts } —— base64 交给 sidecar 当原始 body 发出去。 */
-  async function buildMultipart(req, rv) {
+   * 返回 { base64, contentType, parts } —— base64 交给 sidecar 当原始 body 发出去。
+   * opts.baseDir：表单模式（app.js）没有编辑器状态，附件相对路径要按 .http 所在目录算。 */
+  async function buildMultipart(req, rv, opts) {
     var mp = req.multipart || { boundary: 'WebAppBoundary', parts: [] };
     var B = String(mp.boundary || 'WebAppBoundary').trim() || 'WebAppBoundary';
-    var base = S.dir || dirOf(S.path) || '';
+    var base = (opts && opts.baseDir) || S.dir || dirOf(S.path) || '';
     var chunks = [], total = 0;
     function push(u8) { if (u8 && u8.length) { chunks.push(u8); total += u8.length; } }
     function pushText(s) { if (s) push(utf8(s)); }
@@ -2636,6 +2637,7 @@
       openPath: openPath,
       openAt: openAt,             /* S2.3：表单 → 源码，定位到某一行 */
       openInForm: openInForm,     /* S2.3：源码 → 表单，把这一段开成请求 tab */
+      buildMultipart: buildMultipart, /* S8.1：表单模式的 multipart 发送复用同一份字节组装 */
       openContent: openContent,
       ensureFresh: ensureFresh,   /* S4.2：插身份行后让源码视图跟上磁盘（不脏才重读） */
       pickAndOpen: pickAndOpen,

@@ -174,7 +174,7 @@ DBX 插件 `com.warren.polaris.api` —— API 请求客户端（Rust sidecar �
 #    ###  标题              分隔请求；标题就是侧栏里那条接口的名字
 #    # @name xxx            给请求命名，之后可用 {{xxx.response.body.$.field}} 取上次的结果
 #    @name = value          文件级变量（下面这几条），优先级高于 http-client.env.json
-#    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」
+#    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」（表单选「文件」填的就是这行）
 #    {{$guid}} {{$timestamp}} {{$randomInt}} {{$datetimeIso}}   内置动态变量
 #
 #  关于 # @file_id / # @interface_id（v1.0.0 起）：
@@ -357,7 +357,7 @@ Accept: application/json
 | `> {% ... %}` 响应脚本、`{% ... %}` 预请求脚本、`client.test(...)` | 解析并保留、给出提示，**不执行** |
 | 跨请求引用 `{{login.response.body.$.token}}`、`{{x.response.headers.X-Token}}` | ✅（全部运行时） |
 | 内置 `{{$guid}}` `{{$timestamp}}` `{{$randomInt}}` `{{$datetimeIso}}` | ✅ |
-| **`multipart/form-data`**：手写 `--boundary` 分段，段内 `< 附件路径` 表示二进制文件（路径可用 `{{变量}}`） | ✅ 按字节拼装，附件原样上传 |
+| **`multipart/form-data`**：手写 `--boundary` 分段，段内 `< 附件路径` 表示二进制文件（路径可用 `{{变量}}`） | ✅ 按字节拼装，附件原样上传；表单模式可一行一个字段、选「文本 / 文件」，文件走系统对话框只显示文件名 |
 | multipart 的 `<>` 简写、WebSocket / gRPC / GraphQL 专用块、`client.global` | ❌ 暂不支持 |
 
 ### multipart / 文件上传
@@ -378,6 +378,8 @@ Content-Disposition: form-data; name="audio"; filename="x.wav"
 - 分段没写 `Content-Type` 时按扩展名自动补（`.wav → audio/wav`、`.png → image/png`、`.json → application/json` 等）。
 - 请求头里的 `Content-Type` 会与实际 body 的 `boundary` 强制对齐，避免「多头/边界不一致」导致服务端不认。
 - 既没写 `Content-Type` 也没关系：body 首行是 `--xxx` 就自动识别为 multipart 并补头。
+
+**不想手写分段？Body 切到「文件」**（S8.1）：一行一个字段，第三列选「文本 / 文件」。选「文件」后点右边的格子会弹**系统文件对话框**（macOS 是访达，Windows 是资源管理器），选完只在格子里显示文件名，真正写进 `.http` 的是路径——文件在 `.http` 所在目录（含子目录）下就写相对路径（方便连附件一起提交），出了这个目录才写绝对路径。同一个请求切到「文本」看到的就是这些分段本身：表单和文本是同一段文字的两个视图，改哪边都算数。
 
 脚本不执行的原因：DBX 工作台是 `sandbox="allow-scripts"` 的 iframe，CSP 下 `eval` 不可用；擅自执行第三方脚本也不安全。解析出的脚本文本保存在请求对象里，后续可单独做受限求值器。
 

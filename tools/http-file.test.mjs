@@ -183,4 +183,43 @@ ok('身份行不会被算进 headers / body', () => {
   assert.equal(r.requests[0].method, 'GET');
 });
 
+ok('multipart 表单：parts → body → parts 往返不丢字段（S8.1）', () => {
+  const parts = [
+    { on: true, name: 'title', kind: 'text', v: '测试标题' },
+    { on: true, name: 'audio', kind: 'file', v: 'media/a.wav', filename: 'a.wav' },
+    { on: true, name: 'cover', kind: 'file', v: 'C:\\pics\\b.png', filename: 'b.png' },
+    { on: false, name: 'skip', kind: 'text', v: '不要发' },
+  ];
+  const body = H.mpToBody(parts, 'B1');
+  const back = H.mpFromBody(body, 'B1');
+  assert.equal(back.length, 3, '未启用的行不该进 body');
+  assert.deepEqual(back.map((p) => p.name), ['title', 'audio', 'cover']);
+  assert.equal(back[0].v, '测试标题');
+  assert.equal(back[1].kind, 'file');
+  assert.equal(back[1].v, 'media/a.wav');
+  assert.equal(back[1].filename, 'a.wav');
+  assert.equal(back[1].contentType, 'audio/wav', '文件段要按扩展名补 Content-Type');
+  assert.equal(back[2].v, 'C:\\pics\\b.png', '反斜杠路径要原样还原');
+  assert.equal(back[2].contentType, 'image/png');
+});
+
+ok('multipart 表单：文本值里的换行不会切坏分段，字段名里的引号折成单引号（S8.1）', () => {
+  const body = H.mpToBody([{ on: true, name: 'say"hi', kind: 'text', v: '第一行\n第二行' }], 'B2');
+  const back = H.mpFromBody(body, 'B2');
+  assert.equal(back.length, 1, '值里的换行不该被当成新的分段头');
+  /* 已知且有意的损失：`name="..."` 里面不能有裸双引号（会直接切断头部），
+   * 写出去时折成单引号，与发送侧 buildMultipart 同一套规则。 */
+  assert.equal(back[0].name, "say'hi");
+  assert.equal(back[0].v, '第一行\n第二行');
+});
+
+ok('multipart 表单：boundary 认 header 优先，其次 body，都没有就兜底（S8.1）', () => {
+  assert.equal(H.guessBoundary([{ k: 'Content-Type', v: 'multipart/form-data; boundary=XyZ' }], ''), 'XyZ');
+  assert.equal(H.guessBoundary([{ k: 'content-type', v: 'multipart/form-data;boundary="Q 1"' }], ''), 'Q 1');
+  assert.equal(H.guessBoundary([], '--FromBody\nContent-Disposition: form-data; name="a"\n\nx\n--FromBody--'), 'FromBody');
+  assert.equal(H.guessBoundary([], ''), '');
+  const body = H.mpToBody([{ on: true, name: 'a', kind: 'text', v: '1' }], '');
+  assert.match(body, /^--WarrenBoundary$/m, '空 boundary 要兜底成 WarrenBoundary');
+});
+
 console.log('\n' + pass + ' assertions passed');

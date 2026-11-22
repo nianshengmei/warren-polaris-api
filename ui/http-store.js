@@ -610,7 +610,7 @@
     opts = opts || {};
     var blankRow = opts.blankRow || function () { return { id: 'r' + Math.random().toString(36).slice(2, 8), on: true, k: '', v: '' }; };
     var rowId = function () { return 'r' + Math.random().toString(36).slice(2, 8); };
-    var bodyTypeMap = { json: 'json', form: 'form', none: 'none' };
+    var bodyTypeMap = { json: 'json', form: 'form', none: 'none', multipart: 'multipart' };
 
     return (list || []).map(function (c) {
       var group = {
@@ -631,6 +631,23 @@
             });
             formBody.push(blankRow());
           }
+          /* multipart 的分段直接取自解析结果（parseHttpFile 已经切好了），
+           * 不再二次解析 body 文本 —— 两边用同一份事实，少一次走样机会。 */
+          var mpParts = [];
+          var mpBoundary = '';
+          if (bodyTypeMap[r.bodyType] === 'multipart') {
+            mpBoundary = (r.multipart && r.multipart.boundary) || '';
+            mpParts = ((r.multipart && r.multipart.parts) || []).map(function (p) {
+              var isFile = !!p.filePath;
+              return {
+                id: rowId(), on: true, name: p.name || '',
+                kind: isFile ? 'file' : 'text',
+                v: isFile ? p.filePath : (p.content || ''),
+                filename: p.filename || (isFile ? baseName(p.filePath) : ''),
+                contentType: p.contentType || ''
+              };
+            });
+          }
           return {
             id: r.interfaceId || (c.path + '#' + r.line),
             interfaceId: r.interfaceId || null,
@@ -642,6 +659,8 @@
             bodyType: bodyTypeMap[r.bodyType] || 'text',
             body: r.body || '',
             formBody: formBody,
+            mpParts: mpParts,
+            mpBoundary: mpBoundary,
             httpSource: {
               file: c.path,
               fileName: c.fileName,

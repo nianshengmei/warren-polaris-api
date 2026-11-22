@@ -221,7 +221,7 @@ Authorization: Bearer {{token}}
 
 ### 12.1 基线：现在已经有的（不用重做）
 
-多 tab（重命名 / 关闭其他 / 关闭左右）、侧栏 collection + 搜索、Params 表格与 URL 双向同步、Headers 表格（可勾选启用）、Body 四型（无 / JSON / 文本 / Form）、JSON 格式化、环境变量（baseUrl + 变量表）、全局超时、发送与逻辑中断、响应五视图（原始 / 对象树 / 表格 / 预览 / 响应头）、路径下钻 + 过滤、表格列宽/隐藏/排序、复制/下载响应、cURL 导入与导出、布局横竖切换、`Ctrl+Enter` 发送 / `Ctrl+S` 保存。
+多 tab（重命名 / 关闭其他 / 关闭左右）、侧栏 collection + 搜索、Params 表格与 URL 双向同步、Headers 表格（可勾选启用）、Body 五型（无 / JSON / 文本 / Form / multipart 文件）、JSON 格式化、环境变量（baseUrl + 变量表）、全局超时、发送与逻辑中断、响应五视图（原始 / 对象树 / 表格 / 预览 / 响应头）、路径下钻 + 过滤、表格列宽/隐藏/排序、复制/下载响应、cURL 导入与导出、布局横竖切换、`Ctrl+Enter` 发送 / `Ctrl+S` 保存。
 
 ### 12.2 文件化之后立刻打架的三处（不修就出 bug）
 
@@ -235,7 +235,7 @@ Authorization: Bearer {{token}}
 
 | # | 缺什么 | 用户现在的绕法 | 1.0.0 做法 |
 |---|---|---|---|
-| 4 | **multipart 表单上传** | 只能去 `.http` 里手写 boundary 分段（示例里的音频上传就是这么写的），表单视图完全没有入口 | Body 加第 5 型「表单/文件」：一行一个字段，可选文本或文件；内部序列化成 `.http` 的 boundary 分段，源码视图看到的就是标准写法 |
+| 4 ✅ | **multipart 表单上传**（S8.1 已落地） | 以前只能去 `.http` 里手写 boundary 分段，表单视图完全没有入口 | Body 第 5 型「文件」：一行一个字段，第三列选「文本 / 文件」；文件格点一下弹系统对话框，只显示 basename、存路径；内部序列化成 `.http` 的 boundary 分段，切到「文本」看到的就是同一段文字 |
 | 5 | **Auth 面板** | 手抄 `Authorization: Bearer xxx` | Bearer / Basic / API Key 三种，填完写进 Headers 表（文件里仍是普通 Header，纯文本可读、不引入私有语法） |
 | 6 | **collection 级默认值** | 每个请求重复抄同一个 baseUrl、同一个 token | 文件头变量 + collection 级默认 Headers（`# @collection.header K: V`），请求可单独覆盖；表单里显示「继承自 collection」灰字 |
 | 7 | **请求级设置** | 超时只能全局改；跳转重定向、跳过 TLS 校验没得选 | 请求头注释 `# @timeout 30000`、`# @no-redirect`、`# @insecure`，表单里做成三个控件，源码视图同样可读 |

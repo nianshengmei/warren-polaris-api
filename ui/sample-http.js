@@ -17,7 +17,7 @@
 #    ###  标题              分隔请求；标题就是侧栏里那条接口的名字
 #    # @name xxx            给请求命名，之后可用 {{xxx.response.body.$.field}} 取上次的结果
 #    @name = value          文件级变量（下面这几条），优先级高于 http-client.env.json
-#    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」
+#    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」（表单选「文件」填的就是这行）
 #    {{$guid}} {{$timestamp}} {{$randomInt}} {{$datetimeIso}}   内置动态变量
 #
 #  关于 # @file_id / # @interface_id（v1.0.0 起）：

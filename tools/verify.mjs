@@ -633,7 +633,7 @@ ok('S2.4 发送链路把 tab 传进 resolveVars', () => {
 ok('S2.4 fileVars 跟着 tab 走：打开 / 重绑 / 保存后都对齐', () => {
   const s = read('ui/app.js');
   assert(s.indexOf('function syncTabVars') > 0, '缺少 syncTabVars');
-  assert(/function openSaved[\s\S]{0,900}syncTabVars\(t\)/.test(s), 'openSaved 要同步 fileVars');
+  assert(/function openSaved[\s\S]{0,1300}syncTabVars\(t\)/.test(s), 'openSaved 要同步 fileVars');
   assert(/function setTabDocRef[\s\S]{0,500}syncTabVars\(t\)/.test(s), 'setTabDocRef 要同步 fileVars');
   assert(/function rebindTabs[\s\S]{0,600}syncTabVars\(t\)/.test(s), 'rebindTabs 要同步 fileVars');
   assert(/function fileVarsOf[\s\S]{0,200}group\.fileVars|g\.fileVars/.test(s), 'fileVarsOf 应从投影后的分组取');
@@ -856,6 +856,42 @@ ok('S7.6 跨平台：SDK 可寻址，路径契约有测试兜着', () => {
   assert(/stashed/.test(rs), '覆盖前要把旧目标暂存，失败时挪回来');
   assert(!/fs::remove_file\(&tp\)\.map_err\(\|e\| io_err\("覆盖前删除目标失败"/.test(rs),
     '不许再「先删目标再改名」——那一步失败就把用户文件弄丢了');
+});
+
+ok('S8.1 multipart 用表单编辑：字段可选文本/文件，文件只露 basename 但存全路径', () => {
+  const H = read('ui/http-file.js');
+  ['mpToBody', 'mpFromBody', 'guessBoundary', 'mpBaseName', 'mpMime'].forEach((k) =>
+    assert(H.includes(k + ': ' + k) || H.includes(k + ':'), 'http-file.js 缺少导出 ' + k));
+
+  const s = read('ui/app.js');
+  assert(s.includes('mpBlank'), '缺少 mpBlank()（multipart 的一行）');
+  assert(/mpParts:\[mpBlank\(\)\]/.test(s), 'newTab 要带 mpParts');
+  assert(/function multipartBoundaryOf/.test(s), '缺少 multipartBoundaryOf()');
+  assert(/function mpPartsToSend/.test(s), '缺少 mpPartsToSend()：表单行 → 发送分段');
+  assert(/function mpEditor/.test(s), '缺少 mpEditor()（表单编辑器）');
+  /* 类型下拉必须是 text / file 两种，且文件格只显示 basename */
+  assert(/\[\[.?text.?,.?.文本.?\],\[.?file.?,.?.文件.?\]\]/.test(s), '类型选择器要提供「文本 / 文件」');
+  assert(/mp-file-name/.test(s), '文件格要单独一个显示 basename 的位置');
+  assert(/http\/pickFile/.test(s), '选文件必须走 http\/pickFile（系统原生对话框）');
+  assert(/function pathForTab/.test(s), '缺少 pathForTab()：附件在 .http 目录下要写相对路径');
+  /* 发送必须走字节，不能把附件当文本：bodyBase64 才是原始字节通道 */
+  assert(/bodyBase64: bodyBase64 \|\| undefined/.test(s), '发送要带 bodyBase64');
+  assert(/POLARIS_EDITOR\.buildMultipart/.test(s), '附件组装要复用浮层那份 buildMultipart，别写第二份');
+  /* 两个视图共用 t.body：切进切出都要同步，否则表单改了文本不认 */
+  assert(/H\.mpToBody\(t\.mpParts,multipartBoundaryOf\(t\)\);\s*\n\s*markDirty/.test(s) ||
+    /t\.body=H\.mpToBody\(t\.mpParts,multipartBoundaryOf\(t\)\)/.test(s),
+    '表单改动要写回 t.body');
+
+  /* 投影层别再把 multipart 降级成 text（那会让表单退化成原始文本） */
+  const store = read('ui/http-store.js');
+  assert(/multipart:\s*'multipart'/.test(store), 'toLegacyCollections 的 bodyTypeMap 要保留 multipart');
+  assert(/mpParts:\s*mpParts/.test(store), '投影要把分段带进请求对象');
+
+  /* 编辑器那份组装要能接受外部 baseDir（表单这边没有编辑器状态） */
+  const ed = read('ui/http-editor.js');
+  assert(/function buildMultipart\(req, rv, opts\)/.test(ed), 'buildMultipart 要接受 opts.baseDir');
+  assert(/opts && opts\.baseDir/.test(ed), 'buildMultipart 要优先用调用方给的 baseDir');
+  assert(/buildMultipart:\s*buildMultipart/.test(ed), 'buildMultipart 要导出给表单用');
 });
 
 console.log('\n' + pass + ' checks passed');

@@ -116,6 +116,106 @@
     };
   }
 
+  /* ---- multipart 表单模型（表单编辑器 ⇄ .http 源码）----
+   * 表单里的「一行」就是一个分段：
+   *   文本段 → Content-Disposition + 空行 + 值
+   *   文件段 → Content-Disposition(filename) + Content-Type + 空行 + `< 路径`
+   * 这一层只做结构 ⇄ 文本，**不读文件**（读文件是发送时的事）。
+   * 之所以要双向：.http 仍是唯一真源，表单只是同一段文字的另一种视图。 */
+
+  function mpBaseName(p) {
+    var s = String(p || '');
+    var i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'));
+    return i >= 0 ? s.slice(i + 1) : s;
+  }
+
+  var MP_MIME = {
+    wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg',
+    flac: 'audio/flac', amr: 'audio/amr',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    bmp: 'image/bmp', svg: 'image/svg+xml',
+    pdf: 'application/pdf', zip: 'application/zip', gz: 'application/gzip',
+    json: 'application/json', xml: 'application/xml', txt: 'text/plain', csv: 'text/csv',
+    mp4: 'video/mp4', mov: 'video/quicktime'
+  };
+  function mpMime(name) {
+    var m = /\.([A-Za-z0-9]+)\s*$/.exec(String(name || ''));
+    return (m && MP_MIME[m[1].toLowerCase()]) || 'application/octet-stream';
+  }
+
+  /* boundary 从 header 的 Content-Type 里取；没有就看 body 第一个 --xxx；都没有交给调用方兜底。 */
+  function guessBoundary(headers, body) {
+    var hs = headers || [];
+    for (var i = 0; i < hs.length; i++) {
+      var h = hs[i];
+      if (h && /^content-type$/i.test(h.k || '') && /multipart\//i.test(h.v || '')) {
+        var m = /boundary\s*=\s*(?:"([^"]+)"|([^;]+))/i.exec(h.v);
+        if (m) return String(m[1] != null ? m[1] : m[2] || '').trim().replace(/^"|"$/g, '');
+      }
+    }
+    var lines = String(body || '').split(/\r?\n/);
+    for (var j = 0; j < lines.length; j++) {
+      var t = lines[j].trim();
+      if (!t) continue;
+      if (/^--\S+/.test(t)) return t.replace(/^--/, '').replace(/--$/, '');
+      break;
+    }
+    return '';
+  }
+
+  /* parts → body 文本。字段名里的 `"` 折成 `'`（RFC 7578 的 filename 同理），
+   * 跟发送侧 buildMultipart 的转义保持同一套规则，避免「看着一样、发出去不一样」。 */
+  function mpToBody(parts, boundary) {
+    var B = String(boundary || '').trim() || 'WarrenBoundary';
+    var out = [];
+    (parts || []).forEach(function (p) {
+      if (!p || p.on === false) return;
+      var name = String(p.name || '').trim();
+      var isFile = p.kind === 'file';
+      var val = p.v == null ? '' : String(p.v);
+      if (!name && !val) return;
+      if (!name) name = 'field';
+      out.push('--' + B);
+      var cd = 'Content-Disposition: form-data; name="' + name.replace(/"/g, "'") + '"';
+      if (isFile) {
+        var fn = p.filename || mpBaseName(val);
+        if (fn) cd += '; filename="' + String(fn).replace(/"/g, "'") + '"';
+      }
+      out.push(cd);
+      if (isFile) {
+        var ct = p.contentType || mpMime(p.filename || val);
+        if (ct) out.push('Content-Type: ' + ct);
+        out.push('');
+        out.push('< ' + val);
+      } else {
+        out.push('');
+        val.split(/\r?\n/).forEach(function (l) { out.push(l); });
+      }
+    });
+    out.push('--' + B + '--');
+    return out.join('\n');
+  }
+
+  /* body 文本 → parts（表单行）。filePath 有值就是文件段，否则按文本段。 */
+  function mpFromBody(body, boundary, mkId) {
+    var B = String(boundary || '').trim() || guessBoundary(null, body) || 'WarrenBoundary';
+    var mp = parseMultipart(body, B);
+    var n = 0;
+    return (mp.parts || []).map(function (p) {
+      var isFile = !!p.filePath;
+      n += 1;
+      return {
+        id: mkId ? mkId(n) : 'mp' + n,
+        on: true,
+        name: p.name || '',
+        kind: isFile ? 'file' : 'text',
+        v: isFile ? p.filePath : (p.content || ''),
+        filename: p.filename || (isFile ? mpBaseName(p.filePath) : ''),
+        contentType: p.contentType || ''
+      };
+    });
+  }
+
   /* ---- 身份注释（wpa 扩展，仍然是普通 # 注释）----
    *   # @file_id 7f3a9c21  wpa 文件身份，用于关联本 collection 的历史目录
    *   # @interface_id a1b2c3d4  wpa 接口身份，用于关联调用历史
@@ -621,6 +721,11 @@
     METHODS: METHODS,
     parseHttpFile: parseHttpFile,
     parseMultipart: parseMultipart,
+    mpToBody: mpToBody,
+    mpFromBody: mpFromBody,
+    guessBoundary: guessBoundary,
+    mpBaseName: mpBaseName,
+    mpMime: mpMime,
     serializeRequest: serializeRequest,
     serializeCollection: serializeCollection,
     ID_NOTE: ID_NOTE,

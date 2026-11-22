@@ -41,11 +41,16 @@ function b64ToBlob(b64, ct){
  * DBX 无 cap.http 宿主直发通道，无法绕过——只能提示用户这些头会丢失。 */
 const BROWSER_STRIP=/^(cookie|cookie2|user-agent|referer|origin|host|date|dnt|set-cookie|te|trailer|transfer-encoding|upgrade|via|proxy-.*|sec-.*|accept-encoding|content-length)$/i;
 const blankRow = ()=>({id:uid(),on:true,k:'',v:''});
+/* S8.1：multipart/form-data 的一行 = 一个分段。
+ * kind:'text' 走 v；kind:'file' 时 v 存**完整路径**（.http 里就是 `< 路径`），
+ * filename 只拿来显示（basename），不参与发送——发送按 v 去读字节。 */
+const mpBlank = ()=>({id:uid(),on:true,name:'',kind:'text',v:'',filename:'',contentType:''});
 function newTab(seed){
   return Object.assign({
     id:uid(), name:'未命名请求', savedId:null, dirty:false,
     method:'GET', url:'', params:[blankRow()], headers:[blankRow()],
     bodyType:'none', body:'', formBody:[blankRow()],
+    mpParts:[mpBlank()], mpBoundary:'',
     reqTab:'params', respView:'object', respPath:'', respFilter:'', tableSel:null,
     prettyCells:true, colW:{}, treeOpen:'auto', hiddenCols:{}, sort:{}, colOrder:{},
     response:null
@@ -311,6 +316,16 @@ function applyRequestToTab(t,r){
   t.params=[blankRow()];
   t.formBody=JSON.parse(JSON.stringify(r.formBody&&r.formBody.length?r.formBody:[blankRow()]));
   t.bodyType=r.bodyType||'none'; t.body=r.body||'';
+  /* multipart：磁盘那一段的分段还原成表单行。boundary 先从 header 认，认不到再从 body 认 ——
+   * 手写的文件常常只有 `--xxx` 没有 Content-Type，两边都要能对上。 */
+  if(t.bodyType==='multipart'){
+    const H=window.POLARIS_HTTP;
+    t.mpBoundary=H.guessBoundary(r.headers,r.body)||'';
+    t.mpParts=H.mpFromBody(r.body,t.mpBoundary,()=>uid());
+    if(!t.mpParts.length) t.mpParts=[mpBlank()];
+  }else{
+    t.mpParts=[mpBlank()]; t.mpBoundary='';
+  }
   t.dirty=false;
   return true;
 }
@@ -461,6 +476,29 @@ async function resolveConflict(t,how){
   await saveToDoc(t,{g,r});
 }
 
+/* multipart 的 boundary：header 里手写的优先，其次 tab 上认回来的，最后看 body 首行。 */
+function multipartBoundaryOf(t){
+  const H=window.POLARIS_HTTP;
+  const h=(t.headers||[]).find(r=>r.on!==false&&/^content-type$/i.test(r.k||'')&&/multipart\//i.test(r.v||''));
+  if(h){ const m=/boundary\s*=\s*(?:"([^"]+)"|([^;]+))/i.exec(h.v); if(m) return String((m[1]!=null?m[1]:m[2])||'').trim(); }
+  if(t.mpBoundary) return t.mpBoundary;
+  return H.guessBoundary(null,t.body)||'WarrenBoundary';
+}
+/* 表单行 → buildMultipart 要的分段结构。file 段只给路径，字节由读文件的那些代码去取。 */
+function mpPartsToSend(t){
+  return (t.mpParts||[])
+    .filter(p=>p&&p.on!==false&&(p.name||p.v))
+    .map(p=>{
+      const isFile=p.kind==='file';
+      return {
+        name:p.name||'field',
+        filename:isFile?(p.filename||window.POLARIS_HTTP.mpBaseName(p.v)):'',
+        contentType:p.contentType||'',
+        content:isFile?'':(p.v==null?'':String(p.v)),
+        filePath:isFile?p.v:''
+      };
+    });
+}
 /* tab → 文件里那一段要写的内容。URL 保持 {{var}} 原文（变量只在发送时展开）。 */
 function storeReqFromTab(t){
   const headers=t.headers.filter(r=>r.on!==false&&r.k).map(r=>({k:r.k,v:r.v==null?'':r.v}));
@@ -469,10 +507,14 @@ function storeReqFromTab(t){
   if(!['GET','HEAD'].includes(t.method)){
     if(t.bodyType==='json'||t.bodyType==='text') body=t.body||'';
     else if(t.bodyType==='form') body=t.body||t.formBody.filter(r=>r.on!==false&&r.k).map(r=>r.k+'='+r.v).join('&');
+    /* multipart：表单行 → `--boundary` 分段文本。这一步是单向的真源写入：
+     * 表单改了，磁盘上那段文字就得跟着变，否则浮层里看到的还是旧的。 */
+    else if(t.bodyType==='multipart') body=window.POLARIS_HTTP.mpToBody(t.mpParts,multipartBoundaryOf(t));
   }
   if(!hasCt&&body){
     if(t.bodyType==='json') headers.push({k:'Content-Type',v:'application/json'});
     else if(t.bodyType==='form') headers.push({k:'Content-Type',v:'application/x-www-form-urlencoded'});
+    else if(t.bodyType==='multipart') headers.push({k:'Content-Type',v:'multipart/form-data; boundary='+multipartBoundaryOf(t)});
   }
   return { name:t.name, title:t.name, method:t.method, url:t.url, headers, body, bodyType:t.bodyType };
 }
@@ -1254,14 +1296,121 @@ function kvEditor(rows,opts){
   function rebuild(){ wrap.innerHTML=''; ensureBlank(); rows.forEach(r=>wrap.appendChild(rowEl(r))); }
   rebuild(); return wrap;
 }
+/* S8.1：multipart/form-data 的表单编辑器（Postman 那种：一行一个字段，类型可选文本/文件）。
+ * 文件单元格只显示 basename，真正存的是路径 —— 与 .http 里 `< 路径` 完全对应，
+ * 所以表单、源码两边看到的是同一件事，不会出现「表单里是文件名、发出去找不到」。 */
+function tabFileDir(t){
+  const f=t&&t.httpSource&&t.httpSource.file;
+  if(f){ const i=Math.max(f.lastIndexOf('\\'),f.lastIndexOf('/')); if(i>0) return f.slice(0,i); }
+  return DOCS.dir||'';
+}
+/* 选完文件写什么路径：在 .http 所在目录（含子目录）下就写相对路径，方便把 .http 连同附件
+ * 一起提交；出了这个目录才写绝对路径 —— 否则相对路径会指到别处去。 */
+function pathForTab(t,abs){
+  const dir=tabFileDir(t);
+  if(!dir) return abs;
+  const d=String(dir).replace(/[\\/]+$/,'');
+  if(abs.indexOf(d)===0){
+    const rest=abs.slice(d.length).replace(/^[\\/]/,'');
+    if(rest) return rest;
+  }
+  return abs;
+}
+function mpEditor(rows,opts){
+  const wrap=el('div','kv mp');
+  function ensureBlank(){ const l=rows[rows.length-1]; if(!l||l.name||l.v) rows.push(mpBlank()); }
+  function rowEl(r){
+    const isLast=()=>rows[rows.length-1]===r;
+    const empty=!r.name&&!r.v;
+    const row=el('div','kv-row mp-row'+(empty?' blank':''));
+    const ck=el('label','ck'); const cb=el('input'); cb.type='checkbox'; cb.checked=r.on!==false;
+    cb.onchange=()=>{ r.on=cb.checked; opts.onChange(); }; ck.appendChild(cb);
+
+    const ni=el('input','k'); ni.type='text'; ni.placeholder='字段名'; ni.value=r.name||''; ni.spellcheck=false;
+    ni.addEventListener('input',()=>{ r.name=ni.value; row.classList.toggle('blank',!r.name&&!r.v); if((r.name||r.v)&&isLast()){ rows.push(mpBlank()); rebuild(); } opts.onChange(); });
+
+    const sel=el('select','mp-kind');
+    [['text','文本'],['file','文件']].forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; sel.appendChild(o); });
+    sel.value=r.kind==='file'?'file':'text';
+    sel.onchange=()=>{
+      /* 切类型时清掉值：文本当路径、路径当文本都会发错东西，不如让用户重选一次 */
+      r.kind=sel.value; r.v=''; r.filename=''; r.contentType='';
+      rebuild(); opts.onChange();
+    };
+
+    let cell;
+    if(r.kind==='file'){
+      cell=el('button','mp-file'+(r.v?'':' empty'));
+      cell.type='button';
+      cell.title=r.v?(r.v+' — 点击更换'):'点击从系统文件对话框选择';
+      const ico=el('span','mp-file-ico');
+      /* 内联 SVG 而不是 emoji：📎 在不少系统字体里会渲染成空方块（见 Windows 截图） */
+      ico.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
+      const nm=el('span','mp-file-name', r.v?(r.filename||window.POLARIS_HTTP.mpBaseName(r.v)):'选择文件…');
+      cell.append(ico,nm);
+      if(r.v){ const x=el('span','mp-file-x','✕'); x.title='移除这个文件'; x.onclick=(e)=>{ e.stopPropagation(); r.v=''; r.filename=''; r.contentType=''; rebuild(); opts.onChange(); }; cell.appendChild(x); }
+      cell.onclick=async()=>{
+        try{
+          const res=await DBX.invoke('http/pickFile',{mode:'open',title:'选择要上传的文件',ext:''},{timeoutMs:600000});
+          if(!res) return;
+          if(res.cancelled){
+            /* 浏览器调试模式没有系统对话框，别让「点了没反应」变成悬案 */
+            if(res.unavailable) setStatus(res.error||'当前环境没有系统文件对话框，可切到「文本」手写 < 路径','warn');
+            return;
+          }
+          r.v=pathForTab(opts.tab,res.path);
+          r.filename=res.name||window.POLARIS_HTTP.mpBaseName(res.path);
+          r.contentType='';
+          rebuild(); opts.onChange();
+        }catch(err){ setStatus('选择文件失败：'+(err&&err.message||err),'err'); }
+      };
+    }else{
+      cell=el('input','v'); cell.type='text'; cell.placeholder='字段值'; cell.value=r.v||''; cell.spellcheck=false;
+      cell.addEventListener('input',()=>{ r.v=cell.value; row.classList.toggle('blank',!r.name&&!r.v); if((r.name||r.v)&&isLast()){ rows.push(mpBlank()); rebuild(); } opts.onChange(); });
+    }
+
+    const rm=el('button','rm','✕'); rm.title='删除该行'; rm.onclick=()=>{ const i=rows.indexOf(r); if(i>-1) rows.splice(i,1); rebuild(); opts.onChange(); };
+    row.append(ck,ni,sel,cell,rm);
+    return row;
+  }
+  function rebuild(){ wrap.innerHTML=''; ensureBlank(); rows.forEach(r=>wrap.appendChild(rowEl(r))); }
+  rebuild(); return wrap;
+}
 function renderBodyEditor(pane,t){
   const bar=el('div','body-bar'); const seg=el('div','seg');
-  [['none','无'],['json','JSON'],['text','文本'],['form','Form']].forEach(([v,l])=>{ const b=el('button',t.bodyType===v?'on':'',l); b.onclick=()=>{ t.bodyType=v; markDirty(t); persist(); renderReqEditor(); }; seg.appendChild(b); });
+  const H=window.POLARIS_HTTP;
+  [['none','无'],['json','JSON'],['text','文本'],['form','Form'],['multipart','文件']].forEach(([v,l])=>{
+    const b=el('button',t.bodyType===v?'on':'',l);
+    if(v==='multipart') b.title='multipart/form-data：一行一个字段，类型可选文本或文件';
+    b.onclick=()=>{
+      /* 两个视图共用 t.body：切进表单前先从文本解析，切出表单前先把表单写回文本，
+       * 否则「文本里改过的」和「表单里改过的」会各说各话。 */
+      if(v==='multipart'&&t.bodyType!=='multipart'){
+        t.mpBoundary=H.guessBoundary(t.headers,t.body)||'';
+        t.mpParts=H.mpFromBody(t.body,t.mpBoundary,()=>uid());
+        if(!t.mpParts.length) t.mpParts=[mpBlank()];
+      }else if(t.bodyType==='multipart'&&v!=='multipart'){
+        t.body=H.mpToBody(t.mpParts,multipartBoundaryOf(t));
+      }
+      t.bodyType=v; markDirty(t); persist(); renderReqEditor();
+    };
+    seg.appendChild(b);
+  });
   bar.appendChild(seg); bar.appendChild(el('div','sp'));
   if(t.bodyType==='json'){ const fmt=el('button','tool','格式化'); fmt.onclick=()=>{ try{ t.body=JSON.stringify(JSON.parse(t.body),null,2); renderReqEditor(); persist(); setStatus('JSON 已格式化','ok'); }catch(e){ setStatus('JSON 无效：'+e.message,'err'); } }; bar.appendChild(fmt); }
   pane.appendChild(bar);
   if(t.bodyType==='none'){ pane.appendChild(el('div','body-none','该请求没有 Body。<br>选择 JSON / 文本 / Form 以编辑请求体。')); }
   else if(t.bodyType==='form'){ const host=el('div'); host.style.cssText='height:calc(100% - 49px);overflow:auto'; host.appendChild(kvEditor(t.formBody,{kPlace:'字段名',vPlace:'字段值',onChange:()=>{markDirty(t);persist();}})); pane.appendChild(host); }
+  else if(t.bodyType==='multipart'){
+    if(!Array.isArray(t.mpParts)||!t.mpParts.length) t.mpParts=[mpBlank()];
+    const host=el('div'); host.style.cssText='height:calc(100% - 49px);overflow:auto';
+    host.appendChild(mpEditor(t.mpParts,{tab:t,onChange:()=>{
+      /* 每次改动都同步回 t.body：切到「文本」看到的就是刚填的这些，保存也直接用它 */
+      t.body=H.mpToBody(t.mpParts,multipartBoundaryOf(t));
+      markDirty(t); persist();
+    }}));
+    pane.appendChild(host);
+  }
   else{
     const ta=el('textarea','code'); ta.spellcheck=false; ta.placeholder=t.bodyType==='json'?'{\n  "key": "value"\n}':'原始请求体…'; ta.value=t.body; ta.style.height='calc(100% - 49px)';
     ta.addEventListener('input',()=>{ t.body=ta.value; markDirty(t); persist(); });
@@ -1348,11 +1497,28 @@ async function send(){
   // 不再硬拦截——改为发送后若失败提示可能原因；用户可去掉这些头或接受丢失。
   const strippedHeaders=Object.keys(headers).filter(k=>BROWSER_STRIP.test(k));
   t.strippedHeaders=strippedHeaders;
-  let body; const method=t.method;
+  let body; const method=t.method; let bodyBase64='';
   if(!['GET','HEAD'].includes(method)){
     if(t.bodyType==='json'){ body=resolveVars(t.body,t); if(!Object.keys(headers).some(h=>h.toLowerCase()==='content-type')) headers['Content-Type']='application/json'; }
     else if(t.bodyType==='text'){ body=resolveVars(t.body,t); }
     else if(t.bodyType==='form'){ body=t.formBody.filter(r=>r.on&&r.k).map(r=>encodeURIComponent(resolveVars(r.k,t))+'='+encodeURIComponent(resolveVars(r.v,t))).join('&'); if(!Object.keys(headers).some(h=>h.toLowerCase()==='content-type')) headers['Content-Type']='application/x-www-form-urlencoded'; }
+    else if(t.bodyType==='multipart'){
+      /* 附件必须按字节进 body：走文本会被 UTF-8 重编码，音频/图片当场坏掉。
+       * 组装逻辑与浮层共用 POLARIS_EDITOR.buildMultipart，只是把 baseDir 换成这条
+       * 请求所属的 .http 目录（表单这边没有编辑器状态）。 */
+      const bd=multipartBoundaryOf(t);
+      if(!Object.keys(headers).some(h=>h.toLowerCase()==='content-type')) headers['Content-Type']='multipart/form-data; boundary='+bd;
+      try{
+        const built=await window.POLARIS_EDITOR.buildMultipart(
+          { multipart: { boundary: bd, parts: mpPartsToSend(t) } },
+          (s)=>resolveVars(s,t),
+          { baseDir: tabFileDir(t) }
+        );
+        bodyBase64=built.base64;
+      }catch(e){
+        setStatus('附件读取失败：'+(e&&e.message||e),'err'); return;
+      }
+    }
   }
   // 超时：全局 ui.timeoutMs（默认 120s）；`0` = 无限制（fetch 不设 timer）
   const tmo = (typeof ui.timeoutMs==='number' && Number.isFinite(ui.timeoutMs)) ? ui.timeoutMs : 120000;
@@ -1421,6 +1587,7 @@ async function send(){
       const r = await DBX.invoke('http/request', {
         method, url, headers,
         body: body || '',
+        bodyBase64: bodyBase64 || undefined,
         bodyType: t.bodyType || 'text',
         timeoutMs: tmo > 0 ? tmo : 86400000,
         requestId: rid,
@@ -1766,7 +1933,7 @@ function openCurlImport(){
 /* ===================== 保存 / 载入 / 分组 ===================== */
 function markDirty(t){ if(!t.dirty){ t.dirty=true; renderTabs(); } }
 function findSaved(id){ for(const g of state.collections){ const r=g.requests.find(x=>x.id===id); if(r) return {g,r}; } return null; }
-function snapshot(t){ return { method:t.method,url:t.url,params:JSON.parse(JSON.stringify(t.params)),headers:JSON.parse(JSON.stringify(t.headers)),bodyType:t.bodyType,body:t.body,formBody:JSON.parse(JSON.stringify(t.formBody)) }; }
+function snapshot(t){ return { method:t.method,url:t.url,params:JSON.parse(JSON.stringify(t.params)),headers:JSON.parse(JSON.stringify(t.headers)),bodyType:t.bodyType,body:t.body,formBody:JSON.parse(JSON.stringify(t.formBody)),mpParts:JSON.parse(JSON.stringify(t.mpParts||[])),mpBoundary:t.mpBoundary||'' }; }
 async function saveCurrent(){
   const t=activeTab();
   if(t.savedId){ const f=findSaved(t.savedId); if(f){
@@ -1880,7 +2047,15 @@ async function followSource(t){
 
 function openSaved(r){
   const exist=state.tabs.find(t=>t.savedId===r.id); if(exist){ state.activeTab=exist.id; renderAll(); followSource(exist); return; }
-  const t=newTab({ name:r.name,savedId:r.id,method:r.method,url:r.url, params:JSON.parse(JSON.stringify(r.params||[blankRow()])), headers:JSON.parse(JSON.stringify(r.headers||[blankRow()])), bodyType:r.bodyType||'none',body:r.body||'',formBody:JSON.parse(JSON.stringify(r.formBody||[blankRow()])) });
+  const t=newTab({
+    name:r.name, savedId:r.id, method:r.method, url:r.url,
+    params:JSON.parse(JSON.stringify(r.params||[blankRow()])),
+    headers:JSON.parse(JSON.stringify(r.headers||[blankRow()])),
+    bodyType:r.bodyType||'none', body:r.body||'',
+    formBody:JSON.parse(JSON.stringify(r.formBody||[blankRow()])),
+    mpParts:JSON.parse(JSON.stringify(r.mpParts&&r.mpParts.length?r.mpParts:[mpBlank()])),
+    mpBoundary:r.mpBoundary||''
+  });
   if(!t.params.length)t.params=[blankRow()]; if(!t.headers.length)t.headers=[blankRow()]; if(!t.formBody.length)t.formBody=[blankRow()];
   if(r.httpSource){
     t.docRef={ file:r.httpSource.file, line:r.httpSource.line, interfaceId:r.interfaceId||null, name:r.name, method:r.method };

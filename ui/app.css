@@ -282,6 +282,29 @@
 .pa-root .kv-row.blank input.k{color:var(--dim)}
 .pa-root .kv-row.blank .ck,.pa-root .kv-row.blank .rm{opacity:.3}
 
+/* multipart/form-data 表单：一行一个字段，第三列是类型（文本/文件） */
+.pa-root .kv .mp-row{grid-template-columns:30px minmax(88px,220px) 86px minmax(120px,1fr) 30px}
+.pa-root .mp-row .mp-kind{
+  width:100%;padding:8px 20px 8px 9px;font-size:11.5px;background-color:transparent;color:var(--dim);
+  border-right:1px solid var(--line);border-left:1px solid var(--line);cursor:pointer;outline:none;
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'><path d='M1.2 3.1L4 5.9l2.8-2.8' fill='none' stroke='%237a8496' stroke-width='1.3' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 7px center;
+}
+.pa-root .mp-row .mp-kind:hover{color:var(--ink)}
+.pa-root .mp-row .mp-kind option{background:var(--surface-2,var(--surface));color:var(--ink)}
+.pa-root .mp-file{
+  display:flex;align-items:center;gap:6px;width:100%;height:100%;min-height:33px;padding:6px 8px;
+  font-size:12px;text-align:left;color:var(--ink);background:transparent;overflow:hidden;
+}
+.pa-root .mp-file:hover{background:var(--surface)}
+.pa-root .mp-file.empty{color:var(--dimmer)}
+.pa-root .mp-file-ico{flex:none;display:inline-flex;align-items:center;color:var(--dim)}
+.pa-root .mp-file:hover .mp-file-ico{color:var(--brand-hi)}
+.pa-root .mp-file-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-root .mp-file-x{flex:none;font-size:11px;color:var(--dimmer);padding:0 2px}
+.pa-root .mp-file-x:hover{color:var(--err)}
+
 .pa-root .body-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
 .pa-root .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
 .pa-root .seg button{padding:5px 11px;font-size:11px;color:var(--dim);transition:.13s}
