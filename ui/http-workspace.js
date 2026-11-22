@@ -19,11 +19,19 @@
   var esc = function (s) { return CORE && CORE.esc ? CORE.esc(s) : String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
 
   var ST_KEY = 'warren-polaris-api.httpws.v1';
+  /* 面板里有两层视图（S8.4）：
+   *   list   —— 历史结果目录
+   *   detail —— 某一条的快照（只读）
+   * 两层在**同一个弹窗内**切换，不叠第二层浮层：叠起来用户还得管「关哪一层」。
+   * 点「打开」不再直接跳到主界面 —— 那正是歧义的来源（到底是在看历史，
+   * 还是把主界面当成了这条历史的详情页？）。 */
   var WS = {
     workDir: '',          // 仍要留着：_cancel/ 与 _history/ 都挂在这个根下
     resultsDir: '',
     results: [],
     runtimeResponses: {}, // 请求名 -> 最近一次 resp，供跨请求引用
+    view: { mode: 'list', path: '' },
+    listScroll: 0,        // 目录滚到哪儿了：返回时必须回到原处
     ready: false
   };
 
@@ -35,6 +43,9 @@
   }
   async function storeGet(key) { try { return await DBX.storage.get(key); } catch (e) { return null; } }
   async function storeSet(key, val) { try { return await DBX.storage.set(key, val); } catch (e) { /* ignore */ } }
+  /* app.js 导出的最小接口。原先是裸写 `api()`，没这个函数 —— 点「打开」就 ReferenceError，
+   * 被 catch 吞成一句状态提示。这里补上，并容忍 app.js 还没加载完。 */
+  function api() { return window.POLARIS_API || null; }
 
   /* ---------- 小工具 ---------- */
   function fmtTime(ms) {
@@ -112,20 +123,62 @@
       '.pa-hws-item:last-child{border-bottom:0}',
       '[data-dbx-theme="light"] .pa-hws-item{border-color:#eef0f3}',
       '.pa-hws-item:hover{background:rgba(127,127,127,.08)}',
-      '.pa-hws-item .name{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.pa-hws-item .url{color:var(--dim,#9a9ba3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:12px}',
-      '.pa-hws-item .m{font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(76,139,245,.16);color:var(--brand,#4c8bf5);flex:none}',
-      '.pa-hws-item .st{font-size:11px;padding:1px 7px;border-radius:4px;flex:none}',
-      '.pa-hws-item .st.s2{background:rgba(61,181,112,.16);color:#3db570}',
-      '.pa-hws-item .st.s3{background:rgba(230,170,60,.16);color:#e0aa3c}',
-      '.pa-hws-item .st.s4,.pa-hws-item .st.s5{background:rgba(230,90,90,.16);color:#e05a5a}',
+      '.pa-hws-item .name{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}',
+      /* 时间/耗时/大小这一列不参与压缩：名字长就把名字省略，别把「几点发的」切掉半截 */
+      '.pa-hws-item .url{color:var(--dim,#9a9ba3);white-space:nowrap;flex:0 0 auto;font-size:12px}',
+      '.pa-hws-item .m,.pa-hws-dtop .m{font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(76,139,245,.16);color:var(--brand,#4c8bf5);flex:none}',
+      '.pa-hws-item .st,.pa-hws-dtop .st{font-size:11px;padding:1px 7px;border-radius:4px;flex:none}',
+      '.pa-hws-item .st.s2,.pa-hws-dtop .st.s2{background:rgba(61,181,112,.16);color:#3db570}',
+      '.pa-hws-item .st.s3,.pa-hws-dtop .st.s3{background:rgba(230,170,60,.16);color:#e0aa3c}',
+      '.pa-hws-item .st.s4,.pa-hws-item .st.s5,.pa-hws-dtop .st.s4,.pa-hws-dtop .st.s5{background:rgba(230,90,90,.16);color:#e05a5a}',
+      /* S8.4：返回列表后，刚才看的那条留在原位并高亮 —— 否则满屏长得一样的行，人找不到自己刚看的是哪条 */
+      /* 行内按钮不参与收缩：名字把行挤满时，按钮不能断成「打/开」两行 */
+      '.pa-hws-item button{flex:0 0 auto;white-space:nowrap}',
+      '.pa-hws-item.on{background:rgba(76,139,245,.14);box-shadow:inset 2px 0 0 var(--brand,#4c8bf5)}',
       '.pa-hws-empty{padding:26px;text-align:center;color:var(--dim,#9a9ba3);line-height:1.8}',
       '.pa-hws-warn{margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(230,170,60,.10);color:#d39a2c;font-size:12px;line-height:1.7;max-height:110px;overflow:auto}',
       '.pa-hws-foot{flex:none;padding:8px 16px;border-top:1px solid var(--line,#2a2b32);font-size:12px;color:var(--dim,#9a9ba3);display:flex;gap:10px;align-items:center}',
       '[data-dbx-theme="light"] .pa-hws-foot{border-color:#e4e5ea}',
       '.pa-hws-foot .msg{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.pa-hws-foot .msg.ok{color:#3db570}',
-      '.pa-hws-foot .msg.err{color:#e05a5a}'
+      '.pa-hws-foot .msg.err{color:#e05a5a}',
+
+      /* ---- S8.4：面板内的第二层（单条快照） ---- */
+      '.pa-hws-back{margin-right:2px;padding:3px 9px!important;line-height:1.15;font-size:14px}',
+      '.pa-hws-back[hidden]{display:none}',
+      '.pa-hws-badge{font-size:11px;padding:2px 7px;border-radius:4px;background:rgba(230,170,60,.16);color:#d39a2c;white-space:nowrap}',
+      '.pa-hws-badge[hidden]{display:none}',
+      '.pa-hws-dtop{display:flex;align-items:center;gap:8px;margin-bottom:6px}',
+      '.pa-hws-dtop .dname{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.pa-hws-dmeta{font-size:12px;color:var(--dim,#9a9ba3);line-height:1.7;margin-bottom:10px;word-break:break-all}',
+      '.pa-hws-url{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;padding:8px 10px;border-radius:6px;background:var(--bg-1,#17181d);border:1px solid var(--line,#2a2b32);word-break:break-all;margin-bottom:8px}',
+      '[data-dbx-theme="light"] .pa-hws-url{background:#fafbfc;border-color:#e4e5ea}',
+      '.pa-hws-fold{border:1px solid var(--line,#2a2b32);border-radius:8px;margin-bottom:8px;overflow:hidden}',
+      '[data-dbx-theme="light"] .pa-hws-fold{border-color:#e4e5ea}',
+      '.pa-hws-fold>summary{cursor:pointer;padding:7px 10px;font-size:12px;color:var(--dim,#9a9ba3);list-style:none}',
+      '.pa-hws-fold>summary::-webkit-details-marker{display:none}',
+      '.pa-hws-fold>summary:before{content:"▸ "}',
+      '.pa-hws-fold[open]>summary:before{content:"▾ "}',
+      '.pa-hws-kv{width:100%;border-collapse:collapse;font-size:12px}',
+      '.pa-hws-kv td{padding:5px 10px;border-top:1px solid var(--line,#2a2b32);vertical-align:top;word-break:break-all}',
+      '[data-dbx-theme="light"] .pa-hws-kv td{border-color:#eef0f3}',
+      '.pa-hws-kv td:first-child{color:var(--j-key,#7aa2f7);white-space:nowrap;width:1%}',
+      '.pa-hws-seg{display:flex;gap:4px;margin:0 0 8px}',
+      '.pa-hws-seg button.on{background:var(--brand,#4c8bf5);border-color:transparent;color:#fff}',
+      '.pa-hws-dt .rpane[hidden]{display:none}',
+      '.pa-hws-dt pre.raw{margin:0;padding:10px 12px;font-size:12.5px;line-height:1.6;white-space:pre;overflow:auto;max-height:min(300px,40vh);tab-size:2;background:var(--bg-1,#17181d);border:1px solid var(--line,#2a2b32);border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}',
+      '[data-dbx-theme="light"] .pa-hws-dt pre.raw{background:#fafbfc;border-color:#e4e5ea}',
+      '.pa-hws-fold pre.raw{border:0;border-top:1px solid var(--line,#2a2b32);border-radius:0;max-height:200px}',
+      '[data-dbx-theme="light"] .pa-hws-fold pre.raw{border-color:#e4e5ea}',
+      '.pa-hws-dt .tok-key{color:var(--j-key,#7aa2f7)}',
+      '.pa-hws-dt .tok-str{color:var(--j-str,#ce9178)}',
+      '.pa-hws-dt .tok-num{color:var(--j-num,#b5cea8)}',
+      '.pa-hws-dt .tok-bool{color:var(--j-bool,#569cd6)}',
+      '.pa-hws-dt .tok-null{color:var(--j-null,#808080)}',
+      '.pa-hws-note{font-size:12px;color:#d39a2c;line-height:1.6;margin-bottom:6px}',
+      '.pa-hws-img{max-width:100%;max-height:min(300px,40vh);border-radius:8px;border:1px solid var(--line,#2a2b32)}',
+      '.pa-hws-acts{display:flex;gap:8px;align-items:center;margin-top:12px}',
+      '.pa-hws-acts .hint{font-size:11.5px;color:var(--dim,#9a9ba3)}'
     ].join('\n');
     var st = document.createElement('style');
     st.setAttribute('data-pa-hws', '1');
@@ -144,12 +197,17 @@
       '<div class="pa-hws-mask"></div>' +
       '<div class="pa-hws-box">' +
       '  <div class="pa-hws-head">' +
+      '    <button class="pa-hws-back" title="返回历史结果列表" hidden>←</button>' +
       '    <span class="pa-hws-title">历史结果</span>' +
+      '    <span class="pa-hws-badge" hidden>快照 · 只读</span>' +
       '    <button class="pa-hws-close" title="关闭">×</button>' +
       '  </div>' +
       '  <div class="pa-hws-body">' +
-      '    <div class="pa-hws-row"><button id="paHwsRefresh" class="primary">刷新</button><button id="paHwsReveal2">打开结果目录</button><span class="lbl">每次「发送」后自动写入本地</span></div>' +
-      '    <div class="pa-hws-list" id="paHwsResults"><div class="pa-hws-empty">还没有保存的结果。</div></div>' +
+      '    <div class="pa-hws-pane" id="paHwsList">' +
+      '      <div class="pa-hws-row"><button id="paHwsRefresh" class="primary">刷新</button><button id="paHwsReveal2">打开结果目录</button><span class="lbl">每次「发送」后自动写入本地</span></div>' +
+      '      <div class="pa-hws-list" id="paHwsResults"><div class="pa-hws-empty">还没有保存的结果。</div></div>' +
+      '    </div>' +
+      '    <div class="pa-hws-pane pa-hws-dt" id="paHwsDetail" hidden></div>' +
       '  </div>' +
       '  <div class="pa-hws-foot"><span class="msg" id="paHwsStatus">就绪</span></div>' +
       '</div>';
@@ -170,6 +228,9 @@
   function show() {
     if (!panel) return;
     panel.hidden = false;
+    WS.listScroll = 0;
+    WS.view = { mode: 'list', path: '' };
+    goList();                    // 每次从顶栏进来都回到目录，不继承上次的详情
     refreshHistory();
   }
   function hide() { if (panel) panel.hidden = true; }
@@ -186,8 +247,20 @@
     if (!panel) return;
     $p('.pa-hws-mask').onclick = hide;
     $p('.pa-hws-close').onclick = hide;
+    $p('.pa-hws-back').onclick = goList;
     $p('#paHwsReveal2').onclick = revealDir;
     $p('#paHwsRefresh').onclick = refreshHistory;
+
+    /* Esc：详情回目录，目录关面板 —— 与「←」和「×」一一对应，不用记两套规则 */
+    document.addEventListener('keydown', function (e) {
+      if (!panel || panel.hidden || e.key !== 'Escape') return;
+      if (WS.view.mode === 'detail') {
+        e.preventDefault(); e.stopPropagation();
+        goList();
+      } else {
+        hide();
+      }
+    }, true);
 
     var b1 = document.getElementById('httpFileBtn');
     var b2 = document.getElementById('httpHistoryBtn');
@@ -249,6 +322,12 @@
       WS.results = r.items || [];
       if (r.dir && !WS.resultsDir) WS.resultsDir = r.dir;
       renderResults();
+      /* 只更新脚注：自动刷新也会走到这里，别把全局状态栏的「200 OK · 32 ms」顶掉 */
+      var f = $p('#paHwsStatus');
+      if (f && WS.view.mode === 'list' && !panel.hidden) {
+        f.textContent = '历史结果 · ' + WS.results.length + ' 条';
+        f.className = 'msg';
+      }
       hydrateRuntimeResponses();
       return r;
     } catch (e) {
@@ -266,6 +345,7 @@
     WS.results.forEach(function (it) {
       var row = document.createElement('div');
       row.className = 'pa-hws-item';
+      row.setAttribute('data-path', it.path || '');
       row.innerHTML = '<span class="st ' + statusClass(it.status) + '">' + esc(it.status || '-') + '</span>' +
         '<span class="m">' + esc(it.method || '') + '</span>' +
         '<span class="name">' + esc(it.name || '未命名') + '</span>' +
@@ -273,7 +353,7 @@
       var open = document.createElement('button');
       open.textContent = '打开';
       open.className = 'primary';
-      open.onclick = function () { openResult(it.path); };
+      open.onclick = function () { openDetail(it.path); };
       row.appendChild(open);
       var del = document.createElement('button');
       del.textContent = '删除';
@@ -283,17 +363,205 @@
     });
   }
 
-  async function openResult(path) {
+  /* ---------- 面板内的两层视图（S8.4） ---------- */
+  var MAX_BODY = 400 * 1024;   /* 超出只渲染前面这一截：5 MB 的 JSON 直接进 pre 会卡死面板 */
+
+  function setHead(mode) {
+    var back = $p('.pa-hws-back'), badge = $p('.pa-hws-badge');
+    if (back) back.hidden = mode !== 'detail';
+    if (badge) badge.hidden = mode !== 'detail';
+  }
+  /* 回到目录：位置、高亮、状态栏文字都复原 */
+  function goList() {
+    WS.view = { mode: 'list', path: WS.view.path };
+    setHead('list');
+    var d = $p('#paHwsDetail'), l = $p('#paHwsList');
+    if (d) { d.hidden = true; d.innerHTML = ''; }
+    if (l) l.hidden = false;
+    var scroller = $p('.pa-hws-body');
+    if (scroller) scroller.scrollTop = 0;      // 详情可能把外层滚下去了，回目录先归位
+    var list = $p('#paHwsResults');
+    if (list) list.scrollTop = WS.listScroll || 0;
+    markActive();
+    setStatus(WS.results.length ? ('历史结果 · ' + WS.results.length + ' 条') : '历史结果');
+  }
+  function markActive() {
+    var list = $p('#paHwsResults');
+    if (!list) return;
+    var hit = null;
+    Array.prototype.forEach.call(list.querySelectorAll('.pa-hws-item'), function (el) {
+      var on = WS.view.path && el.getAttribute('data-path') === WS.view.path;
+      el.classList.toggle('on', !!on);
+      if (on) hit = el;
+    });
+    /* 目录可能很长：位置已经按 scrollTop 复原，只有「那行确实不在视野里」才补一次
+     * （窗口被拉小、或列表在详情期间被刷新过）。无条件 scrollIntoView 会把复原的位置顶掉。 */
+    if (hit && hit.scrollIntoView) {
+      try {
+        var lb = list.getBoundingClientRect(), hb = hit.getBoundingClientRect();
+        if (hb.top < lb.top || hb.bottom > lb.bottom) hit.scrollIntoView({ block: 'nearest' });
+      } catch (e) { /* 老浏览器忽略参数，位置已经复原了 */ }
+    }
+  }
+
+  async function openDetail(path) {
+    var list = $p('#paHwsResults');
+    if (list) WS.listScroll = list.scrollTop;   // 必须在切走之前读，切走就没了
+    setStatus('读取历史结果…');
     try {
       var r = await invokeSafe('http/getResult', { path: path });
       var entry = r.entry || {};
-      var resp = respFromSaved(entry.response || {});
-      var A = api();
-      if (!A) { setStatus('app.js 尚未就绪', 'err'); return; }
-      A.showResponse(resp);
-      hide();
-      setStatus('已在响应区打开历史结果：' + (entry.request ? entry.request.name : ''), 'ok');
+      WS.view = { mode: 'detail', path: path };
+      renderDetail(entry);
+      setHead('detail');
+      var l = $p('#paHwsList'), d = $p('#paHwsDetail');
+      if (l) l.hidden = true;
+      if (d) d.hidden = false;
+      var scroller = $p('.pa-hws-body');
+      if (scroller) scroller.scrollTop = 0;
+      var nm = (entry.request && entry.request.name) || '未命名';
+      setStatus('历史快照（只读）· ' + nm + ' · 按 Esc 或「←」回到目录');
     } catch (e) { setStatus('打开结果失败：' + e.message, 'err'); }
+  }
+
+  function normHeaders(h) {
+    var out = {};
+    if (!h) return out;
+    if (Array.isArray(h)) {
+      h.forEach(function (kv) { if (kv && kv.length >= 2 && kv[1] != null && kv[1] !== '') out[String(kv[0])] = String(kv[1]); });
+      return out;
+    }
+    Object.keys(h).forEach(function (k) { if (h[k] != null && h[k] !== '') out[k] = String(h[k]); });
+    return out;
+  }
+  function kvTable(obj) {
+    var rows = Object.keys(obj).map(function (k) {
+      return '<tr><td>' + esc(k) + '</td><td>' + esc(obj[k]) + '</td></tr>';
+    }).join('');
+    return '<table class="pa-hws-kv"><tbody>' + rows + '</tbody></table>';
+  }
+  function utf8Len(s) { try { return new TextEncoder().encode(s).length; } catch (e) { return String(s).length; } }
+  function shortFile(p) { return String(p || '').split(/[\\/]/).pop(); }
+
+  /* 一条历史的快照：请求（方法/URL/头/体）+ 响应（状态/头/体）。
+   * 只用一处真源，不复制 app.js 的响应渲染：响应体直接借 POLARIS_JV.viewRaw，
+   * 这样「高亮 / 换行 / 二进制提示」这些规则与主界面不会各写一套。 */
+  function renderDetail(entry) {
+    var box = $p('#paHwsDetail');
+    if (!box) return;
+    var req = entry.request || {}, res = entry.response || {};
+    var st = Number(res.status) || 0;
+    var ct = res.contentType || '';
+    var text = res.text || '';
+    var cut = text.length > MAX_BODY;
+    var shown = cut ? text.slice(0, MAX_BODY) : text;
+    var hReq = normHeaders(req.headers), hRes = normHeaders(res.headers);
+
+    var meta = [
+      fmtTime(entry.savedAt),
+      msText(res.timeMs),
+      kB(res.size),
+      ct,
+      req.sourceFile ? shortFile(req.sourceFile) : ''
+    ].filter(Boolean).map(esc).join(' · ');
+
+    var html = '';
+    html += '<div class="pa-hws-dtop">' +
+      '<span class="st ' + statusClass(st) + '">' + esc(st || '-') + '</span>' +
+      '<span class="m">' + esc(req.method || '') + '</span>' +
+      '<span class="dname">' + esc(req.name || '未命名') + '</span>' +
+      '</div>';
+    html += '<div class="pa-hws-dmeta">' + meta + '</div>';
+
+    html += '<h4>请求</h4>';
+    html += '<div class="pa-hws-url"><b>' + esc(req.method || '') + '</b> ' + esc(req.url || '') + '</div>';
+    if (Object.keys(hReq).length) {
+      html += '<details class="pa-hws-fold"><summary>请求头 · ' + Object.keys(hReq).length + ' 项</summary>' + kvTable(hReq) + '</details>';
+    }
+    if (req.body) {
+      var rb = String(req.body);
+      var rbCut = rb.length > MAX_BODY;
+      html += '<details class="pa-hws-fold"><summary>请求体 · ' + kB(utf8Len(rb)) + (req.bodyType ? ' · ' + esc(req.bodyType) : '') + '</summary>' +
+        '<pre class="raw">' + esc(rbCut ? rb.slice(0, MAX_BODY) : rb) + '</pre></details>';
+    }
+
+    html += '<h4>响应</h4>';
+    html += '<div class="pa-hws-seg" id="paHwsRespSeg">' +
+      '<button data-rp="body" class="on">响应体</button>' +
+      '<button data-rp="head">响应头 · ' + Object.keys(hRes).length + '</button>' +
+      '</div>';
+    html += '<div class="rpane" id="paHwsRespBody"></div>';
+    html += '<div class="rpane" id="paHwsRespHead" hidden>' +
+      (Object.keys(hRes).length ? kvTable(hRes) : '<div class="pa-hws-empty">（无响应头）</div>') + '</div>';
+
+    html += '<div class="pa-hws-acts">' +
+      '<button class="primary" id="paHwsToMain">↗ 在主界面打开</button>' +
+      '<button id="paHwsCopyBody">复制响应体</button>' +
+      '<span class="hint">这里只读；要改参数重发，请回目录或主界面</span>' +
+      '</div>';
+
+    box.innerHTML = html;
+
+    /* 响应体：JSON 给高亮，图片给图，二进制给说明，文本原样 */
+    var bodyBox = box.querySelector('#paHwsRespBody');
+    if (cut) {
+      var note = document.createElement('div');
+      note.className = 'pa-hws-note';
+      note.textContent = '响应体较大（' + kB(utf8Len(text)) + '），这里只渲染前 ' + kB(MAX_BODY) + '。完整内容请点「在主界面打开」。';
+      bodyBox.appendChild(note);
+    }
+    if (res.isBase64 && /^image\//i.test(ct)) {
+      var img = document.createElement('img');
+      img.className = 'pa-hws-img';
+      img.src = 'data:' + ct + ';base64,' + shown;
+      bodyBox.appendChild(img);
+    } else if (res.isBase64) {
+      var hint = document.createElement('div');
+      hint.className = 'pa-hws-empty';
+      hint.textContent = '二进制响应（' + (ct || '未知类型') + ' · ' + kB(res.size) + '），这里不展开。';
+      bodyBox.appendChild(hint);
+    } else if (!shown) {
+      bodyBox.innerHTML = '<div class="pa-hws-empty">（响应体为空）</div>';
+    } else {
+      var JV = window.POLARIS_JV;
+      if (JV && JV.viewRaw) {
+        bodyBox.appendChild(JV.viewRaw({ text: shown, isBinary: false, contentType: ct, size: res.size }));
+      } else {
+        var pre = document.createElement('pre');
+        pre.className = 'raw';
+        pre.textContent = shown;
+        bodyBox.appendChild(pre);
+      }
+    }
+
+    /* 响应体 / 响应头 切换 */
+    Array.prototype.forEach.call(box.querySelectorAll('#paHwsRespSeg button'), function (b) {
+      b.onclick = function () {
+        Array.prototype.forEach.call(box.querySelectorAll('#paHwsRespSeg button'), function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        var isBody = b.getAttribute('data-rp') === 'body';
+        box.querySelector('#paHwsRespBody').hidden = !isBody;
+        box.querySelector('#paHwsRespHead').hidden = isBody;
+      };
+    });
+
+    /* 明确地把「进主界面」变成一次点击，而不是「点打开」的副作用 */
+    box.querySelector('#paHwsToMain').onclick = function () { sendToMain(entry); };
+    box.querySelector('#paHwsCopyBody').onclick = function () {
+      var C = window.POLARIS_CORE;
+      if (C && C.copy) C.copy(text); else setStatus('当前环境不支持复制', 'warn');
+      setStatus('响应体已复制（' + kB(utf8Len(text)) + '）', 'ok');
+    };
+  }
+
+  /* 用户明确要求进主界面时，才走原来那条路（写进响应区 + 关面板） */
+  function sendToMain(entry) {
+    var resp = respFromSaved(entry.response || {});
+    var A = api();
+    if (!A) { setStatus('app.js 尚未就绪', 'err'); return; }
+    A.showResponse(resp);
+    hide();
+    setStatus('已在响应区打开历史结果：' + ((entry.request && entry.request.name) || ''), 'ok');
   }
 
   async function delResult(path) {

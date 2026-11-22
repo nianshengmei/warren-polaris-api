@@ -84,6 +84,22 @@ ok('历史结果面板只读 _results/，不再自己载入或运行请求（S8.
   assert(/pa-hws-title">历史结果/.test(s), '面板标题就叫「历史结果」');
 });
 
+ok('历史结果面板分两层：目录 ⇄ 快照，点「打开」不再直接跳主界面（S8.4）', () => {
+  const s = read('ui/http-workspace.js');
+  ['paHwsDetail', 'paHwsList', 'goList', 'openDetail', 'renderDetail', 'markActive', 'sendToMain']
+    .forEach(k => assert(s.includes(k), '缺少 ' + k));
+  /* 「打开」只切层；进主界面必须由用户再点一次「↗ 在主界面打开」。
+   * 原来的写法是 getResult → showResponse → hide()，一点就把面板关掉、把响应塞进主界面，
+   * 用户分不清自己是在看历史还是那条历史已经变成主界面的当前响应。 */
+  const fn = s.match(/async function openDetail[\s\S]*?\n  \}\n/);
+  assert(fn, '找不到 openDetail 函数体');
+  assert(!/hide\(\)/.test(fn[0]), 'openDetail 里不许关面板（那正是歧义来源）');
+  assert(!/showResponse/.test(fn[0]), 'openDetail 里不许直接写主界面响应区');
+  assert(/function sendToMain[\s\S]{0,400}?showResponse/.test(s), '进主界面要走 sendToMain（显式一次点击）');
+  assert(/list\.scrollTop = WS\.listScroll/.test(s), '返回目录要恢复滚动位置（目录可能上百条）');
+  assert(/scrollIntoView[\s\S]{0,120}?nearest/.test(s), '只有在行确实不可见时才补一次 scrollIntoView');
+});
+
 ok('http-editor.js 关键实现就位', () => {
   const s = read('ui/http-editor.js');
   /* 源码编辑 + gutter 运行按钮 + 自动保存 + 结果进原响应框 */
