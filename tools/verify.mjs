@@ -72,9 +72,16 @@ ok('app.js 的响应钩子与 POLARIS_API 导出就位（含 runRaw）', () => {
   assert(/runRaw:[\s\S]*?showResponse\(resp\)/.test(s), 'runRaw 必须把结果交给 showResponse（进原响应框）');
 });
 
-ok('http-workspace.js 调用的接口与导出一致', () => {
+ok('历史结果面板只读 _results/，不再自己载入或运行请求（S8.3）', () => {
   const s = read('ui/http-workspace.js');
-  ['A.addTab', 'A.showResponse', 'A.uid', 'A.blankRow', 'POLARIS_HTTP_WS'].forEach(k => assert(s.includes(k), '缺少 ' + k));
+  ['POLARIS_HTTP_WS', 'onResponse', 'refreshHistory', 'listResults'].forEach(k =>
+    assert(s.includes(k), '缺少 ' + k));
+  /* 文件入口已收口到顶栏「打开 .http」与侧栏映射树；批量运行在浮层「▶▶ 全部运行」。
+   * 面板里再留一份「扫描 / 载入为 tab / 运行全部」就是第二套入口。 */
+  ['A.addTab', 'paHwsScan', 'paHwsLoadAll', 'paHwsRunAll', 'paHwsDir', 'paHwsPick']
+    .forEach(k => assert(!s.includes(k), '面板里不该再有 ' + k));
+  assert(/openFromTopbar[\s\S]{0,200}pickAndOpen/.test(s), '顶栏「打开 .http」要直连 pickAndOpen');
+  assert(/pa-hws-title">历史结果/.test(s), '面板标题就叫「历史结果」');
 });
 
 ok('http-editor.js 关键实现就位', () => {
