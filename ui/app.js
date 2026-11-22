@@ -2652,6 +2652,14 @@ async function initApi(){
   /* WS 帧是异步推来的：全局订一次，按 tab 分发（连发出去的帧也从这里回来） */
   if(DBX.onEvent) DBX.onEvent('polaris/http/ws', onWsEvent);
   await load();
+  /* 上一轮的 WebSocket 遗留：sidecar 是常驻进程，界面重载（刷新 / 重开面板）后
+   * 连接表里的连接仍然活着，但已经没有 tab 认它 —— 事件来了没人接，连接也不会自己断。
+   * 不管的话，重载 N 次就积 N 条僵尸连接，对端还一直占着。启动时清一遍最干净：
+   * 此刻 UI 手上没有任何活连接，表里剩下的都是上一轮的。 */
+  try {
+    const left = await DBX.invoke('ws/list', {});
+    (left && left.items || []).forEach(x => { DBX.invoke('ws/close', { connId: x.connId }).catch(() => {}); });
+  } catch (e) { /* 老宿主没有这个方法：忽略，不影响其它功能 */ }
   /* 文件真源：把侧栏数据从 storage 切到资源目录（含一次性迁移）。失败则保持旧路径可用。 */
   await initDocs();
   const main=$('#main'); if(main) main.classList.toggle('collapsed',ui.sideCollapsed);
