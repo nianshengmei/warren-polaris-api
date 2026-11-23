@@ -79,12 +79,33 @@ console.log(`本地 HEAD ${headSha.slice(0, 10)} / parent 已在远端 ${parentS
 console.log(message.split('\n')[0]);
 
 /* 只取变更路径（相对 parent） */
-const changed = gitt(['diff', '--name-only', parentSha, headSha]).trim().split('\n').filter(Boolean);
-console.log('变更文件：', changed.join(', '));
+/* 只取变更（相对 parent）。
+ * 必须用 --name-status 且开 rename 检测：`--name-only` 遇到「改名的同时改了内容」
+ * 只吐出目标路径，源路径的删除就丢了 —— base tree 里那份旧文件还在，
+ * 建出来的 tree SHA 与本地对不上（2026-11-23 推 0.9.4 就是这么挂的：
+ * docs/self-test-0.9.3.md → 0.9.4.md 被当成改名，旧文件没删）。 */
+const status = gitt(['diff', '--name-status', '-M', parentSha, headSha]).trim().split('\n').filter(Boolean);
+console.log('变更文件：', status.map((l) => l.split('\t').slice(1).join(' → ')).join(', '));
 process.stdout.write('- 上传 blob ');
 
 const entries = [];
-for (const path of changed) {
+for (const line of status) {
+  const [st, ...paths] = line.split('\t');
+  if (st === 'D') {
+    /* 删除：tree 里给 sha=null，GitHub 才会把这条从 base tree 摘掉 */
+    entries.push({ path: paths[0], mode: '100644', type: 'blob', sha: null });
+    process.stdout.write('x');
+    continue;
+  }
+  if (st.startsWith('R') || st.startsWith('C')) {
+    /* 改名/复制：源路径删掉，目标路径按新内容写 */
+    if (st.startsWith('R')) {
+      entries.push({ path: paths[0], mode: '100644', type: 'blob', sha: null });
+      process.stdout.write('x');
+    }
+    paths.shift();
+  }
+  const path = paths[0];
   const sha = gitt(['rev-parse', `${headSha}:${path}`]).trim();
   const mode = gitt(['ls-tree', headSha, '--', path]).trim().split(' ')[0];
   const b64 = git(['cat-file', 'blob', sha]).toString('base64');
