@@ -27,6 +27,13 @@
 
 ## 后续版本注意
 
-- 商店同步器读的是 **tag 上的** `.dbx-store.json`。`v1.0.0` 这个 tag 上的还是 0.6.4 文案，
-  所以别让自动化去补发 1.0.0（已列版本会跳过，不会覆盖）。下一个 tag 起元数据才是新的。
-- 已有版本不会重复上架；`1.0.0` 合并后再发新版只需新 tag + 新候选。
+- 商店同步器（`scripts/discover-plugin-releases.mjs`）只取**最新的**正式 release：
+  在 `releases?per_page=30` 里找第一个非 draft / 非 prerelease、且带 `release-candidates.json` 资产的，
+  然后去 **那个 tag 上**读 `.dbx-store.json`。所以只有「最新 tag」的文案会被商城看到，旧 tag 不影响。
+- 2026-11-23 修过一次：`v1.0.0` 原指向 `0b45180`，而 1.0.0 文案的提交 `da51d08` 在它之后，
+  同步器会拿到「版本 1.0.0 / 更新说明写着 0.6.4」的条目。已把标签移到 `622eb91`
+  （只多两个检查脚本提交，5 个 `.dbxp` 资产与 sha256 未变，候选 JSON 不用改）。
+- 现在 `tools/store-meta.mjs` 会拦这类错位：`--tag vX.Y.Z` 校验 tag 快照，
+  `tools/all.mjs`（16 个文件）跑 HEAD 档，发版工作流的 `guard` 作业先跑 `--tag`，对不上就不打包。
+- 以后发新版：`node tools/store-meta.mjs --tag v新版本` 先过一遍 → 打 tag → publish release（资产里要有 `release-candidates.json`）
+  → 同步器下一小时自动开 PR；已列版本会跳过，不会覆盖。
