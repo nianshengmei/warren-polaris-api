@@ -86,6 +86,9 @@ function main() {
   for (const job of jobs) {
     let problems;
     try {
+      if (job.tag && spawnSync('git', ['rev-parse', '--verify', '--quiet', job.ref + '^{commit}'], { cwd: root }).status !== 0) {
+        throw new Error('本地没有这个 tag（先 git fetch --tags origin）');
+      }
       problems = checkRef(job.ref, job.version);
     } catch (e) {
       problems = [e.message];
