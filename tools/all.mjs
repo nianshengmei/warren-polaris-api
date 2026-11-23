@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const files = [
   'tools/verify.mjs',
+  'tools/store-meta.mjs',
   'tools/http-file.test.mjs',
   'tools/identity.test.mjs',
   'tools/history.test.mjs',

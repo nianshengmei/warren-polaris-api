@@ -8,7 +8,23 @@ permissions:
   contents: write
 
 jobs:
+  # 打 tag 是「冻结一份快照」，改文案往往在后面某次提交里。tag 上冻结的
+  # 若是上一版的 releaseNotes，商城条目就会变成「版本 1.0.0 / 更新说明 0.6.4」。
+  # 所以发版第一步先校验 tag 快照的自述版本，对不上直接停，不要打包。
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 校验 tag 上的商店元数据与版本号一致
+        run: node tools/store-meta.mjs --tag "${{ github.event.release.tag_name }}"
+
   release:
+    needs: guard
     uses: t8y2/dbx/.github/workflows/plugin-release-reusable.yml@main
     with:
       release-tag: ${{ github.event.release.tag_name }}

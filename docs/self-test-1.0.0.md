@@ -157,12 +157,27 @@ Sec-WebSocket-Protocol: json
 | 在那串斜体值里点几个字再按删除 | 删掉的还是你看着的那个字（倾斜是视觉变换，不参与排版） | `node verify-ui/check-align.mjs` 应 186 通过 |
 | 底部「＋ 挂载 .http」「＋ 新建文件夹」 | 仍在，新建入口没有跟着顶部图标一起消失 | `renderSidebarMapped` 的 `pending-bar` |
 
-## 11. 收尾
+## 11. 商店元数据与版本号一致（发版前必跑）
+
+商城拿一个版本有两条路：候选 JSON（随 PR 提交）和自动同步（读 **tag 上** 的 `.dbx-store.json`）。
+tag 是快照，文案改在 tag 之后的提交里就冻不进去，于是会出现「版本 1.0.0、更新说明写着 0.6.4」的条目。
+
+```bash
+node tools/store-meta.mjs                  # 校验当前提交
+node tools/store-meta.mjs --tag v1.0.0     # 校验线上 tag 的快照
+node tools/store-meta.mjs --all            # 校验本地所有 v* tag
+```
+
+判据：`.dbx-store.json` 的 `releaseNotes` 首行自称的版本 == 该 tag 的版本；
+候选 JSON 的 `version`、每个平台下载地址里的 `/vX.Y.Z/`、sha256 也一并对齐。
+`tools/all.mjs` 已含 HEAD 这一档；发版工作流第一步会先跑 `--tag`，对不上就不打包。
+
+## 12. 收尾
 
 ```bash
 cd warren-polaris-api
 git status --short      # 应为空；_history/、_results/ 都不该进仓库
-node tools/all.mjs      # 15 个文件全绿
+node tools/all.mjs      # 16 个文件全绿
 ```
 
 ---
