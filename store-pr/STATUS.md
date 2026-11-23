@@ -18,7 +18,17 @@
 | 元数据 | `.dbx-store.json` 已改到 1.0.0（列表名 `HTTP File Client (.http)`、描述首句声明 fork、releaseNotes 写明派生自 v0.2.0） |
 | PR 正文 | `PR_BODY_1.0.0.md`：按 `PULL_REQUEST_TEMPLATE.md` 的八个标题逐段填（Plugin submission / Source / Capabilities / Permissions / Native sidecar / License / Homepage / Confirmation），并加一节把 #557 的四条要求对应到具体文件 |
 
-## 还差点一下的事：PR 建不了，是权限不是脚本
+## 已提交：PR #593
+
+- 2026-11-24 07:50（北京时间）建好 **https://github.com/t8y2/dbx-store/pull/593**
+  （head `nianshengmei:submit/com.warren.polaris.api-1.0.0@aaef951` → `main`，3 文件 +75/−0，mergeable）。
+- #557 已评论「Superseded by #593」并关闭。
+- 建 PR 用的是 classic PAT（`public_repo`）；细粒度 PAT 实测对 `t8y2/dbx-store` 只有读权限，
+  `POST /pulls` 与 GraphQL `createPullRequest` 都返回 403，不是漏勾某个权限项。
+- 当前检查状态：`action_required`——fork PR 首次运行工作流要维护者点「Approve and run workflows」。
+  没人点之前不会变，这是平台策略，不是我们的配置问题。
+
+## 历史记录：PR 建不了，是权限不是脚本
 
 - 细粒度 PAT 对 `t8y2/dbx-store` 的权限实测为 `pull: true, push: false`；
   `POST /pulls` 与 GraphQL `createPullRequest` 都是 `403 Resource not accessible by personal access token`。
