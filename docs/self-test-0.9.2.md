@@ -1,6 +1,6 @@
-# 0.9.1 自用验收清单
+# 0.9.2 自用验收清单
 
-> 目的：在自己机器上按真实场景跑一遍，确认「文件真源 + 双视图 + 身份 + 历史 + 取消」五件事扎实。
+> 目的：在自己机器上按真实场景跑一遍，确认「文件真源 + 双视图 + 身份 + 历史 + 取消 + WebSocket」六件事扎实。
 > 这一版**不进商店**；跑完没问题、再把三个待定项拍板，才发 1.0.0。
 >
 > 每一条写清「怎么做 / 应该看到什么 / 不对时看哪里」。**不用全做**，但标 ★ 的请务必走到。
@@ -18,7 +18,7 @@ dbx-plugin package .          # 产出 dist/*.dbxp
 dbx-plugin dev --path . --port 5190
 
 # C. 只想核对包内容（不出 .dbxp）
-node tools/selfuse-pack.mjs   # dist/polaris-0.9.1-<os>-<arch>/ 与同名 .zip
+node tools/selfuse-pack.mjs   # dist/polaris-0.9.2-<os>-<arch>/ 与同名 .zip
 ```
 
 装完打开插件，工作目录默认是 `~/warren-polaris-api`（首次会自动种 `examples.http`、`sample-upload.txt`、`http-client.env.json`）。
@@ -57,22 +57,53 @@ node tools/selfuse-pack.mjs   # dist/polaris-0.9.1-<os>-<arch>/ 与同名 .zip
 | 发 multipart 那一节（换成自己的小文件） | 上传成功，服务端收到字节与本地一致 | `bodyType: multipart` |
 | 连不上任何地址（把域名改错） | 明确报网络错误，不出现空白的 200 | `PluginError` 文案 |
 
-## 4. 环境与变量（★）
+## 4. WebSocket（★，0.9.2 新增）
+
+示例文件里已经带了一节 `WEBSOCKET`（指向公共 echo 服务）。也可以自己写：
+
+```http
+### 订阅成交推送
+WEBSOCKET wss://echo.websocket.org
+Authorization: Bearer demo
+Sec-WebSocket-Protocol: json
+
+{"op":"subscribe","topic":"trades"}
+===
+{"op":"ping"}
+```
+
+| 做什么 | 应该看到 | 不对时看哪 |
+|---|---|---|
+| 在方法下拉里选 `WEBSOCKET`，随便填个 `ws://` 地址点 ▶ | **不报错、不静默**：能连上就进「已连接」，连不上给出明确错误 | 后端 `ws/connect`；`reqwest` 不支持 WS，走的是 `tungstenite` |
+| 连一个公共 echo（如 `wss://echo.websocket.org`） | 按钮原地变「断开」；下半区变成消息流，空行后那条首消息自动发出并以 `↑` 出现，echo 回来一条 `↓` | `renderWsPane` / `onWsEvent` |
+| 在底部输入框打一行、按 `Ctrl/⌘ ↵` | 新增一条 `↑`，随后一条 `↓` 回声；顺序就是真实顺序（自己发的也从后端回推） | `wsSendText` |
+| 往上翻帧列表，再来新帧 | **不抢滚动**（只有贴着底才自动跟到底） | `wsAppendFrame` 里的 `stick` 判断 |
+| 切到别的 tab 再切回来 | 帧还在，连接还是通的（状态挂在 tab 上，不在 DOM 上） | `tab.ws` |
+| 点「断开」/ 直接关掉这个 tab | 状态条变「已断开」，后端连接表里不再有它（`ws/list` 应为空） | `ws/close`、关 tab 时的清理 |
+| **刷新界面**（重载插件面板） | 上一轮的连接被清掉，不会越积越多 | 启动时的 `ws/list` → 全关 |
+| 把地址改成连不上的端口 | 明确报错，不是一直「连接中」 | 握手错误文案 |
+| 在浮层里对 WS 那行点 ▶ | 切到主界面的 WEBSOCKET tab 并连接（浮层放不下帧流，所以只是「把它连起来」） | `connectActiveWs` |
+| 文件里点「全部运行」 | **跳过** WS 并提示跳了几条，不是静默漏 | `runAll` 里的过滤 |
+| 写一个 `WEBSOCKET` 紧跟在 HTTP 请求后面（不写 `###`） | 解析成**两条**请求；那条 HTTP 的 body 必须还是空的 | 老洞，S8.5 修掉 |
+
+> 二进制帧只显示字节数，不做 hex / 图片预览；WS 会话**不进** `_results` 历史（现在的格式是请求↔响应一对一，装不下一次连接的 N 条消息）。
+
+## 5. 环境与变量（★）
 
 | 做什么 | 应该看到 | 不对时看哪 |
 |---|---|---|
 | 顶栏切 `local` / `dev` | 下拉里有这两项（来自 `http-client.env.json`，不是 storage） | `reloadEnvs` / `renderEnv` |
-| 在 env 文件里加一个 `envTag`，切环境后发第 9 节 | 请求里带上了对应值 | 文件里的 `@var` 优先级更高，同名会被覆盖 |
+| 在 env 文件里加一个 `envTag`，切环境后发第 3 节里任意一条 | 请求里带上了对应值 | 文件里的 `@var` 优先级更高，同名会被覆盖 |
 | 手动改 env 文件后回到插件 | 下拉里的值跟着变（不需要重启） | 重新打开文件或切 tab 时是否重读 |
 
-## 5. 身份与历史（★）
+## 6. 身份与历史（★）
 
 | 做什么 | 应该看到 | 不对时看哪 |
 |---|---|---|
 | 发一次 | `.http` 里多两行 `# @file_id` / `# @interface_id`；`_history/<文件名>/<id>.jsonl` 多一行 | 身份写失败时**不写历史**，状态栏提示一次 |
 | 连发 12 次 | jsonl 里恰好 10 行，最旧的被丢掉 | `MAX_LINES` |
-| 打开「历史」子页 | 10 条倒序，4xx/5xx 整行标红；页头「最近 N 条 · X ms」 | `viewHistory` |
-| 停在历史页再发一次 | 视图**不被顶走**，新行自己出现 | `respView!=='history'` 守卫 |
+| 点顶栏「▤」历史结果 | 弹窗里 10 条倒序，4xx/5xx 整行标红；点「刷新」可重读目录 | `refreshHistory` / `renderResults` |
+| 在历史结果弹窗里点某行「打开」 | **弹窗不关**，就地进这条的快照（请求 + 响应，只读黄标）；点「←」或 Esc 回目录，滚动位置不变、刚才那行高亮 | `openDetail` / `backToList` |
 | 删掉 `# @interface_id` 再发 | 顶部问「要不要接回旧历史（N 条）」，点「接回」后 id 换回、历史合并 | `findByIdentity` / `reuse` |
 | 发一个图片接口 | 同目录出现 `<id>-<at>.bin`，jsonl 里只有 `bodyRef/bodyEncoding/bodyBytes` | 宿主无二进制写，`.bin` 里是 base64 |
 | 看 `_history/_meta.json` | `formatVersion: 1`、`app: com.warren.polaris.api` | 只建不覆盖 |
@@ -80,7 +111,7 @@ node tools/selfuse-pack.mjs   # dist/polaris-0.9.1-<os>-<arch>/ 与同名 .zip
 
 > 想验证「更新版本只读」：把某个 jsonl 的第一行改成 `"v":2` 再发一次——应出现黄条、状态栏说「本版只读」，且文件一个字节都不动。
 
-## 6. 取消与大响应（★）
+## 7. 取消与大响应（★）
 
 | 做什么 | 应该看到 | 不对时看哪 |
 |---|---|---|
@@ -89,12 +120,12 @@ node tools/selfuse-pack.mjs   # dist/polaris-0.9.1-<os>-<arch>/ 与同名 .zip
 | 再发一次 | 正常返回，不会被上次的标志误杀 | 发车前清残留标志 |
 | 把超时设成 500 ms 打一个慢接口 | 约 500 ms 报超时，不是卡死 | `timeoutMs` |
 
-## 7. 收尾
+## 8. 收尾
 
 ```bash
 cd warren-polaris-api
 git status --short      # 应为空；_history/、_results/ 都不该进仓库
-node tools/all.mjs      # 14 个文件全绿
+node tools/all.mjs      # 15 个文件全绿
 ```
 
 ---

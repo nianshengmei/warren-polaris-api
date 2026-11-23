@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -804,7 +804,7 @@ ok('0.9.0：四个版本位一致，自用包脚本与验收清单在位', () =>
   assert(lockVer === m.version, `Cargo.lock=${lockVer} manifest=${m.version}`);
   assert(VERSION === m.version, `verify=${VERSION} manifest=${m.version}`);
   assert(fs.existsSync(path.join(root, 'tools', 'selfuse-pack.mjs')), '缺自用打包脚本');
-  assert(fs.existsSync(path.join(root, 'docs', 'self-test-0.9.1.md')), '缺 0.9.1 验收清单');
+  assert(fs.existsSync(path.join(root, 'docs', 'self-test-0.9.2.md')), '缺 0.9.2 验收清单');
   assert(read('README.md').includes('v0.9.0'), 'README 版本历史里要有 0.9.0');
 });
 
