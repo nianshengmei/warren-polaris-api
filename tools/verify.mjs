@@ -308,16 +308,16 @@ ok('S3.2：字号缩放三层同源，行高随字号推导', () => {
 ok('S3.3：身份行配色只认两个键，且有四层视觉标记', () => {
   const ed = read('ui/http-editor.js');
   /* 判定：只认 @file_id / @interface_id，别的元数据一律不算 */
-  assert(/mm\[1\] === '@file_id' \|\| mm\[1\] === '@interface_id'/.test(ed), '身份行判定必须只认 @file_id / @interface_id');
+  assert(/mm\[3\] === '@file_id' \|\| mm\[3\] === '@interface_id'/.test(ed), '身份行判定必须只认 @file_id / @interface_id');
   assert(/ctx\.ids\[ctx\.idx\] = 1/.test(ed), '身份行需要记进 ids');
   assert(/kinds: \[\], script: false,\s*\n?\s*ids: \{\}/.test(ed), 'ctx 需要 ids 容器');
   /* 三种返回分支都要带 ids，否则大文件/正常文件取值会报 undefined */
   assert(/return \{ html: html, folds: \[\], byOpen: \{\}, ids: \{\}, plain: true \}/.test(ed), '纯文本分支也要带 ids');
   assert(/return \{ html: html, folds: ctx\.folds, byOpen: byOpen, ids: ctx\.ids, plain: false \}/.test(ed), '正常分支要带 ids');
-  /* 四层标记：底色 + 竖线 + 斜体加粗 + 行号锚点 */
+  /* 四层标记：底色 + 竖线 + 描边加粗 + 行号锚点 */
   assert(/'\.pa-l-id\{position:relative;background:rgba\(163,113,247,\.10\)\}'/.test(ed), '身份行需要有淡底');
   assert(/'\.pa-l-id::before\{[^']*background:var\(--m-patch/.test(ed), '身份行需要有左侧竖线');
-  assert(/'\.pa-l-id \.t-meta\{[^']*font-style:italic;font-weight:700/.test(ed), '身份键要斜体加粗');
+  assert(/'\.pa-l-id \.t-meta\{color:var\(--m-patch/.test(ed), '身份键要有独立颜色');
   assert(/'\.pa-fe-ln\.idln\{[^']*font-weight:700/.test(ed), '行号栏锚点需要样式');
   assert(/'\.pa-fe-ln\.idln::before\{[^']*border-radius:50%/.test(ed), '行号栏锚点要有圆点');
   assert(/\[data-dbx-theme="light"\] \.pa-l-id\{/.test(ed), '浅色主题需要单独调底色');
@@ -337,6 +337,19 @@ ok('v0.5.0：语法着色 + 折叠 就位（接口一览已并入侧栏）', () 
     .forEach(k => assert(ed.includes(k), '缺少样式 ' + k));
   assert(ed.includes('paFeHl') && ed.includes('hl-on'), '缺少高亮代码层');
   assert(/font-variant-ligatures:none/.test(ed), '高亮层需禁用连字，否则与 textarea 错位');
+
+  /* 高亮层与 textarea 必须逐字同宽：只许改颜色/背景。
+   * font-weight / font-style / letter-spacing 都会改 advance，
+   * 一旦改宽，看到的位置和光标落点就错开 —— 点哪删哪会删错字。 */
+  const hlCss = ed.slice(ed.indexOf('===== 语法着色'), ed.indexOf(".pa-fe-edit{flex:1"));
+  assert(hlCss.length > 500, '没截到语法着色那段 CSS');
+  assert(!/font-style:italic/.test(hlCss), '高亮层不能用斜体（换字体会改字宽）');
+  assert(!/letter-spacing:(?!normal)/.test(hlCss), '高亮层不能改字距（会逐字累积偏移）');
+  assert(!/\.pa-fe \.t-[^{]*\{[^}]*font-weight:/.test(hlCss), '高亮层不能用 font-weight，加粗请用描边');
+  assert(/-webkit-text-stroke/.test(hlCss), '加粗要用描边模拟（不参与排版）');
+  /* # @name 这类元数据注释必须按原行拼回：空格/Tab 一个都不能改 */
+  assert(/L\.slice\(lead\.length\)[\s\S]{0,700}mm\[3\]/.test(ed), '元数据注释要用未 trim 的原行匹配');
+  assert(ed.includes("sp('t-meta', mm[3]) + esc(mm[4])"), '元数据注释拼接时要把 # 后与键后的空白原样吐回');
   /* 折叠：文档权威 + 折叠时保存必须写全文 */
   assert(ed.includes('function docText()'), '缺少 docText()');
   assert(/doSave[\s\S]{0,900}docText\(\)/.test(ed), 'doSave 必须用 docText()（折叠时不能写投影）');

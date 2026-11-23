@@ -365,28 +365,35 @@
       '.pa-fe-env{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:5px;border:1px solid var(--line,rgba(255,255,255,.1));background:var(--bg-2,#1a1c24);color:var(--ink,#d8dae2);max-width:130px}',
       '.pa-fe-main{flex:1;min-height:0;display:flex;overflow:hidden;position:relative}',
       /* S7.5：浮层左栏（接口一览）整栏移除 —— 导航只认侧栏那棵树 */
-      /* ===== 语法着色（代码层） ===== */
-      '.pa-fe .t-sep{color:var(--brand,#ff7a59);font-weight:700}',
-      '.pa-fe .t-sepname{color:var(--brand-hi,#ff926f);font-weight:700}',
-      '.pa-fe .t-com{color:var(--dimmer,#6e7282);font-style:italic}',
-      '.pa-fe .t-meta{color:var(--m-patch,#a371f7);font-weight:600}',
+      /* ===== 语法着色（代码层） =====
+       * 铁律：这里只许改颜色/背景。font-weight / font-style / letter-spacing
+       * 都会改字符的 advance width，而光标是按 textarea 的排版画的 ——
+       * 高亮层一变宽，看到的位置和真正落点就错开，删字会删错。
+       * 加粗统一用描边模拟：-webkit-text-stroke 只描边，不参与排版。 */
+      '.pa-fe .t-sep,.pa-fe .t-sepname,.pa-fe .t-m,.pa-fe .t-dir,.pa-fe .t-bnd,' +
+      '.pa-fe .t-scriptd,.pa-fe .t-meta,.pa-fe .t-def,.pa-l-id .t-meta,.pa-l-id .t-metav' +
+      '{-webkit-text-stroke:.32px currentColor}',
+      '.pa-fe .t-sep{color:var(--brand,#ff7a59)}',
+      '.pa-fe .t-sepname{color:var(--brand-hi,#ff926f)}',
+      '.pa-fe .t-com{color:var(--dimmer,#6e7282)}',
+      '.pa-fe .t-meta{color:var(--m-patch,#a371f7)}',
       '.pa-fe .t-metav{color:var(--dim,#a8acba)}',
       /* ===== S3.3 身份行：@file_id / @interface_id =====
-       * 紫色斜体加粗 + 淡底 + 左竖线 + 行号栏圆点。比普通注释（灰斜体）和
-       * @name 这类元数据（紫、正体、无底）高一级，扫一眼就知道文件身份在哪。 */
+       * 紫色描边加粗 + 淡底 + 左竖线 + 行号栏圆点。比普通注释（灰）和
+       * @name 这类元数据（紫、无底）高一级，扫一眼就知道文件身份在哪。
+       * 注意：加粗走描边，不用 font-weight —— 高亮层不能改字宽。 */
       '.pa-l-id{position:relative;background:rgba(163,113,247,.10)}',
       '.pa-l-id::before{content:"";position:absolute;left:-9px;top:1px;bottom:1px;width:2px;border-radius:1px;background:var(--m-patch,#a371f7);opacity:.85}',
-      '.pa-l-id .t-com{color:var(--m-patch,#a371f7);font-style:normal;opacity:.55}',
-      '.pa-l-id .t-meta{color:var(--m-patch,#a371f7);font-style:italic;font-weight:700}',
-      '.pa-l-id .t-metav{color:#c9a9ff;font-style:italic;font-weight:600}',
+      '.pa-l-id .t-com{color:var(--m-patch,#a371f7);opacity:.55}',
+      '.pa-l-id .t-meta{color:var(--m-patch,#a371f7)}',
+      '.pa-l-id .t-metav{color:#c9a9ff}',
       '.pa-fe-ln.idln{color:var(--m-patch,#a371f7);font-weight:700}',
       '.pa-fe-ln.idln::before{content:"";position:absolute;left:-8px;top:50%;width:4px;height:4px;margin-top:-2px;border-radius:50%;background:var(--m-patch,#a371f7)}',
       '[data-dbx-theme="light"] .pa-l-id{background:rgba(124,58,237,.07)}',
       '[data-dbx-theme="light"] .pa-l-id .t-metav{color:#6d28d9}',
       '[data-dbx-theme="light"] .pa-fe-ln.idln{color:#7c3aed}',
-      '.pa-fe .t-def{color:var(--j-bool,#d2a8ff);font-weight:600}',
+      '.pa-fe .t-def{color:var(--j-bool,#d2a8ff)}',
       '.pa-fe .t-var{color:var(--brand-hi,#ff926f);background:rgba(255,122,89,.10);border-radius:3px}',
-      '.pa-fe .t-m{font-weight:700}',
       '.pa-fe .t-m-get{color:var(--m-get,#3fb950)}',
       '.pa-fe .t-m-post{color:var(--m-post,#4493f8)}',
       '.pa-fe .t-m-put{color:var(--m-put,#d29922)}',
@@ -402,16 +409,16 @@
       '.pa-fe .t-hk{color:var(--j-key,#79c0ff)}',
       '.pa-fe .t-hv{color:var(--ink,#d8dae2)}',
       '.pa-fe .t-colon,.pa-fe .t-ver{color:var(--dimmer,#6e7282)}',
-      '.pa-fe .t-dir{color:var(--brand,#ff7a59);font-weight:700}',
+      '.pa-fe .t-dir{color:var(--brand,#ff7a59)}',
       '.pa-fe .t-file{color:var(--j-str,#a5d6a4)}',
-      '.pa-fe .t-bnd{color:var(--brand,#ff7a59);font-weight:700;letter-spacing:.02em}',
+      '.pa-fe .t-bnd{color:var(--brand,#ff7a59)}',
       '.pa-fe .t-script{color:var(--m-patch,#a371f7)}',
-      '.pa-fe .t-scriptd{color:var(--dimmer,#6e7282);font-weight:700}',
+      '.pa-fe .t-scriptd{color:var(--dimmer,#6e7282)}',
       '.pa-fe .t-jkey{color:var(--j-key,#79c0ff)}',
       '.pa-fe .t-jstr{color:var(--j-str,#a5d6a4)}',
       '.pa-fe .t-jnum{color:var(--j-num,#ffab70)}',
       '.pa-fe .t-jbool{color:var(--j-bool,#d2a8ff)}',
-      '.pa-fe .t-jnull{color:var(--j-null,#8b949e);font-style:italic}',
+      '.pa-fe .t-jnull{color:var(--j-null,#8b949e);opacity:.8}',
       '.pa-fe .t-jpunc{color:var(--dimmer,#6e7282)}',
       '.pa-fe .t-fk{color:var(--j-key,#79c0ff)}',
       '.pa-fe .t-fv{color:var(--j-str,#a5d6a4)}',
@@ -1311,15 +1318,25 @@
     if (ctx.mode === 'body') return bodyLine(L, T, lead, ctx);
 
     /* 5) 元数据注释 # @name / 普通注释 */
-    if (/^#\s*@/.test(T)) {
-      var mm = /^#\s*(@[\w.\-]+)\s*(.*)$/.exec(T);
+    if (/^#[ \t]*@/.test(T)) {
+      /* 必须用未 trim 的原行匹配：`#@name`、`#  @name`、`#\t@name` 里的空格/Tab
+       * 都要原样吐回去。以前固定拼一个空格，字符数一变，整行高亮就和
+       * textarea 错开一格 —— 看着点下去、删下去就是另一个字。 */
+      var rest0 = L.slice(lead.length);
+      var mm = /^(#)([ \t]*)(@[\w.\-]+)([ \t]*)(.*)$/.exec(rest0);
+      /* `# @` 后面没有合法键名时按普通注释走，别让 mm 为 null 把整篇着色炸掉 */
+      if (!mm) {
+        ctx.kinds[ctx.idx] = 'comment';
+        return (lead ? esc(lead) : '') + sp('t-com', rest0);
+      }
       /* S3.3：只认这两个键。@name / @baseUrl / @timeout 这类仍是普通元数据，
        * 涂成身份色会让“哪些行是文件身份”这件事失去辨识度。 */
-      var isId = mm[1] === '@file_id' || mm[1] === '@interface_id';
+      var isId = mm[3] === '@file_id' || mm[3] === '@interface_id';
       ctx.kinds[ctx.idx] = isId ? 'idline' : 'meta';
       if (isId) ctx.ids[ctx.idx] = 1;
-      var mo = (lead ? esc(lead) : '') + sp('t-com', '#') + ' ' + sp('t-meta', mm[1]);
-      if (mm[2]) mo += ' ' + hiVal(mm[2], 't-metav');
+      var mo = (lead ? esc(lead) : '') + sp('t-com', mm[1]) + esc(mm[2]) +
+        sp('t-meta', mm[3]) + esc(mm[4]);
+      if (mm[5]) mo += hiVal(mm[5], 't-metav');
       return mo;
     }
     if (/^#/.test(T) || /^\/\//.test(T)) {
