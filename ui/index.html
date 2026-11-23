@@ -28,10 +28,8 @@
       <aside class="side">
         <div class="side-head">
           <span class="t">工作区 · WORKSPACE</span>
-          <button class="mini-btn" id="newGroup" title="新建 .http 文件（一个文件 = 一个 collection，新建即挂到侧栏）">＋</button>
-          <button class="mini-btn" id="refreshDocs" title="按映射重读一遍（外部改过文件后用手点也行）">↻</button>
-          <button class="mini-btn" id="importBtn" title="导入集合 JSON">↧</button>
-          <button class="mini-btn" id="exportBtn" title="导出集合 JSON">↥</button>
+          <button class="mini-btn txt" id="collapseAll" title="折叠所有集合（只影响查看，不改文件）">折叠</button>
+          <button class="mini-btn txt" id="expandAll" title="展开所有集合（只影响查看，不改文件）">展开</button>
         </div>
         <div class="side-search"><input id="search" placeholder="🔍  搜索已保存的请求…" /></div>
         <div class="tree" id="tree"></div>

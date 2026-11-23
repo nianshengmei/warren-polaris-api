@@ -371,7 +371,7 @@
        * 高亮层一变宽，看到的位置和真正落点就错开，删字会删错。
        * 加粗统一用描边模拟：-webkit-text-stroke 只描边，不参与排版。 */
       '.pa-fe .t-sep,.pa-fe .t-sepname,.pa-fe .t-m,.pa-fe .t-dir,.pa-fe .t-bnd,' +
-      '.pa-fe .t-scriptd,.pa-fe .t-meta,.pa-fe .t-def,.pa-l-id .t-meta,.pa-l-id .t-metav' +
+      '.pa-fe .t-scriptd,.pa-fe .t-meta,.pa-fe .t-def,.pa-l-id .t-meta' +
       '{-webkit-text-stroke:.32px currentColor}',
       '.pa-fe .t-sep{color:var(--brand,#ff7a59)}',
       '.pa-fe .t-sepname{color:var(--brand-hi,#ff926f)}',
@@ -386,7 +386,11 @@
       '.pa-l-id::before{content:"";position:absolute;left:-9px;top:1px;bottom:1px;width:2px;border-radius:1px;background:var(--m-patch,#a371f7);opacity:.85}',
       '.pa-l-id .t-com{color:var(--m-patch,#a371f7);opacity:.55}',
       '.pa-l-id .t-meta{color:var(--m-patch,#a371f7)}',
-      '.pa-l-id .t-metav{color:#c9a9ff}',
+      /* @file_id / @interface_id 后面那串值：斜体 + 淡一档，跟键名拉开层次。
+       * 斜体不能用 font-style 的 italic —— 会切到另一套字体文件、改 advance，
+       * 光标跟着 textarea 的排版走，一改宽就「看着点这、实际点那」。
+       * 这里用 skewX 做纯视觉倾斜：transform 不参与排版，字符原点与宽度都不变。 */
+      '.pa-l-id .t-metav{color:#c9a9ff;opacity:.58;display:inline-block;transform:skewX(-11deg);transform-origin:0 100%}',
       '.pa-fe-ln.idln{color:var(--m-patch,#a371f7);font-weight:700}',
       '.pa-fe-ln.idln::before{content:"";position:absolute;left:-8px;top:50%;width:4px;height:4px;margin-top:-2px;border-radius:50%;background:var(--m-patch,#a371f7)}',
       '[data-dbx-theme="light"] .pa-l-id{background:rgba(124,58,237,.07)}',

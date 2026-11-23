@@ -1,7 +1,7 @@
-# 0.9.4 自用验收清单
+# 1.0.0 自用验收清单
 
 > 目的：在自己机器上按真实场景跑一遍，确认「文件真源 + 双视图 + 身份 + 历史 + 取消 + WebSocket」六件事扎实。
-> 这一版**不进商店**；跑完没问题、再把三个待定项拍板，才发 1.0.0。
+> 这是**第一个正式版**。功能到这儿收口，剩下一项「浮层高度」仍可拖拽微调。
 >
 > 每一条写清「怎么做 / 应该看到什么 / 不对时看哪里」。**不用全做**，但标 ★ 的请务必走到。
 
@@ -18,7 +18,7 @@ dbx-plugin package .          # 产出 dist/*.dbxp
 dbx-plugin dev --path . --port 5190
 
 # C. 只想核对包内容（不出 .dbxp）
-node tools/selfuse-pack.mjs   # dist/polaris-0.9.4-<os>-<arch>/ 与同名 .zip
+node tools/selfuse-pack.mjs   # dist/polaris-1.0.0-<os>-<arch>/ 与同名 .zip
 ```
 
 装完打开插件，工作目录默认是 `~/warren-polaris-api`（首次会自动种 `examples.http`、`sample-upload.txt`、`http-client.env.json`）。
@@ -145,7 +145,19 @@ Sec-WebSocket-Protocol: json
 | 两个不同 `.http` 里各建一个都叫「元数据接口」的请求，各跑 12 次 | 两组各留 10 个，一共 20 个文件，谁也没挤掉谁 | 分组是否比对了 `sourceFile` |
 | 命令行跑 `node tools/live-results.mjs`（需先 `cargo build --release`） | 25 通过 / 0 失败 | 二进制是否最新 |
 
-## 10. 收尾
+## 10. 1.0.0 收口：侧栏头部与身份行（★）
+
+| 做什么 | 应该看到 | 不对时看哪 |
+|---|---|---|
+| 看侧栏顶部「工作区 · WORKSPACE」那一行 | 只剩「折叠」「展开」两个文字按钮，标题完整不被挤；以前那排 ＋ / ↻ / ↧ / ↥ 图标全没了 | `index.html` 的 `.side-head` |
+| 点「折叠」 | 所有集合（含文件夹）一起收起，只剩名字与条数；搜索框里原来有词会被清空——否则列表本来就是全展开的，点了像没反应 | `setAllCollapsed(true)` |
+| 点「展开」 | 全部展开回原样；连点两次不会把状态弄乱 | 同上 |
+| 折叠后去看 `wpa-workspace.json` 的修改时间 | **没变** —— 这两个按钮纯前端，只改查看态，不写映射、不动任何 `.http` | `setAllCollapsed` 里不许出现 `saveWorkspaceMap` |
+| 打开一个带 `# @interface_id` / `# @file_id` 的文件 | 键名后面那串值（id + 中文说明）呈**倾斜**且比键名**淡**；键名仍是亮紫正体 | `.pa-l-id .t-metav` 用 `skewX`，不是 `font-style` |
+| 在那串斜体值里点几个字再按删除 | 删掉的还是你看着的那个字（倾斜是视觉变换，不参与排版） | `node verify-ui/check-align.mjs` 应 186 通过 |
+| 底部「＋ 挂载 .http」「＋ 新建文件夹」 | 仍在，新建入口没有跟着顶部图标一起消失 | `renderSidebarMapped` 的 `pending-bar` |
+
+## 11. 收尾
 
 ```bash
 cd warren-polaris-api

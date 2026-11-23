@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "dbx-plugin-warren-polaris-api"
-version = "0.9.4"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "dbx-plugin-sdk",

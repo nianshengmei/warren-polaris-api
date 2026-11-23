@@ -2600,23 +2600,23 @@ function bindEvents(){
   $$('#reqSubtabs .subtab').forEach(b=>b.onclick=()=>{ activeTab().reqTab=b.dataset.rt; renderReqEditor(); persist(); });
   $$('#resSubtabs .subtab').forEach(b=>b.onclick=()=>{ if(b.classList.contains('disabled'))return; activeTab().respView=b.dataset.rv; renderRespBody(); persist(); });
   const srch=$('#search'); if(srch) srch.addEventListener('input',renderSidebar);
-  const ng=$('#newGroup'); if(ng) ng.onclick=()=>{ PD.ask(DOCS.enabled?'新建 .http 文件（一个文件 = 一个 collection）':'新分组名称',{value:DOCS.enabled?'新集合':'新分组'},async n=>{
-    if(!n) return;
-    if(DOCS.enabled){
-      const r=await DOCS.store.createCollection(n.trim());
-      if(!r.ok){ setStatus('创建失败：'+(r.reason==='EXISTS'?'已有同名 .http 文件':(r.reason||'')),'err'); return; }
-      await registerDocFile(r.path);
-      await refreshDocs(true);
-      setStatus('已创建 '+STORE.baseName(r.path),'ok');
-      return;
-    }
-    state.collections.push({id:uid(),name:n.trim(),collapsed:false,requests:[]}); persist(); renderSidebar();
-  }); };
-  const rf=$('#refreshDocs'); if(rf) rf.onclick=async()=>{
-    if(!DOCS.enabled){ setStatus('文件宿主不可用（未连接）','warn'); return; }
-    const ok=await refreshDocs(false);
-    if(ok) setStatus('已按映射重读 · '+DOCS.dir,'ok');
-  };
+  /* 头部只剩两个查看态开关：折叠全部 / 展开全部。
+   * 纯前端 —— 只改内存里的 collapsed 与 ui.collapsed，不写 wpa-workspace.json、
+   * 不动任何 .http；连点两次幂等。映射文件里的折叠状态等用户自己点文件夹头时再一起保存。
+   * 有搜索词时列表本来就是「全展开」的，先清掉搜索，否则点了没反应。 */
+  function setAllCollapsed(flag){
+    const v=!!flag;
+    const srch=$('#search'); if(srch && srch.value){ srch.value=''; }
+    if(DOCS.enabled && DOCS.map){ (DOCS.map.folders||[]).forEach(f=>{ f.collapsed=v; }); }
+    (state.collections||[]).forEach(g=>{ g.collapsed=v; });
+    ui.collapsed=ui.collapsed||{};
+    if(DOCS.enabled) (DOCS.files||[]).forEach(f=>{ ui.collapsed[f.path]=v; });
+    else (state.collections||[]).forEach(g=>{ if(g.path) ui.collapsed[g.path]=v; });
+    persist();
+    renderSidebar();
+  }
+  const ca=$('#collapseAll'); if(ca) ca.onclick=()=>setAllCollapsed(true);
+  const ea=$('#expandAll'); if(ea) ea.onclick=()=>setAllCollapsed(false);
   /* 从 IDEA / 记事本切回来时重扫，外部改动立即可见 */
   window.addEventListener('focus',()=>scheduleDocsRefresh(250));
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden) scheduleDocsRefresh(250); });

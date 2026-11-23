@@ -93,6 +93,9 @@
 .pa-root .side-head .t{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);font-weight:600;flex:1}
 .pa-root .side-head .mini-btn{width:26px;height:26px;border-radius:var(--r-sm);color:var(--dim);display:inline-flex;align-items:center;justify-content:center;transition:.15s;border:1px solid transparent;font-size:13px}
 .pa-root .side-head .mini-btn:hover{color:var(--brand);background:var(--surface);border-color:var(--line)}
+/* 头部这排只放「查看态」开关：文字按钮按内容撑开，26px 方框放不下两个汉字。
+ * 不给固定宽，标题 flex:1 会被压，但不会再挤出可视区。 */
+.pa-root .side-head .mini-btn.txt{width:auto;min-width:0;padding:0 7px;font-size:11px;letter-spacing:.02em;white-space:nowrap}
 .pa-root .side-search{padding:8px 10px;border-bottom:1px solid var(--line)}
 .pa-root .side-search input{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 10px;font-size:12px;color:var(--ink);transition:.15s}
 .pa-root .side-search input:focus{border-color:var(--line-2);background:var(--surface-2)}

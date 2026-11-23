@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.9.4';
+const VERSION = '1.0.0';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -361,6 +361,11 @@ ok('v0.5.0：语法着色 + 折叠 就位（接口一览已并入侧栏）', () 
   assert(!/letter-spacing:(?!normal)/.test(hlCss), '高亮层不能改字距（会逐字累积偏移）');
   assert(!/\.pa-fe \.t-[^{]*\{[^}]*font-weight:/.test(hlCss), '高亮层不能用 font-weight，加粗请用描边');
   assert(/-webkit-text-stroke/.test(hlCss), '加粗要用描边模拟（不参与排版）');
+  /* @file_id / @interface_id 后面那串值：倾斜只能是 skew（transform 不改 advance），
+   * 不许用 font-style —— 换字体会改字宽，就是上一版修掉的那个错位。 */
+  assert(/\.pa-l-id \.t-metav\{[^}]*skewX\(/.test(hlCss), '@file_id 后的值要用 skewX 做倾斜');
+  assert(!/\.pa-l-id \.t-metav\{[^}]*font-style/.test(hlCss), '@file_id 后的值不能用 font-style（会改字宽）');
+  assert(/\.pa-l-id \.t-metav\{[^}]*opacity:\.\d+/.test(hlCss), '@file_id 后的值要比键名淡一档');
   /* # @name 这类元数据注释必须按原行拼回：空格/Tab 一个都不能改 */
   assert(/L\.slice\(lead\.length\)[\s\S]{0,700}mm\[3\]/.test(ed), '元数据注释要用未 trim 的原行匹配');
   assert(ed.includes("sp('t-meta', mm[3]) + esc(mm[4])"), '元数据注释拼接时要把 # 后与键后的空白原样吐回');
@@ -610,12 +615,22 @@ ok('store 具备追加 / 删除一段的能力（侧栏保存与删除依赖）'
   assert(/appendRequest\(/.test(app) && /deleteRequest\(/.test(app), 'app.js 未接到 append/delete');
 });
 
-ok('侧栏提供手动重扫入口（外部改动可见）', () => {
+ok('侧栏头部只留查看态开关：折叠全部 / 展开全部', () => {
   const html = read('ui/index.html');
-  assert(/id="refreshDocs"/.test(html), '侧栏缺少重新扫描按钮');
+  assert(/id="collapseAll"/.test(html) && /id="expandAll"/.test(html), '缺少折叠/展开按钮');
+  /* 那排图标（新建/重读/导入/导出）在文件真源下已经冗余，且把标题挤没了 */
+  ['newGroup', 'refreshDocs', 'importBtn', 'exportBtn'].forEach((id) => {
+    assert(!html.includes('id="' + id + '"'), '顶部图标按钮应已删除：' + id);
+  });
   const s = read('ui/app.js');
-  assert(/'#refreshDocs'/.test(s), '按钮未绑定');
-  assert(/addEventListener\('focus'/.test(s), '切回窗口时要自动重扫');
+  assert(/'#collapseAll'/.test(s) && /'#expandAll'/.test(s), '折叠/展开按钮未绑定');
+  assert(/function setAllCollapsed/.test(s), 'app.js 缺少 setAllCollapsed');
+  /* 纯前端：只改查看态，不写映射文件、不动 .http */
+  const i = s.indexOf('function setAllCollapsed');
+  const fn = s.slice(i, i + 900);
+  assert(!/saveWorkspaceMap/.test(fn), '折叠/展开不能写 wpa-workspace.json');
+  assert(!/writeFile|store\.write/.test(fn), '折叠/展开不能碰文件');
+  assert(/addEventListener\('focus'/.test(s), '切回窗口仍要自动重扫（手动重读按钮已删除）');
 });
 
 /* ---------- v0.9.0 / S2.2：反向刷新 + 冲突 ---------- */
@@ -833,7 +848,7 @@ ok('0.9.0：四个版本位一致，自用包脚本与验收清单在位', () =>
   assert(lockVer === m.version, `Cargo.lock=${lockVer} manifest=${m.version}`);
   assert(VERSION === m.version, `verify=${VERSION} manifest=${m.version}`);
   assert(fs.existsSync(path.join(root, 'tools', 'selfuse-pack.mjs')), '缺自用打包脚本');
-  assert(fs.existsSync(path.join(root, 'docs', 'self-test-0.9.4.md')), '缺 0.9.4 验收清单');
+  assert(fs.existsSync(path.join(root, 'docs', 'self-test-1.0.0.md')), '缺 1.0.0 验收清单');
   assert(read('README.md').includes('v0.9.0'), 'README 版本历史里要有 0.9.0');
 });
 
