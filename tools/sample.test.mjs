@@ -1,4 +1,4 @@
-/* 示例 .http 的语法自检：能被解析器完整吃下、9 个请求齐全、multipart 分段正确、且不预置身份。 */
+/* 示例 .http 的语法自检：能被解析器完整吃下、10 个请求齐全、multipart 分段正确、且不预置身份。 */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +17,7 @@ const text = SAMPLE.http.replace(/__AUDIO_PATH__/g, 'C:\\apis\\sample-upload.txt
 
 const doc = H.parseHttpFile(text, { fileName: 'examples.http' });
 const reqs = doc.requests || [];
-ok(reqs.length === 9, `解析出 9 个请求（实际 ${reqs.length}）`);
+ok(reqs.length === 10, `解析出 10 个请求（实际 ${reqs.length}）`);
 ok(doc.warnings.length === 0, '没有解析告警：' + JSON.stringify(doc.warnings));
 
 ok(doc.variables.baseUrl === 'https://httpbin.org', '@baseUrl 变量');
@@ -25,7 +25,7 @@ ok(doc.variables.apiBase === 'https://api.example.com', '@apiBase 变量');
 ok(/sample-upload\.txt$/.test(doc.variables.audioPath || ''), '@audioPath 指向示例附件');
 
 const methods = reqs.map(r => r.method);
-ok(JSON.stringify(methods) === JSON.stringify(['GET', 'POST', 'POST', 'POST', 'POST', 'GET', 'GET', 'GET', 'GET']),
+ok(JSON.stringify(methods) === JSON.stringify(['GET', 'POST', 'POST', 'POST', 'POST', 'GET', 'GET', 'GET', 'GET', 'WEBSOCKET']),
   '方法序列 ' + methods.join(','));
 
 const names = reqs.map(r => r.title || r.name);
@@ -78,11 +78,19 @@ ok(reqs[8].title === '9. 环境切换 · 变量放哪儿说了算', '第 9 节�
 ok(/\{\{baseUrl\}\}\/get\?env=\{\{envTag\}\}/.test(reqs[8].url), '第 9 节用只写在 env 文件里的 {{envTag}}');
 ok(/\{\{envTag\}\}/.test(reqs[8].url) && !/^\s*@envTag/m.test(text), 'envTag 确实没有在文件里定义（否则切环境不会有差别）');
 
+/* 第 10 节：WebSocket —— 示例里必须真有一条，否则首次打开的人看不到这个能力 */
+ok(reqs[9].title === '10. WebSocket · 连上就发 + 多条消息', '第 10 节标题：' + reqs[9].title);
+ok(reqs[9].method === 'WEBSOCKET' && reqs[9].isWs === true, '第 10 节解析为 WEBSOCKET');
+ok(/^wss:\/\//.test(reqs[9].url), 'WS 地址是 wss://');
+ok(/Sec-WebSocket-Protocol/i.test((reqs[9].headers || []).map(h => h.k).join(',')), '示例演示了握手头');
+ok(/"type":"hello"/.test(reqs[9].body || ''), '空行后那条是「连上就发」的首消息');
+ok(doc.warnings.length === 0, '示例本身不该带告警（多消息写法只写在注释里）');
+
 /* 9 节各带 1–2 行导语：每个 ### 前面（含紧跟其后的注释）至少有一句说明 */
 {
   const blocks = text.split(/^### /m).slice(1);
   const noIntro = blocks.map((b, i) => ({ i, b })).filter(({ b }) => !/^#\s+\S/m.test(b.split('\n').slice(1, 4).join('\n')));
-  ok(blocks.length === 9 && noIntro.length === 0, '9 节每节都有导语，缺的是：' + noIntro.map((x) => x.i + 1).join(','));
+  ok(blocks.length === 10 && noIntro.length === 0, '10 节每节都有导语，缺的是：' + noIntro.map((x) => x.i + 1).join(','));
 }
 
 /* 不预置身份：文件里可以「提到」这两个键（第一节就是讲它们），但解析结果不能有 id */

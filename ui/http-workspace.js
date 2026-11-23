@@ -424,6 +424,17 @@
     } catch (e) { setStatus('打开结果失败：' + e.message, 'err'); }
   }
 
+  /* 从「响应区 → 历史」子页跳进来：直接进这条的快照。
+   * 这里 **不调 show()** —— show 会重置成目录层并刷新，等于把人推回列表。
+   * 目录先静默读一次，这样按「←」回去时列表是满的，这一条还能高亮上。 */
+  async function openResultPath(path) {
+    if (!path) { setStatus('这条历史只存了摘要（旧版记录没有结果文件），看不到完整响应', 'warn'); return; }
+    if (!panel) return;
+    panel.hidden = false;
+    if (!WS.results.length) { try { await refreshHistory(); } catch (e) { /* 读不到就只显示快照 */ } }
+    await openDetail(path);
+  }
+
   function normHeaders(h) {
     var out = {};
     if (!h) return out;
@@ -596,6 +607,7 @@
       WS.runtimeResponses[request.name] = resp;
       if (panel && !panel.hidden) refreshHistory();
     }
+    return saved;      // app.js 拿它的 path 写进历史行，历史子页才能「详情」
   }
 
   /* ---------- 取消标志（S6.2） ---------- */
@@ -618,7 +630,7 @@
     injectCss();
     panel = buildPanel();
     bind();
-    window.POLARIS_HTTP_WS = { onResponse: onResponse, show: show, state: WS, cancelPath: cancelPath };
+    window.POLARIS_HTTP_WS = { onResponse: onResponse, show: show, openResultPath: openResultPath, state: WS, cancelPath: cancelPath };
     if (DBX && DBX.ready) await DBX.ready;
     await loadWs();
     if (hostAvailable()) {

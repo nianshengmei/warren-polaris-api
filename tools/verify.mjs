@@ -432,9 +432,11 @@ ok('v0.6.2：自带示例 + SSE 流式', () => {
   assert(/sample-http\.js/.test(idx), 'index.html 需引入 sample-http.js');
   assert(idx.indexOf('sample-http.js') < idx.indexOf('http-editor.js'), '示例要在编辑器之前加载');
   const headings = (sm.match(/^### /gm) || []).length;
-  assert(headings === 9, '示例应有 9 节，实际 ' + headings);
+  assert(headings === 10, '示例应有 10 节，实际 ' + headings);
   ['GET ', 'POST ', 'multipart/form-data', 'text/event-stream', 'x-www-form-urlencoded',
-   '@baseUrl', '@apiBase', 'data: [DONE]', '{{$guid}}', 'response.body.$.'
+   '@baseUrl', '@apiBase', 'data: [DONE]', '{{$guid}}', 'response.body.$.',
+   /* S8.6：示例里得真有一条 WS，否则「首发用户体验」里这块还是空的 */
+   'WEBSOCKET wss://'
   ].forEach(k => assert(sm.includes(k), '示例缺少 ' + k));
   assert(sm.includes('__AUDIO_PATH__'), '示例用占位符注入附件路径');
   assert(/replace\(\/__AUDIO_PATH__\/g, attachPath\)/.test(ed), '写入时替换成本机绝对路径');

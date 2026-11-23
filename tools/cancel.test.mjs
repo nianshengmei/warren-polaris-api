@@ -132,7 +132,7 @@ ok('S6.2 标志路径由 http-workspace 统一拼，目录叫 _cancel', () => {
   assert.match(WS, /var CANCEL_DIR = '_cancel';/);
   assert.match(WS, /function cancelPath\(rid\)/);
   assert.match(WS, /S\.joinPath\(base, name\)/);
-  assert.match(WS, /window\.POLARIS_HTTP_WS = \{ onResponse: onResponse, show: show, state: WS, cancelPath: cancelPath \};/);
+  assert.match(WS, /window\.POLARIS_HTTP_WS = \{ onResponse: onResponse, show: show, openResultPath: openResultPath, state: WS, cancelPath: cancelPath \};/);
   /* app.js 不许自己拼路径 —— 分隔符与资源目录只在 workspace 里有一份真相 */
   assert.doesNotMatch(APP, /['"]_cancel['"]/);
 });

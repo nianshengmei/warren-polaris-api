@@ -1872,11 +1872,14 @@ async function send(){
     /* 供 {{请求名.response.body.$.x}} 跨请求引用：按 tab 名记一份，同名以最后一次为准 */
     try{ RESP_CACHE[t.name]={ status:resp.status, headers:resp.headers||{}, text:resp.text||'', parsed:resp.parsed }; }catch(e){}
     /* v0.3.0：发送成功后交给 .http 工作区自动落盘（异步，失败不影响主流程） */
+    let savedP=null;
     if(window.POLARIS_HTTP_WS && window.POLARIS_HTTP_WS.onResponse){
-      try{ window.POLARIS_HTTP_WS.onResponse(t,resp,{method:method,url:url,headers:headers,body:body}); }catch(e){}
+      try{ savedP=window.POLARIS_HTTP_WS.onResponse(t,resp,{method:method,url:url,headers:headers,body:body}); }catch(e){}
     }
-    /* S4.2：这次调用落身份 + 历史（异步，绝不挡主流程） */
-    recordHistory(t,resp,method,url);
+    /* S4.2 / S8.6：落身份 + 历史（异步，绝不挡主流程）。
+       onResponse 的返回值是「结果落盘」那个 promise —— 历史行要记住结果文件路径，
+       才能从「历史」子页点开同一条完整快照。 */
+    recordHistory(t,resp,method,url,savedP);
     t.respPath=''; t.respFilter=''; t.tableSel=null; t.colW={}; t.treeOpen='auto'; t.hiddenCols={}; t.sort={};
     /* 停在「历史」子页时不要被发送结果顶走 —— 那是用户主动选的视图（S4.5） */
     if(t.respView!=='history') t.respView = resp.parsed!==undefined ? (Array.isArray(resp.parsed)?'table':'object') : /text\/html/i.test(resp.contentType)?'preview' : (resp.isBinary&&/^image\//i.test(resp.contentType))?'preview':'raw';
@@ -1911,7 +1914,7 @@ async function send(){
  *   2. 失败只在状态栏提示一次（tab 上打 histWarned），不弹窗、不影响请求结果；
  *   3. 写入成功要把 baseMtime 对齐到写后的 mtime，否则用户接着保存会撞上
  *      「文件已被别处修改」—— 而那个"别处"就是这次插身份的自己。 */
-function recordHistory(t,resp,method,url){
+function recordHistory(t,resp,method,url,savedPromise){
   if(!DOCS.enabled||!DOCS.store||!window.POLARIS_HISTORY) return;
   const ref=t.docRef||{};
   if(!ref.file) return;
@@ -1919,7 +1922,7 @@ function recordHistory(t,resp,method,url){
     /* 5 MB：宿主单条 JSON 消息上限 8 MiB，二进制走 base64（膨胀 4/3），
        * 原始体 6 MiB 就把整条消息顶穿。5 MB 留出约 20% 余量，超了只丢 .bin。 */
     if(!DOCS.history) DOCS.history=window.POLARIS_HISTORY.createHistory({store:DOCS.store,dir:DOCS.dir,maxBodyBytes:5*1024*1024});
-    DOCS.history.record({
+    const doRecord=(resultPath)=>DOCS.history.record({
       path:ref.file,
       req:{ line:ref.line, method:method, url:t.url.trim(), name:ref.name, interfaceId:ref.interfaceId||null },
       response:{ status:resp.status, ok:resp.ok, timeMs:resp.timeMs, size:resp.size,
@@ -1927,8 +1930,10 @@ function recordHistory(t,resp,method,url){
       /* S4.3：二进制响应的 body 在 resp.text 里是 base64，交给 record 挪去 .bin。
          文本响应不传，jsonl 里连正文都不留（只留 size）。 */
       bodyBase64:(resp.isBinary&&resp.isBase64)?(resp.text||''):'',
-      url:url
-    }).then(r=>{
+      url:url,
+      resultPath:resultPath
+    });
+    const afterRecord=(r)=>{
       if(!r) return;
       if(!r.ok){
         if(r.reason==='READONLY'&&!t.histWarned){
@@ -1961,7 +1966,13 @@ function recordHistory(t,resp,method,url){
           setStatus('这次调用没能记进历史（'+why+'）','warn');
         }
       }
-    }).catch(()=>{});
+    };
+    /* 结果文件先落盘（同一个发送流程里，onResponse 已经发出去了），再写历史 ——
+       path 只在这一刻知道；拿不到就照旧记摘要，只是那一行没「详情」入口。 */
+    const chain=(savedPromise&&savedPromise.then)
+      ? savedPromise.then(r=>doRecord(r&&r.path)).catch(()=>doRecord(null))
+      : doRecord(null);
+    chain.then(afterRecord).catch(()=>{});
   }catch(e){ /* 记历史是旁路，任何异常都不该冒泡到发送流程 */ }
 }
 
@@ -2131,6 +2142,19 @@ function viewHistory(t){
         `<span class="hist-url" title="${esc(x.url||'')}">${esc(shortUrl(x.url||''))}</span>`+
         (x.bodyRef?`<span class="hist-bin" title="响应体外置在 ${esc(x.bodyRef)}">.bin</span>`:'');
       row.title=`${x.method||''} ${x.url||''}\n状态 ${st||'—'} · 耗时 ${x.timeMs!=null?ms(x.timeMs):'—'} · 大小 ${x.size!=null?bytes(x.size):'—'}\n${new Date(Number(x.at)||0).toLocaleString('zh-CN',{hour12:false})}（${relTime(now,Number(x.at)||0)}）`;
+      /* S8.6：历史只存摘要，完整响应在 _results/ 里 —— 这里给一个指针，
+         点了就和「历史结果」里点「打开」看到的是同一个快照。 */
+      const open=el('button','hist-open','详情');
+      if(x.resultPath){
+        open.title='打开这次调用的完整快照（请求 + 响应）';
+        open.onclick=(e)=>{ e.stopPropagation(); const W=window.POLARIS_HTTP_WS;
+          if(W&&W.openResultPath) W.openResultPath(x.resultPath);
+          else setStatus('历史结果面板还没就绪','warn'); };
+      }else{
+        open.disabled=true;
+        open.title='这条是旧版记录（只存了摘要，没有结果文件）；发一次新的就有详情了';
+      }
+      row.appendChild(open);
       list.appendChild(row);
     });
   }).catch(e=>{

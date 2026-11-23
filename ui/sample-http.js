@@ -18,6 +18,7 @@
 #    # @name xxx            给请求命名，之后可用 {{xxx.response.body.$.field}} 取上次的结果
 #    @name = value          文件级变量（下面这几条），优先级高于 http-client.env.json
 #    < 路径                 请求体整包来自文件；在 multipart 分段里则是「这一段的附件」（表单选「文件」填的就是这行）
+#    WEBSOCKET ws://host/p  长连接；空行后第一条就是「连上就发」，=== 分隔后续消息
 #    {{$guid}} {{$timestamp}} {{$randomInt}} {{$datetimeIso}}   内置动态变量
 #
 #  关于 # @file_id / # @interface_id（v1.0.0 起）：
@@ -165,6 +166,22 @@ Accept: application/json
 GET {{baseUrl}}/get?env={{envTag}}
 Accept: application/json
 
+### 10. WebSocket · 连上就发 + 多条消息
+# @name wsDemo
+# 方法下拉里选 WEBSOCKET（WS / WSS 简写也认）。它和普通请求共用同一个 tab、
+# 同一个请求条：URL、请求头、Body 全复用，只是按钮变成「连接 / 断开」。
+# 空行之后那一段 = 连上立刻发的第一条消息（这条示例故意只放一条，保持零提示）。
+# 要多条就自己加：换行写 ===，再换行写第二条 —— 连上后先发第一条，其余在消息面板逐条发。
+# 握手头（Authorization / Cookie / Sec-WebSocket-Protocol）必须写在这里，
+# 连上之后再带就没用了 —— 它们只在握手那一刻有效。
+# 这一条打公共 echo：发什么回什么，用来确认「连接 / 收发 / 断开」都通。
+# 连不上（公司网络封了 WS）就换成自己的：ws://127.0.0.1:8080/echo
+WEBSOCKET wss://echo.websocket.org
+Accept: */*
+Sec-WebSocket-Protocol: chat
+
+{"type":"hello","from":"warren-polaris-api"}
+
 # ----------------------------------------------------------------------------
 #  几个踩过的坑
 #   · multipart 的 boundary 必须和 Content-Type 写的一致，分段之间空一行
@@ -172,6 +189,7 @@ Accept: application/json
 #   · GET / HEAD 不能带 body，写了也不会发出去
 #   · 变量没命中会原样发出去（URL 里还留着 {{ }}），点发送前先扫一眼
 #   · 想按环境切地址：同目录放 http-client.env.json，右上角下拉能选
+#   · WebSocket 的握手头写在请求行下面（不是连上之后），否则鉴权不会生效
 # ----------------------------------------------------------------------------
 `;
 

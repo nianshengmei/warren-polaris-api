@@ -397,7 +397,7 @@
 .pa-root .hist-head .hist-id{font-family:var(--mono);color:var(--brand);letter-spacing:.04em}
 .pa-root .hist-head .hist-note{margin-left:auto}
 .pa-root .hist-list{flex:1 1 auto;overflow:auto;padding:4px 8px 10px}
-.pa-root .hist-row{display:grid;grid-template-columns:104px 44px 60px 66px 1fr auto;gap:8px;align-items:center;
+.pa-root .hist-row{display:grid;grid-template-columns:104px 44px 60px 66px 1fr auto auto;gap:8px;align-items:center;
   padding:5px 8px;border-radius:5px;font-size:11.5px;color:var(--dim);font-family:var(--mono);line-height:1.6}
 .pa-root .hist-row:hover{background:var(--surface)}
 .pa-root .hist-row .hist-at{color:var(--dimmer);white-space:nowrap}
@@ -405,6 +405,10 @@
 .pa-root .hist-row .hist-ms,.pa-root .hist-row .hist-sz{text-align:right;color:var(--dimmer)}
 .pa-root .hist-row .hist-url{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)}
 .pa-root .hist-row .hist-bin{font-size:10px;color:var(--s3);border:1px solid rgba(88,166,255,.35);border-radius:4px;padding:0 4px}
+.pa-root .hist-row .hist-open{font:inherit;font-size:10.5px;line-height:1.5;padding:1px 7px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--dim);white-space:nowrap}
+.pa-root .hist-row .hist-open:hover:not(:disabled){border-color:var(--brand);color:var(--fg)}
+.pa-root .hist-row .hist-open:disabled{opacity:.38;cursor:not-allowed}
 .pa-root .hist-row.bad{background:rgba(248,81,73,.06)}
 .pa-root .hist-row.bad .hist-at{color:rgba(248,81,73,.75)}
 /* 更新版本写的历史：只读展示，别让人以为是本版写的 */

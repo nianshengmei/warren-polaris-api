@@ -429,7 +429,7 @@
     var I = requireIdentity();
     var resp = o.response || {};
     var tpl = String(o.urlTemplate != null ? o.urlTemplate : (o.url || ''));
-    return {
+    var entry = {
       v: FORMAT_VERSION,              /* 必须是首字段：S7.1 冻结，先看版本再看别的 */
       at: num(o.at) || Date.now(),
       status: num(resp.status),
@@ -446,6 +446,11 @@
       file: String(o.file || ''),
       name: String(o.name || '')
     };
+    /* S8.6：这次调用在 _results/ 里对应的那条完整结果（有就有，没有就不写这个字段）。
+     * 只存摘要是 S4 的既定口径 —— 历史是「调用日志」，完整响应在 _results/ 里；
+     * 这里只加一个指针，让历史行能跳到那份快照，不把正文塞进 jsonl。 */
+    if (o.resultPath) entry.resultPath = String(o.resultPath);
+    return entry;
   }
 
   /* 读一个 .http 的当前磁盘状态。读不到就抛，交给 record 变成 NOT_FOUND。 */
@@ -527,7 +532,8 @@
           interfaceId: ifaceId,
           fileId: fileId,
           file: String(path).split(/[\\/]/).pop(),
-          name: req.name || target.name
+          name: req.name || target.name,
+          resultPath: input.resultPath
         });
 
         var hp = historyPath(dir, path, ifaceId);
