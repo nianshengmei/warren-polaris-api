@@ -421,7 +421,13 @@
       if (scroller) scroller.scrollTop = 0;
       var nm = (entry.request && entry.request.name) || '未命名';
       setStatus('历史快照（只读）· ' + nm + ' · 按 Esc 或「←」回到目录');
-    } catch (e) { setStatus('打开结果失败：' + e.message, 'err'); }
+    } catch (e) {
+      /* 老记录的结果文件可能已被回收（每接口只留最近 10 份）。
+       * 这不是故障，别用红字吓人，也别加「打开结果失败」这层前缀。 */
+      var msg = String((e && e.message) || e);
+      if (msg.indexOf('已回收') >= 0) setStatus(msg, 'warn');
+      else setStatus('打开结果失败：' + msg, 'err');
+    }
   }
 
   /* 从「响应区 → 历史」子页跳进来：直接进这条的快照。
@@ -600,7 +606,10 @@
       headers: (info && info.headers) || {},
       body: (info && info.body) || '',
       bodyType: t.bodyType || 'none',
-      sourceFile: (t.httpSource && t.httpSource.file) || ''
+      sourceFile: (t.httpSource && t.httpSource.file) || '',
+      /* 直接发（首次调用）时身份还没写进 .http，这里多半是空的；
+       * 记进结果文件只为事后追溯，回收分组用的是 name + sourceFile。 */
+      interfaceId: (t.httpSource && t.httpSource.interfaceId) || (t.docRef && t.docRef.interfaceId) || ''
     };
     var saved = await saveResult(request, serializableResponse(resp));
     if (saved && resp.url) {

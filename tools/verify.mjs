@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const VERSION = '0.9.3';
+const VERSION = '0.9.4';
 let pass = 0;
 function ok(name, fn) { fn(); pass++; console.log('  ok  ' + name); }
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -143,6 +143,20 @@ ok('sidecar 具备全部 10 个扩展方法', () => {
   ['http/defaultDirs', 'http/listFiles', 'http/readFile', 'http/writeFile', 'http/readEnvFiles', 'http/pickFile',
     'http/saveResult', 'http/listResults', 'http/getResult', 'http/deleteResult', 'http/revealDir',
     'http/request'].forEach(k => assert(s.includes('"' + k + '"'), '缺少 ' + k));
+});
+
+ok('结果文件按接口回收：与历史同样留 10 份', () => {
+  const s = read('backend/src/main.rs');
+  assert(/const RESULTS_KEEP: usize = 10;/.test(s), '默认保留 10 份，与 _history 的 MAX_LINES 对齐');
+  assert(/fn prune_results\(/.test(s), '缺少回收函数');
+  assert(s.includes('maxKeep'), '需要可覆盖的 maxKeep（0 = 关闭）');
+  /* 回收必须写在 rename 之后：这次刚存的结果不能被自己删掉 */
+  const iRename = s.indexOf('fs::rename(&tmp, &path)');
+  const iPrune = s.indexOf('prune_results(&dir, &name_key, &source_file, keep)');
+  assert(iRename > 0 && iPrune > iRename, '回收必须在结果落盘之后');
+  /* 同名的两个接口不能互相挤：分组要认 sourceFile */
+  assert(/if sf != source_file/.test(s), '分组必须比对 sourceFile，否则不同文件里的同名接口会互删');
+  assert(s.includes('"pruned"'), '返回值要带 pruned，便于 UI 与验收脚本确认');
 });
 
 ok('dbx-plugin.toml 的 include 覆盖新文件所在目录', () => {
@@ -819,7 +833,7 @@ ok('0.9.0：四个版本位一致，自用包脚本与验收清单在位', () =>
   assert(lockVer === m.version, `Cargo.lock=${lockVer} manifest=${m.version}`);
   assert(VERSION === m.version, `verify=${VERSION} manifest=${m.version}`);
   assert(fs.existsSync(path.join(root, 'tools', 'selfuse-pack.mjs')), '缺自用打包脚本');
-  assert(fs.existsSync(path.join(root, 'docs', 'self-test-0.9.3.md')), '缺 0.9.3 验收清单');
+  assert(fs.existsSync(path.join(root, 'docs', 'self-test-0.9.4.md')), '缺 0.9.4 验收清单');
   assert(read('README.md').includes('v0.9.0'), 'README 版本历史里要有 0.9.0');
 });
 

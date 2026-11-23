@@ -657,6 +657,72 @@ fn safe_file_name(s: &str) -> String {
     if out.is_empty() { "request".to_string() } else { out }
 }
 
+/* 每个接口在 results/ 里留几条完整结果。
+ * 与 `_history` 的 MAX_LINES = 10 对齐：历史只留 10 条摘要，被轮转掉的那些
+ * 摘要所指向的结果文件就再没有人会读了 —— 不回收只会线性膨胀，且全是孤儿。 */
+const RESULTS_KEEP: usize = 10;
+
+/// 回收同一个接口的旧结果文件，返回删掉的个数。
+///
+/// 判「同一个接口」用两条：文件名后缀（`-<name>.json`）+ 文件里记的 `sourceFile`。
+/// 只按名字会误伤 —— 两个 .http 里都叫「元数据接口」是常事，它们的旧结果
+/// 不该互相挤掉。名字用来缩小扫描面（不必读整目录的 JSON），sourceFile 用来定组。
+fn prune_results(dir: &Path, name_key: &str, source_file: &str, keep: usize) -> usize {
+    if keep == 0 {
+        return 0;
+    }
+    let suffix = format!("-{name_key}.json");
+    let mut hits: Vec<(String, PathBuf)> = Vec::new();
+    let rd = match fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+    for ent in rd.flatten() {
+        let path = ent.path();
+        let fname = match path.file_name().and_then(|s| s.to_str()) {
+            Some(s) => s.to_owned(),
+            None => continue,
+        };
+        /* 只认 `<ms>-<nanos>-<name>.json`：`.tmp` 与别的文件不参与，
+         * 否则正在写的半成品会被当成一条老记录删掉。 */
+        if !fname.ends_with(&suffix) {
+            continue;
+        }
+        let text = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let v: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let sf = v
+            .get("request")
+            .and_then(|r| r.get("sourceFile"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if sf != source_file {
+            continue;
+        }
+        hits.push((fname, path));
+    }
+    if hits.len() <= keep {
+        return 0;
+    }
+    /* 文件名开头就是毫秒时间戳，定宽 13 位，字典序即时间序 —— 不用解析名字。 */
+    hits.sort_by(|a, b| a.0.cmp(&b.0));
+    let drop_n = hits.len() - keep;
+    let mut n = 0;
+    for (_, p) in hits.into_iter().take(drop_n) {
+        /* 删不掉（被占用 / 权限）就跳过：回收失败不能连累这次结果本身，
+         * 下次保存还会再试一次。 */
+        if fs::remove_file(&p).is_ok() {
+            n += 1;
+        }
+    }
+    n
+}
+
 fn handle_save_result(params: Value) -> Result<Value, PluginError> {
     let dir = resolve_results_dir(&params);
     fs::create_dir_all(&dir).map_err(|e| io_err("创建结果目录失败", e))?;
@@ -673,8 +739,22 @@ fn handle_save_result(params: Value) -> Result<Value, PluginError> {
         .get("request")
         .and_then(|r| r.get("name"))
         .and_then(Value::as_str)
-        .unwrap_or("request");
-    let filename = format!("{}-{}-{}.json", ts, nanos, safe_file_name(name));
+        .unwrap_or("request")
+        .to_owned();
+    let source_file = obj
+        .get("request")
+        .and_then(|r| r.get("sourceFile"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    /* 默认 10，宿主/测试可以显式传 maxKeep（0 = 不回收）压小一点好验。 */
+    let keep = params
+        .get("maxKeep")
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .unwrap_or(RESULTS_KEEP);
+    let name_key = safe_file_name(&name);
+    let filename = format!("{}-{}-{}.json", ts, nanos, name_key);
 
     obj.insert("id".to_string(), json!(id));
     obj.insert("savedAt".to_string(), json!(ts));
@@ -687,11 +767,16 @@ fn handle_save_result(params: Value) -> Result<Value, PluginError> {
     fs::write(&tmp, data.as_bytes()).map_err(|e| io_err("写入结果失败", e))?;
     fs::rename(&tmp, &path).map_err(|e| io_err("提交结果文件失败", e))?;
 
+    /* 落盘成功之后才回收：这次的结果必须留下，删的是更早的那些。 */
+    let pruned = prune_results(&dir, &name_key, &source_file, keep);
+
     Ok(json!({
         "id": id,
         "path": path.to_string_lossy().to_string(),
         "dir": dir.to_string_lossy().to_string(),
         "savedAt": ts,
+        "pruned": pruned,
+        "keep": keep,
     }))
 }
 
@@ -748,7 +833,18 @@ fn handle_list_results(params: Value) -> Result<Value, PluginError> {
 fn handle_get_result(params: Value) -> Result<Value, PluginError> {
     let p = param_str(&params, "path").ok_or_else(|| PluginError::new(-32602, "缺少 path"))?;
     let path = PathBuf::from(p);
-    let text = fs::read_to_string(&path).map_err(|e| io_err("读取结果失败", e))?;
+    /* 文件不见了多半不是故障：结果目录每个接口只留最近 10 份，老记录被回收掉了，
+     * 而历史 jsonl 里那条摘要可能还在。说清楚，别让人以为是读盘出错。 */
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(PluginError::new(
+                -32004,
+                "结果文件不存在（每个接口只留最近 10 份，更早的已回收）".to_string(),
+            ))
+        }
+        Err(e) => return Err(io_err("读取结果失败", e)),
+    };
     let entry: Value = serde_json::from_str(&text).map_err(|e| io_err("解析结果失败", e))?;
     Ok(json!({ "path": path.to_string_lossy().to_string(), "entry": entry }))
 }
