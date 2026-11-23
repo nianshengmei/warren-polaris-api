@@ -11,19 +11,22 @@
 
 | 项 | 内容 |
 |---|---|
-| 提交分支 | `nianshengmei/dbx-store` → `submit/com.warren.polaris.api-1.0.0`，head `f8359f2`，基于上游 main `dffd4cd` |
+| 提交分支 | `nianshengmei/dbx-store` → `submit/com.warren.polaris.api-1.0.0`，head `aaef951`，基于上游 main `dffd4cd`（compare 结果：ahead 1 / behind 0，无冲突） |
 | diff | 3 文件 +75/−0：`publishers/warren.json`、`candidates/com.warren.polaris.api.json`、`automation/plugin-sources.json`（+5，仅登记源） |
 | 本地校验 | `node scripts/validate.mjs` → 唯一 error 为 "1 open candidate awaiting signing"，即预期红 |
 | 候选 | 5 target，sha256/size 取自 v1.0.0 release 资产 digest，与 `release-candidates.json` 交叉一致 |
 | 元数据 | `.dbx-store.json` 已改到 1.0.0（列表名 `HTTP File Client (.http)`、描述首句声明 fork、releaseNotes 写明派生自 v0.2.0） |
+| PR 正文 | `PR_BODY_1.0.0.md`：按 `PULL_REQUEST_TEMPLATE.md` 的八个标题逐段填（Plugin submission / Source / Capabilities / Permissions / Native sidecar / License / Homepage / Confirmation），并加一节把 #557 的四条要求对应到具体文件 |
 
-## 还差两步（需要你在网页点）
+## 还差点一下的事：PR 建不了，是权限不是脚本
 
-1. 开 PR：见 `PREFILL_URL.txt`（预填标题与精简正文；完整正文在 `PR_BODY.md`）。
-2. 关掉 #557：在该 PR 里粘一句「superseded by #<新号>」，然后 Close。细粒度 PAT 做不到，只能你点。
+- 细粒度 PAT 对 `t8y2/dbx-store` 的权限实测为 `pull: true, push: false`；
+  `POST /pulls` 与 GraphQL `createPullRequest` 都是 `403 Resource not accessible by personal access token`。
+  这不是漏授权项——GitHub 要求「在别人的仓库里建 PR」必须对该仓库有写权限，非协作者拿不到。
+- 换成 **classic PAT（勾 `public_repo`）** 即可由脚本一次做完：建 PR → 在 #557 评论 superseded（作者可评论）
+  → 关闭 #557（PR 作者可关自己的 PR）。沙箱浏览器访问 github.com 被网络策略拦截（403 Forbidden），网页路线也走不通。
+- 不想给新 token 的话，`PREFILL_URL.txt` 是同一份正文的预填链接，点开就是「Create pull request」。
 
-开完 PR 后把 `REVIEW_REPLY.md` 贴到新 PR 评论里（中文，逐条对应上次四条整改 + 版本号节奏 + 上游停更证据）。
-维护者批准 workflow 后，Validate 会按设计报 `open candidate awaiting signing`，接着 `/sign`，绿了才会合并。
 
 ## 后续版本注意
 
